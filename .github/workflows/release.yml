@@ -35,7 +35,10 @@ jobs:
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -l release
 
-      - name: Create the release
+      - name: Create or update the release
+        # The release may already exist when the tag was made from the GitHub
+        # "Releases" page: then the files are attached to it and notes are
+        # added only if it has none.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -49,4 +52,13 @@ jobs:
             echo
             echo "初期設定：ユーザー rumicar / rumicar、SSH 有効、ホスト名 rumicar、Wi-Fi AP の SSID RumiCar（開放）、車のアドレス 10.42.0.1。詳細は docs/RumiCar-Zero2Cam 仕様書.docx。"
           } > notes.md
-          gh release create "$GITHUB_REF_NAME" --title "RumiCar Zero2Cam $GITHUB_REF_NAME" --notes-file notes.md release/*
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json id > /dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME exists: attaching the files"
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber release/*
+            if [ -z "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body)" ]; then
+              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "RumiCar Zero2Cam $GITHUB_REF_NAME" --notes-file notes.md
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "RumiCar Zero2Cam $GITHUB_REF_NAME" --notes-file notes.md release/*
+          fi
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name) \(.size) bytes"'
