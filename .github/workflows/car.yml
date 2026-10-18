@@ -50,9 +50,17 @@ jobs:
         run: |
           # Failures are reported as annotations (the raw log is not always reachable).
           report() { echo "::error title=$1::$(tail -n 40 "$2" | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1; }
-          curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key -o /tmp/raspberrypi.gpg.key 2>&1 | tee /tmp/key.log \
-            || report "key download failed" /tmp/key.log
-          gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg /tmp/raspberrypi.gpg.key
+          # The archive is signed by a key whose legacy (SHA-1) binding signature
+          # trixie's apt (sequoia) rejects since 2026-02-01; the current
+          # raspberrypi-archive-keyring package carries the re-signed key, so
+          # install that package (over HTTPS from the archive's pool) first.
+          pool="https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring"
+          curl -fsSL "$pool/" -o /tmp/pool.html 2>/tmp/pool.err || report "keyring pool listing failed" /tmp/pool.err
+          deb="$(grep -o 'raspberrypi-archive-keyring_[^"<>]*_all\.deb' /tmp/pool.html | sort -uV | tail -n 1)"
+          test -n "$deb" || { cp /tmp/pool.html /tmp/pool.log; report "no keyring package in the pool listing" /tmp/pool.log; }
+          echo "keyring package: $deb"
+          curl -fsSL "$pool/$deb" -o "/tmp/$deb" 2>/tmp/deb.err || report "keyring download failed" /tmp/deb.err
+          dpkg -i "/tmp/$deb" > /tmp/dpkg.log 2>&1 || report "keyring install failed" /tmp/dpkg.log
           echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ trixie main" \
             > /etc/apt/sources.list.d/raspi.list
           apt-get update > /tmp/update.log 2>&1 || report "apt-get update failed" /tmp/update.log
