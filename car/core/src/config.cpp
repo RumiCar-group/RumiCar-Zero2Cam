@@ -94,6 +94,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.watchdog_ms = s.get_int("watchdog_ms", c.watchdog_ms, 50, 2000);
         c.activation_poll_ms = s.get_int("activation_poll_ms", c.activation_poll_ms, 100, 10000);
         c.max_drive_permille = s.get_int("max_drive_permille", c.max_drive_permille, 0, 1000);
+        c.car_name = s.get_string("car_name", c.car_name);
         seen_top.insert(s.seen.begin(), s.seen.end());
     }
     {
@@ -126,6 +127,15 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.tof_read_timeout_ms = s.get_int("tof_read_timeout_ms", c.tof_read_timeout_ms, 20, 1000);
         s.reject_unknown();
     }
+    {
+        Section s{section(root, "network", seen_top), "network", {}};
+        c.bind_address = s.get_string("bind", c.bind_address);
+        c.control_port = s.get_int("control_port", c.control_port, 1, 65535);
+        c.telemetry_port = s.get_int("telemetry_port", c.telemetry_port, 1, 65535);
+        c.heartbeat_timeout_ms = s.get_int("heartbeat_timeout_ms", c.heartbeat_timeout_ms, 200, 10000);
+        c.telemetry_queue_frames = s.get_int("telemetry_queue_frames", c.telemetry_queue_frames, 1, 200);
+        s.reject_unknown();
+    }
     for (auto it = root.begin(); it != root.end(); ++it) {
         if (!seen_top.count(it.key())) throw std::runtime_error("core.json: unknown key " + it.key());
     }
@@ -142,6 +152,8 @@ CoreConfig parse_core_config(const std::string& json_text) {
         if (c.tof_addresses[i] == 0x29) throw std::runtime_error("core.json: i2c.tof_addresses must not use the default 0x29");
     }
     if (c.watchdog_ms < 2 * c.loop_period_ms) throw std::runtime_error("core.json: watchdog_ms must be at least twice loop_period_ms");
+    if (c.control_port == c.telemetry_port) throw std::runtime_error("core.json: network.control_port and telemetry_port must differ");
+    if (c.car_name.size() > 32) throw std::runtime_error("core.json: car_name must be at most 32 characters");
     return c;
 }
 

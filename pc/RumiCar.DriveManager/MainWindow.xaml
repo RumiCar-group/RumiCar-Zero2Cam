@@ -44,20 +44,24 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                    <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                    <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="モード" Margin="0,0,8,0"/>
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Mode}"/>
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="判断状態" Margin="0,0,8,0"/>
-                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LogicState}"/>
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="ToF 左/中/右 [mm]" Margin="0,0,8,0"/>
-                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Tof}"/>
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="指令" Margin="0,0,8,0"/>
-                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Command}"/>
-                <TextBlock Grid.Row="4" Grid.Column="0" Text="版（ロジック/データ）" Margin="0,0,8,0"/>
-                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Versions}"/>
-                <TextBlock Grid.Row="5" Grid.Column="0" Text="バッテリー" Margin="0,0,8,0"/>
-                <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Battery}"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="非常停止" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding EStop}" FontWeight="Bold" Foreground="#C62828"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="判断状態" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LogicState}"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="ToF 左/中/右 [mm]" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Tof}"/>
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="モーター出力" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Command}"/>
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="ロジックの判断" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding LogicCommand}"/>
+                <TextBlock Grid.Row="6" Grid.Column="0" Text="版（ロジック/データ）" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding Versions}"/>
+                <TextBlock Grid.Row="7" Grid.Column="0" Text="バッテリー" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding Battery}"/>
             </Grid>
 
             <TextBlock Text="走行モード" FontWeight="Bold"/>

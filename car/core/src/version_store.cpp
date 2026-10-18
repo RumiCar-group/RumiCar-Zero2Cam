@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -9,6 +10,8 @@
 #include <fstream>
 #include <stdexcept>
 #include <unistd.h>
+
+#include "manifest.hpp"
 
 namespace rumicar {
 
@@ -26,9 +29,30 @@ std::string now_iso8601() {
     return buf;
 }
 
+void fsync_dir(const fs::path& dir) {
+    if (FILE* f = std::fopen(dir.c_str(), "r")) {
+        fsync(fileno(f));
+        std::fclose(f);
+    }
+}
+
 } // namespace
 
 VersionStore::VersionStore(std::string state_dir) : state_dir_(std::move(state_dir)) {}
+
+std::string VersionStore::subdir_for(const std::string& kind) {
+    if (kind == "logic") return "logic";
+    if (kind == "pack") return "packs";
+    throw std::runtime_error("kind must be 'logic' or 'pack'");
+}
+
+bool VersionStore::is_plain_dir_name(const std::string& name) {
+    if (name.empty() || name[0] == '.') return false;
+    for (const char c : name) {
+        if (c == '/' || c == '\\' || c == '\0') return false;
+    }
+    return true;
+}
 
 std::optional<ActiveSelection> VersionStore::read_current(std::string& reason) const {
     ActiveSelection sel;
@@ -49,6 +73,115 @@ std::optional<ActiveSelection> VersionStore::read_current(std::string& reason) c
     }
     reason.clear();
     return sel;
+}
+
+std::string VersionStore::link_target(const char* which, const char* kind) const {
+    const fs::path link = fs::path(state_dir_) / which / kind;
+    std::error_code ec;
+    if (!fs::is_symlink(link, ec)) return "";
+    const fs::path target = fs::read_symlink(link, ec);
+    if (ec) return "";
+    return target.filename().string();
+}
+
+std::string VersionStore::resolve_link(const char* which, const char* kind) const {
+    const fs::path link = fs::path(state_dir_) / which / kind;
+    std::error_code ec;
+    if (!fs::is_symlink(link, ec)) return "";
+    const fs::path resolved = fs::canonical(link, ec);
+    if (ec || !fs::is_directory(resolved, ec)) return "";
+    return resolved.string();
+}
+
+void VersionStore::link_atomic(const std::string& kind, const std::string& relative_target, bool keep_previous) const {
+    const fs::path current_dir = fs::path(state_dir_) / "current";
+    const fs::path previous_dir = fs::path(state_dir_) / "previous";
+    std::error_code ec;
+    fs::create_directories(current_dir, ec);
+    fs::create_directories(previous_dir, ec);
+
+    const fs::path current = current_dir / kind;
+    if (keep_previous && fs::is_symlink(current, ec)) {
+        const fs::path old = fs::read_symlink(current, ec);
+        if (!ec) {
+            const fs::path tmp = previous_dir / ("." + kind + ".tmp");
+            fs::remove(tmp, ec);
+            fs::create_symlink(old, tmp, ec);
+            if (ec) throw std::runtime_error("cannot write previous/" + kind + ": " + ec.message());
+            fs::rename(tmp, previous_dir / kind, ec);
+            if (ec) throw std::runtime_error("cannot replace previous/" + kind + ": " + ec.message());
+        }
+    }
+    const fs::path tmp = current_dir / ("." + kind + ".tmp");
+    fs::remove(tmp, ec);
+    fs::create_symlink(relative_target, tmp, ec);
+    if (ec) throw std::runtime_error("cannot write current/" + kind + ": " + ec.message());
+    fs::rename(tmp, current, ec);
+    if (ec) throw std::runtime_error("cannot replace current/" + kind + ": " + ec.message());
+    fsync_dir(current_dir);
+    fsync_dir(previous_dir);
+}
+
+void VersionStore::activate(const std::string& kind, const std::string& dir_name) const {
+    const std::string sub = subdir_for(kind);
+    if (!is_plain_dir_name(dir_name)) throw std::runtime_error("bad directory name '" + dir_name + "'");
+    const fs::path dir = fs::path(state_dir_) / sub / dir_name;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) throw std::runtime_error(dir.string() + " does not exist");
+    if (!fs::is_regular_file(dir / "manifest.json", ec)) throw std::runtime_error(dir.string() + " has no manifest.json");
+    link_atomic(kind, "../" + sub + "/" + dir_name, true);
+}
+
+void VersionStore::rollback(const std::string& kind) const {
+    subdir_for(kind); // validates kind
+    const fs::path previous = fs::path(state_dir_) / "previous" / kind;
+    std::error_code ec;
+    if (!fs::is_symlink(previous, ec)) throw std::runtime_error("no previous " + kind);
+    const fs::path target = fs::read_symlink(previous, ec);
+    if (ec) throw std::runtime_error("cannot read previous/" + kind + ": " + ec.message());
+    link_atomic(kind, target.string(), true);
+}
+
+void VersionStore::restore_current(const std::string& kind, const std::string& running_dir) const {
+    const std::string sub = subdir_for(kind);
+    const fs::path dir(running_dir);
+    const std::string name = dir.filename().string();
+    if (!is_plain_dir_name(name)) throw std::runtime_error("bad running directory '" + running_dir + "'");
+    std::error_code ec;
+    const fs::path expected = fs::canonical(fs::path(state_dir_) / sub / name, ec);
+    if (ec || expected != fs::canonical(dir, ec)) throw std::runtime_error(running_dir + " is not under " + sub + "/");
+    link_atomic(kind, "../" + sub + "/" + name, false);
+}
+
+std::vector<InstalledVersion> VersionStore::list(const std::string& kind) const {
+    const fs::path root = fs::path(state_dir_) / subdir_for(kind);
+    std::vector<InstalledVersion> out;
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) return out;
+    for (const auto& entry : fs::directory_iterator(root, ec)) {
+        if (!entry.is_directory(ec)) continue;
+        InstalledVersion v;
+        v.dir_name = entry.path().filename().string();
+        if (!is_plain_dir_name(v.dir_name)) continue;
+        try {
+            const Manifest m = load_and_verify_manifest(entry.path().string());
+            const bool kind_matches = (kind == "logic") == (m.kind == Manifest::Kind::Logic);
+            v.id = m.id;
+            v.version = m.version;
+            if (!kind_matches) {
+                v.error = "manifest kind does not match the directory";
+            } else if (m.dir_name() != v.dir_name) {
+                v.error = "directory name does not match manifest (" + m.dir_name() + ")";
+            } else {
+                v.verified = true;
+            }
+        } catch (const std::exception& e) {
+            v.error = e.what();
+        }
+        out.push_back(std::move(v));
+    }
+    std::sort(out.begin(), out.end(), [](const InstalledVersion& a, const InstalledVersion& b) { return a.dir_name < b.dir_name; });
+    return out;
 }
 
 void VersionStore::write_active(const std::string& logic_dir, const std::string& logic_version,

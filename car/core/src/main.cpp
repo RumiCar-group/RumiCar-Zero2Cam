@@ -1,10 +1,16 @@
 // rumicar-core — control loop of the RumiCar Zero 2 W camera model.
 //
 //   sensors (3x VL53L0X) -> driving logic (plug-in) -> DRV8835 motors
+//                                   |
+//            control server (TCP 5600) / telemetry server (TCP 5601) <-> PC
 //
 // Responsibilities: hardware bring-up, running the active logic with the
-// active pack, hot-swapping both when current/* links change, braking on
-// any stall (watchdog) or error, and clean shutdown.
+// active pack, hot-swapping both when current/* links change, driving modes
+// (auto / manual / record_only), emergency stop, braking on any stall
+// (watchdog) or error, telemetry, and clean shutdown.  The car drives without
+// any network: the servers are optional for the control loop.
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -15,6 +21,9 @@
 #include <thread>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
+#include "car_state.hpp"
 #include "config.hpp"
 #include "hw/drv8835.hpp"
 #include "hw/gpio.hpp"
@@ -22,6 +31,10 @@
 #include "hw/vl53l0x.hpp"
 #include "log.hpp"
 #include "logic_loader.hpp"
+#include "net/control_server.hpp"
+#include "net/telemetry_frame.hpp"
+#include "net/telemetry_server.hpp"
+#include "request_handler.hpp"
 #include "rumicar/logic_api.h"
 #include "version_store.hpp"
 
@@ -32,6 +45,7 @@
 namespace {
 
 using Clock = std::chrono::steady_clock;
+using json = nlohmann::json;
 using namespace std::chrono_literals;
 
 std::atomic<bool> g_stop{false};
@@ -55,6 +69,18 @@ Active load_active(const rumicar::VersionStore& store, const rumicar::ActiveSele
     return a;
 }
 
+void publish_running(rumicar::CarState& state, const Active& active, uint8_t logic_state, uint32_t flags) {
+    rumicar::RunningStatus s;
+    s.logic_name = active.lib->manifest().id;
+    s.logic_version = active.lib->manifest().version;
+    s.pack_id = active.instance->pack_manifest().id;
+    s.pack_version = active.instance->pack_manifest().version;
+    s.state = logic_state;
+    s.state_name = active.instance->state_name(logic_state);
+    s.flags = flags;
+    state.update_running(s);
+}
+
 int32_t to_tof_value(const rumicar::hw::Vl53l0x::Reading& r) {
     switch (r.status) {
     case rumicar::hw::Vl53l0x::Status::Ok:       return r.mm;
@@ -73,6 +99,19 @@ const char* status_name(rumicar::hw::Vl53l0x::Status s) {
     case rumicar::hw::Vl53l0x::Status::Error:    return "error";
     }
     return "?";
+}
+
+// Point current/* back at what is running after a failed activation, so that
+// a reboot starts the working versions (docs 3.5).
+void restore_links(const rumicar::VersionStore& store, const rumicar::ActiveSelection& running,
+                   const rumicar::ActiveSelection& failed) {
+    try {
+        if (failed.logic_dir != running.logic_dir) store.restore_current("logic", running.logic_dir);
+        if (failed.pack_dir != running.pack_dir) store.restore_current("pack", running.pack_dir);
+        rumicar::log::info("current/* restored to the running versions");
+    } catch (const std::exception& e) {
+        rumicar::log::error(std::string("cannot restore current/* links: ") + e.what());
+    }
 }
 
 } // namespace
@@ -96,6 +135,7 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+    std::signal(SIGPIPE, SIG_IGN);
 
     // --- hardware bring-up ---------------------------------------------------
     std::unique_ptr<hw::GpioOutputs> gpio;
@@ -126,12 +166,28 @@ int main(int argc, char** argv) {
 
     // --- logic + pack --------------------------------------------------------
     VersionStore store(cfg.state_dir);
+    CarState state(cfg.heartbeat_timeout_ms);
     Active active;
     try {
         std::string reason;
         auto sel = store.read_current(reason);
         if (!sel) throw std::runtime_error("no active selection: " + reason);
-        active = load_active(store, *sel, nullptr);
+        try {
+            active = load_active(store, *sel, nullptr);
+        } catch (const std::exception& e) {
+            // Fall back to the previous selection once, so a bad activation
+            // left behind (e.g. over SSH) does not keep the car from driving.
+            ActiveSelection prev{store.resolve_link("previous", "logic"), store.resolve_link("previous", "pack")};
+            if (prev.logic_dir.empty()) prev.logic_dir = sel->logic_dir;
+            if (prev.pack_dir.empty()) prev.pack_dir = sel->pack_dir;
+            if (prev == *sel) throw;
+            log::error(std::string("cannot start the current selection: ") + e.what());
+            log::warn("trying the previous selection: logic " + prev.logic_dir + ", pack " + prev.pack_dir);
+            active = load_active(store, prev, nullptr);
+            store.write_activation_result(false, *sel, e.what());
+            restore_links(store, prev, *sel);
+            sel = prev;
+        }
         store.write_activation_result(true, *sel, "");
         log::info("logic " + active.lib->manifest().id + " " + active.lib->manifest().version + " from " + sel->logic_dir);
         log::info("pack " + active.instance->pack_manifest().id + " " + active.instance->pack_manifest().version + " from " +
@@ -139,6 +195,30 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
         log::error(std::string("cannot start driving logic: ") + e.what());
         return 4;
+    }
+    publish_running(state, active, 0, 0);
+
+    // --- network (optional: the car drives without it) -------------------------
+    RequestHandler handler(state, store, cfg.car_name, RUMICAR_CORE_VERSION);
+    net::TelemetryServer telemetry(cfg.bind_address, static_cast<uint16_t>(cfg.telemetry_port),
+                                   static_cast<size_t>(cfg.telemetry_queue_frames));
+    net::ControlServer control(
+        cfg.bind_address, static_cast<uint16_t>(cfg.control_port),
+        [&](const std::string& type, const json& params) { return handler.handle(type, params); },
+        [&](bool connected, const std::string&) {
+            state.client_connected(connected);
+            if (!connected && state.mode() == DriveMode::Manual) {
+                if (state.set_estop(true, "disconnected")) log::warn("PC disconnected in manual mode: emergency stop");
+            }
+        });
+    state.set_event_sink([&](const std::string& event, const json& data) { control.push_event(event, data); });
+    bool network_up = false;
+    try {
+        telemetry.start();
+        control.start();
+        network_up = true;
+    } catch (const std::exception& e) {
+        log::error(std::string("network servers not started, driving without the PC: ") + e.what());
     }
 
     // --- watchdog: brake if the control loop stalls --------------------------
@@ -173,6 +253,7 @@ int main(int argc, char** argv) {
     ActiveSelection last_failed_selection;
     bool have_failed_selection = false;
     int overruns = 0;
+    const std::vector<uint8_t> no_image;
 
     log::info("control loop started, period " + std::to_string(cfg.loop_period_ms) + " ms");
     while (!g_stop.load()) {
@@ -191,34 +272,87 @@ int main(int argc, char** argv) {
             }
         }
 
+        // The logic always runs (its state is reported even when it is not driving).
         rumi_command cmd{};
         const int rc = active.instance->step(frame, cmd);
-        try {
-            if (rc != 0) {
-                motors->stop();
-                if (rc != last_step_rc) log::error("logic step failed with code " + std::to_string(rc) + ", motors braked");
-            } else {
-                const int drive = std::clamp<int>(cmd.drive_permille, -cfg.max_drive_permille, cfg.max_drive_permille);
-                const bool brake = (cmd.flags & (RUMI_CMD_FLAG_BRAKE | RUMI_CMD_FLAG_FAULT)) != 0;
-                motors->apply(cmd.steer, drive, brake, t0);
-                if (cmd.state != last_state) {
-                    log::info(std::string("state ") + (last_state == 0xFF ? "-" : active.instance->state_name(last_state)) +
-                              " -> " + active.instance->state_name(cmd.state));
-                    last_state = cmd.state;
-                }
+        if (rc == 0 && cmd.state != last_state) {
+            log::info(std::string("state ") + (last_state == 0xFF ? "-" : active.instance->state_name(last_state)) + " -> " +
+                      active.instance->state_name(cmd.state));
+            last_state = cmd.state;
+        }
+        if (rc != 0 && rc != last_step_rc) log::error("logic step failed with code " + std::to_string(rc) + ", motors braked");
+        last_step_rc = rc;
+
+        // --- what actually goes to the motors ---------------------------------
+        CarState::FrameInputs in = state.frame_inputs(t0);
+        if (in.manual_timed_out && !in.estop) {
+            if (state.set_estop(true, "heartbeat")) log::warn("no heartbeat from the PC in manual mode: emergency stop");
+            in.estop = true;
+        }
+        int8_t out_steer = RUMI_STEER_CENTER;
+        int out_drive = 0;
+        bool out_brake = true;
+        if (in.estop) {
+            // braked
+        } else if (in.mode == DriveMode::Auto) {
+            if (rc == 0) {
+                out_steer = cmd.steer;
+                out_drive = std::clamp<int>(cmd.drive_permille, -cfg.max_drive_permille, cfg.max_drive_permille);
+                out_brake = (cmd.flags & (RUMI_CMD_FLAG_BRAKE | RUMI_CMD_FLAG_FAULT)) != 0;
             }
+        } else if (in.mode == DriveMode::Manual) {
+            out_steer = in.manual_steer;
+            out_drive = std::clamp<int>(in.manual_drive, -cfg.max_drive_permille, cfg.max_drive_permille);
+            out_brake = false;
+        } // RecordOnly: braked
+        try {
+            motors->apply(out_steer, out_drive, out_brake, t0);
         } catch (const std::exception& e) {
             log::error(std::string("motor output failed: ") + e.what());
         }
-        last_step_rc = rc;
         last_tick_ns.store(Clock::now().time_since_epoch().count());
 
+        // --- status + telemetry -------------------------------------------------
+        publish_running(state, active, rc == 0 ? cmd.state : last_state, rc == 0 ? cmd.flags : 0u);
+        if (network_up) {
+            try {
+                const json header = {
+                    {"seq", frame.seq},
+                    {"t_us", frame.t_us},
+                    {"tof_mm", {frame.tof_mm[0], frame.tof_mm[1], frame.tof_mm[2]}},
+                    {"steer", out_steer},
+                    {"drive_permille", out_drive},
+                    {"state", rc == 0 ? cmd.state : last_state},
+                    {"state_name", active.instance->state_name(rc == 0 ? cmd.state : last_state)},
+                    {"flags", rc == 0 ? cmd.flags : 0u},
+                    {"mode", drive_mode_name(in.mode)},
+                    {"estop", in.estop},
+                    {"logic_steer", rc == 0 ? cmd.steer : 0},
+                    {"logic_drive_permille", rc == 0 ? cmd.drive_permille : 0},
+                    {"logic_version", active.lib->manifest().version},
+                    {"pack_version", active.instance->pack_manifest().version},
+                    {"battery_mv", 0},
+                    {"image_w", 0},
+                    {"image_h", 0},
+                };
+                telemetry.publish(std::make_shared<const std::vector<uint8_t>>(net::encode_telemetry_frame(header.dump(), no_image)));
+            } catch (const std::exception& e) {
+                log::error(std::string("telemetry frame not sent: ") + e.what());
+            }
+        }
+
         // --- activation check ------------------------------------------------
-        if (t0 >= next_poll) {
+        const bool requested = state.take_activation_request();
+        if (requested) have_failed_selection = false;   // a new request may retry a selection that failed before
+        if (requested || t0 >= next_poll) {
             next_poll = t0 + std::chrono::milliseconds(cfg.activation_poll_ms);
             std::string reason;
             auto sel = store.read_current(reason);
-            if (sel && *sel != active.selection && !(have_failed_selection && *sel == last_failed_selection)) {
+            if (!sel) {
+                if (requested) state.complete_activation(ActivationResult{false, "", "", reason});
+            } else if (*sel == active.selection) {
+                if (requested) state.complete_activation(ActivationResult{true, sel->logic_dir, sel->pack_dir, ""});
+            } else if (!(have_failed_selection && *sel == last_failed_selection)) {
                 log::info("activation requested: logic " + sel->logic_dir + ", pack " + sel->pack_dir);
                 try {
                     Active fresh = load_active(store, *sel, active.lib);
@@ -226,13 +360,17 @@ int main(int argc, char** argv) {
                     last_state = 0xFF;
                     have_failed_selection = false;
                     store.write_activation_result(true, *sel, "");
+                    publish_running(state, active, 0, 0);
                     log::info("activated logic " + active.lib->manifest().id + " " + active.lib->manifest().version + ", pack " +
                               active.instance->pack_manifest().id + " " + active.instance->pack_manifest().version);
+                    state.complete_activation(ActivationResult{true, sel->logic_dir, sel->pack_dir, ""});
                 } catch (const std::exception& e) {
                     last_failed_selection = *sel;
                     have_failed_selection = true;
                     try { store.write_activation_result(false, *sel, e.what()); } catch (const std::exception&) {}
                     log::error(std::string("activation failed, keeping current versions: ") + e.what());
+                    restore_links(store, active.selection, *sel);
+                    state.complete_activation(ActivationResult{false, sel->logic_dir, sel->pack_dir, e.what()});
                 }
             }
         }
@@ -252,6 +390,9 @@ int main(int argc, char** argv) {
     watchdog_quit.store(true);
     watchdog.join();
     try { motors->stop(); } catch (const std::exception&) {}
+    control.stop();
+    telemetry.stop();
+    state.set_event_sink(nullptr);
     active.instance.reset();
     active.lib.reset();
     sensors.clear();

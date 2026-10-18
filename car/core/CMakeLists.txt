@@ -14,9 +14,15 @@ add_library(rumicar_core_lib STATIC
   src/sha256.cpp
   src/logic_loader.cpp
   src/version_store.cpp
+  src/car_state.cpp
+  src/request_handler.cpp
+  src/net/socket.cpp
+  src/net/telemetry_frame.cpp
+  src/net/telemetry_server.cpp
+  src/net/control_server.cpp
 )
 target_include_directories(rumicar_core_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(rumicar_core_lib PUBLIC rumicar_api nlohmann_json::nlohmann_json OpenSSL::Crypto ${CMAKE_DL_LIBS})
+target_link_libraries(rumicar_core_lib PUBLIC rumicar_api nlohmann_json::nlohmann_json OpenSSL::Crypto Threads::Threads ${CMAKE_DL_LIBS})
 
 # Hardware layer (needs libgpiod >= 2 and Linux I2C/PWM headers).
 add_library(rumicar_hw STATIC

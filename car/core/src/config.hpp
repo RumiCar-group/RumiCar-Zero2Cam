@@ -10,6 +10,9 @@ namespace rumicar {
 struct CoreConfig {
     int schema = 1;
 
+    // Identity reported in hello / telemetry
+    std::string car_name = "RumiCar";
+
     // Control loop
     int loop_period_ms = 50;         // target frame period
     int watchdog_ms = 200;           // motors are braked if the loop stalls longer than this
@@ -37,6 +40,13 @@ struct CoreConfig {
     int i2c_bus = 1;
     std::array<uint8_t, 3> tof_addresses{0x2B, 0x2D, 0x2F}; // left, centre, right
     int tof_read_timeout_ms = 100;   // per sensor, per frame
+
+    // Network (control and telemetry servers, docs 5.1)
+    std::string bind_address = "0.0.0.0";
+    int control_port = 5600;
+    int telemetry_port = 5601;
+    int heartbeat_timeout_ms = 1000;  // manual mode: stop when the PC's heartbeat is older than this
+    int telemetry_queue_frames = 16;  // per client; older frames are dropped beyond this
 };
 
 // Parse core.json text.  Every key is optional (defaults above) but unknown

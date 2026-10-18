@@ -14,12 +14,18 @@ public sealed class TelemetryHeader
     [JsonPropertyName("seq")] public uint Seq { get; set; }
     [JsonPropertyName("t_us")] public ulong TimestampMicroseconds { get; set; }
     [JsonPropertyName("tof_mm")] public int[] TofMm { get; set; } = new int[3];
+    /// <summary>What was actually sent to the motors.</summary>
     [JsonPropertyName("steer")] public int Steer { get; set; }
     [JsonPropertyName("drive_permille")] public int DrivePermille { get; set; }
     [JsonPropertyName("state")] public int State { get; set; }
     [JsonPropertyName("state_name")] public string StateName { get; set; } = "";
     [JsonPropertyName("flags")] public uint Flags { get; set; }
     [JsonPropertyName("mode")] public string Mode { get; set; } = "";
+    /// <summary>Emergency stop latched on the car (estop request, heartbeat loss, disconnect in manual mode).</summary>
+    [JsonPropertyName("estop")] public bool EStop { get; set; }
+    /// <summary>What the driving logic decided this frame, even when it was not applied (manual / record_only / e-stop).</summary>
+    [JsonPropertyName("logic_steer")] public int LogicSteer { get; set; }
+    [JsonPropertyName("logic_drive_permille")] public int LogicDrivePermille { get; set; }
     [JsonPropertyName("logic_version")] public string LogicVersion { get; set; } = "";
     [JsonPropertyName("pack_version")] public string PackVersion { get; set; } = "";
     [JsonPropertyName("battery_mv")] public int BatteryMillivolts { get; set; }

@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "car_name": "RumiCar",
   "loop_period_ms": 50,
   "watchdog_ms": 200,
   "activation_poll_ms": 500,
@@ -25,5 +26,12 @@
     "bus": 1,
     "tof_addresses": [43, 45, 47],
     "tof_read_timeout_ms": 100
+  },
+  "network": {
+    "bind": "0.0.0.0",
+    "control_port": 5600,
+    "telemetry_port": 5601,
+    "heartbeat_timeout_ms": 1000,
+    "telemetry_queue_frames": 16
   }
 }

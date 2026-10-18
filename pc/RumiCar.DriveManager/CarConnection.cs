@@ -36,6 +36,9 @@ public sealed class CarConnection : IAsyncDisposable
 
     public bool IsConnected => _control?.Connected == true;
 
+    /// <summary>Result of the hello request (car name, core_version, protocol), once connected.</summary>
+    public JsonElement? HelloResult { get; private set; }
+
     public async Task ConnectAsync(string clientName, CancellationToken ct)
     {
         _control = new TcpClient { NoDelay = true };
@@ -46,6 +49,7 @@ public sealed class CarConnection : IAsyncDisposable
 
         var hello = await RequestAsync(ControlCodec.Hello(NextId(), clientName), ct).ConfigureAwait(false);
         if (!hello.Ok) throw new IOException("hello rejected: " + hello.Error);
+        HelloResult = hello.Result;
         Log?.Invoke($"control connected to {_host}:{Ports.Control}");
 
         _telemetry = new TcpClient();
