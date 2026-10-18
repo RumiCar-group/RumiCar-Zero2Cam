@@ -1,0 +1,75 @@
+name: car
+
+on:
+  push:
+    branches: [main]
+    paths: ['car/**', '.github/workflows/car.yml']
+  pull_request:
+    paths: ['car/**', '.github/workflows/car.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # arm64 is the car (Raspberry Pi Zero 2 W, 64-bit Raspberry Pi OS = Debian 13 "trixie").
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            publish: true
+          # amd64 is a second compiler pass for warnings and tests only.
+          - runner: ubuntu-24.04
+            arch: amd64
+            publish: false
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install the same packages as on the car
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config git ca-certificates python3 \
+            libgpiod-dev nlohmann-json3-dev libssl-dev
+          echo "gcc:      $(gcc --version | head -1)"
+          echo "cmake:    $(cmake --version | head -1)"
+          echo "libgpiod: $(pkg-config --modversion libgpiod)"
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (all warnings are errors)
+        run: cmake --build build --parallel
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Verify the bundled base pack
+        run: python3 car/tools/make_manifest.py verify car/packs/base
+
+      - name: Stage an install tree
+        if: matrix.publish
+        run: |
+          DESTDIR="$PWD/stage" cmake --install build --prefix /usr/local
+          ver="$(sed -n 's/^set(TOF_DRIVE_VERSION "\([^"]*\)").*/\1/p' car/logic/CMakeLists.txt)"
+          test -n "$ver"
+          python3 car/tools/make_manifest.py logic "stage/usr/local/lib/rumicar/logic/tof_drive-$ver" \
+            --name tof_drive --version "$ver" --entry libtof_drive.so
+          python3 car/tools/make_manifest.py verify "stage/usr/local/lib/rumicar/logic/tof_drive-$ver"
+          find stage -type f | sort
+
+      - name: Upload car install tree
+        if: matrix.publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: car-${{ matrix.arch }}
+          path: stage
+          if-no-files-found: error
