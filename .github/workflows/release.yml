@@ -1,0 +1,52 @@
+name: release
+
+# Tag a commit on main as vX.Y.Z and push the tag: the car and PC builds run,
+# the SD-card image is made, and a GitHub Release carries all of them.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  car:
+    uses: ./.github/workflows/car.yml
+  pc:
+    uses: ./.github/workflows/pc.yml
+
+  publish:
+    name: GitHub Release
+    needs: [car, pc]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the release files
+        run: |
+          mkdir -p release
+          cp artifacts/rumicar-zero2cam-deb-arm64/*.deb release/
+          cp artifacts/rumicar-zero2cam-image/* release/
+          (cd artifacts/RumiCarDriveManager-win-x64 && zip -r "../../release/RumiCarDriveManager-${GITHUB_REF_NAME}-win-x64.zip" .)
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          ls -l release
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "RumiCar Zero2Cam ${GITHUB_REF_NAME}"
+            echo
+            echo "- \`rumicar-zero2cam-*.img.xz\`: 標準 SD カードイメージ（Raspberry Pi OS Lite 64bit ＋ 車載ソフト。Raspberry Pi Imager の「Use custom」で書き込み）"
+            echo "- \`rumicar-zero2cam_*_arm64.deb\`: 車載ソフトのパッケージ（既存の Raspberry Pi OS に入れる場合）"
+            echo "- \`RumiCarDriveManager-*-win-x64.zip\`: PC の走行管理アプリ（Windows x64、単一の exe）"
+            echo "- \`SHA256SUMS.txt\`: 各ファイルのダイジェスト"
+            echo
+            echo "初期設定：ユーザー rumicar / rumicar、SSH 有効、ホスト名 rumicar、Wi-Fi AP の SSID RumiCar（開放）、車のアドレス 10.42.0.1。詳細は docs/RumiCar-Zero2Cam 仕様書.docx。"
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "RumiCar Zero2Cam $GITHUB_REF_NAME" --notes-file notes.md release/*

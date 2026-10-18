@@ -7,6 +7,7 @@ on:
   pull_request:
     paths: ['car/**', '.github/workflows/car.yml']
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -113,3 +114,34 @@ jobs:
           name: rumicar-zero2cam-deb-${{ matrix.arch }}
           path: dist
           if-no-files-found: error
+
+  image:
+    name: SD-card image (arm64)
+    # Needs root and loop devices on the runner itself, so no container here.
+    # Not run for pull requests (it downloads the official image and takes a while);
+    # use "Run workflow" on a branch to try it.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rumicar-zero2cam-deb-arm64
+          path: deb
+
+      - name: Build the image
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils curl openssl
+          sudo car/image/build-image.sh --deb deb/rumicar-zero2cam_*_arm64.deb --out dist
+
+      - name: Upload the image
+        uses: actions/upload-artifact@v5
+        with:
+          name: rumicar-zero2cam-image
+          path: dist
+          if-no-files-found: error
+          compression-level: 0
