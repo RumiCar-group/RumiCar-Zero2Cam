@@ -153,6 +153,18 @@ void VersionStore::restore_current(const std::string& kind, const std::string& r
     link_atomic(kind, "../" + sub + "/" + name, false);
 }
 
+void VersionStore::remove(const std::string& kind, const std::string& dir_name) const {
+    const std::string sub = subdir_for(kind);
+    if (!is_plain_dir_name(dir_name)) throw std::runtime_error("bad directory name '" + dir_name + "'");
+    if (link_target("current", kind.c_str()) == dir_name) throw std::runtime_error(dir_name + " is the current " + kind);
+    if (link_target("previous", kind.c_str()) == dir_name) throw std::runtime_error(dir_name + " is the previous " + kind + " (kept for rollback)");
+    const fs::path dir = fs::path(state_dir_) / sub / dir_name;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) throw std::runtime_error(sub + "/" + dir_name + " does not exist");
+    fs::remove_all(dir, ec);
+    if (ec) throw std::runtime_error("cannot remove " + dir.string() + ": " + ec.message());
+}
+
 std::vector<InstalledVersion> VersionStore::list(const std::string& kind) const {
     const fs::path root = fs::path(state_dir_) / subdir_for(kind);
     std::vector<InstalledVersion> out;

@@ -7,6 +7,20 @@ using RumiCar.Protocol;
 
 namespace RumiCar.DriveManager;
 
+/// <summary>One installed logic or pack on the car (from list_versions).</summary>
+public sealed class VersionRow
+{
+    public string Kind { get; init; } = "";       // "logic" or "pack"
+    public string Name { get; init; } = "";       // directory name
+    public string Version { get; init; } = "";
+    public bool Verified { get; init; }
+    public string Error { get; init; } = "";
+    public bool IsCurrent { get; init; }
+    public bool IsPrevious { get; init; }
+    public string Display =>
+        $"{(Kind == "logic" ? "ロジック" : "データ")}  {Name}  {(IsCurrent ? "[使用中]" : IsPrevious ? "[直前]" : "")}{(Verified ? "" : "  !検証失敗: " + Error)}";
+}
+
 /// <summary>State shown by the main window.  Updated on the UI thread only.</summary>
 public sealed class MainViewModel : INotifyPropertyChanged
 {
@@ -27,6 +41,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _versions = "-";
     private string _battery = "-";
     private string _frames = "0";
+    private string _pushStatus = "-";
+    private VersionRow? _selectedVersion;
     private BitmapImage? _image;
 
     public string Host { get => _host; set => Set(ref _host, value); }
@@ -45,6 +61,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string Versions { get => _versions; set => Set(ref _versions, value); }
     public string Battery { get => _battery; set => Set(ref _battery, value); }
     public string Frames { get => _frames; set => Set(ref _frames, value); }
+    public string PushStatus { get => _pushStatus; set => Set(ref _pushStatus, value); }
+    public VersionRow? SelectedVersion { get => _selectedVersion; set => Set(ref _selectedVersion, value); }
+    public ObservableCollection<VersionRow> InstalledVersions { get; } = new();
     public BitmapImage? Image { get => _image; set => Set(ref _image, value); }
 
     public ObservableCollection<string> Log { get; } = new();

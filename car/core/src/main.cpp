@@ -224,6 +224,7 @@ int main(int argc, char** argv) {
         [&](const std::string& type, const json& params) { return handler.handle(type, params); },
         [&](bool connected, const std::string&) {
             state.client_connected(connected);
+            if (!connected) handler.on_client_disconnected();
             if (!connected && state.mode() == DriveMode::Manual) {
                 if (state.set_estop(true, "disconnected")) log::warn("PC disconnected in manual mode: emergency stop");
             }

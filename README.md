@@ -45,7 +45,8 @@ GitHub Actions が同じ手順で実行ファイルを作り、成果物（`car-
 - 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager）と `set_wifi`、ロジック／パックの走行中差し替え（ssh または PC から）、manifest による検証、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリの画面
 - 配布：標準 SD カードイメージ（`car/image/`）、タグで GitHub Release（イメージ・.deb・PC アプリ）
-- 未実装（次の版）：走行管理アプリからのファイル転送（push）、画像を使う走行ロジック
+- PC → 車：走行管理アプリからロジック／データを送って有効化・ロールバック・削除
+- 未実装（次の版）：画像を使う走行ロジック
 
 libcamera 無しの環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF だけで走ります）。
 

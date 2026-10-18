@@ -35,15 +35,6 @@ uint32_t need_uint(const json& j, const char* key) {
     return v.get<uint32_t>();
 }
 
-bool safe_relative_path(const std::string& p) {
-    if (p.empty() || p.front() == '/' || p == "manifest.json") return false;
-    const fs::path path(p);
-    for (const auto& part : path) {
-        if (part == ".." || part == ".") return false;
-    }
-    return true;
-}
-
 bool is_hex64(const std::string& s) {
     if (s.size() != 64) return false;
     for (char c : s) {
@@ -54,6 +45,16 @@ bool is_hex64(const std::string& s) {
 }
 
 } // namespace
+
+bool is_safe_relative_path(const std::string& p) {
+    if (p.empty() || p.front() == '/' || p == "manifest.json") return false;
+    if (p.find('\\') != std::string::npos || p.find('\0') != std::string::npos) return false;
+    const fs::path path(p);
+    for (const auto& part : path) {
+        if (part == ".." || part == "." || part.empty()) return false;
+    }
+    return true;
+}
 
 Manifest parse_manifest(const std::string& json_text) {
     json j;
@@ -83,7 +84,7 @@ Manifest parse_manifest(const std::string& json_text) {
         m.version = need_string(j, "version");
         m.abi = need_uint(j, "abi");
         m.entry = need_string(j, "entry");
-        if (!safe_relative_path(m.entry)) throw std::runtime_error("manifest: 'entry' is not a safe relative path");
+        if (!is_safe_relative_path(m.entry)) throw std::runtime_error("manifest: 'entry' is not a safe relative path");
     } else {
         throw std::runtime_error("manifest: unknown kind '" + kind + "'");
     }
@@ -95,7 +96,7 @@ Manifest parse_manifest(const std::string& json_text) {
         if (!f.is_object()) throw std::runtime_error("manifest: each file entry must be an object");
         ManifestFile mf;
         mf.path = need_string(f, "path");
-        if (!safe_relative_path(mf.path)) throw std::runtime_error("manifest: unsafe file path '" + mf.path + "'");
+        if (!is_safe_relative_path(mf.path)) throw std::runtime_error("manifest: unsafe file path '" + mf.path + "'");
         mf.sha256 = need_string(f, "sha256");
         if (!is_hex64(mf.sha256)) throw std::runtime_error("manifest: bad sha256 for '" + mf.path + "'");
         const json& b = need(f, "bytes");

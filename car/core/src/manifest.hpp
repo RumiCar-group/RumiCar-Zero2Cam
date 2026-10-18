@@ -36,6 +36,10 @@ struct Manifest {
     std::string dir_name() const { return id + "-" + version; }
 };
 
+// A path a manifest may list: relative, no '.'/'..' components, no
+// backslash, not manifest.json itself.
+bool is_safe_relative_path(const std::string& p);
+
 // Parse manifest.json text.  Throws std::runtime_error with a precise message.
 Manifest parse_manifest(const std::string& json_text);
 

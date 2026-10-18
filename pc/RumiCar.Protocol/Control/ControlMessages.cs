@@ -18,6 +18,11 @@ public static class RequestType
     public const string Rollback = "rollback";
     public const string SetWifi = "set_wifi";
     public const string GetLog = "get_log";
+    public const string UploadBegin = "upload_begin";
+    public const string UploadChunk = "upload_chunk";
+    public const string UploadEnd = "upload_end";
+    public const string UploadAbort = "upload_abort";
+    public const string DeleteVersion = "delete_version";
 }
 
 /// <summary>Driving modes selectable with set_mode.</summary>
@@ -149,6 +154,44 @@ public static class ControlCodec
     }
 
     public static ControlRequest GetLog(long id, int lines) => Build(id, RequestType.GetLog, new { lines });
+
+    /// <summary>One file announced in upload_begin (path relative to the directory, forward slashes).</summary>
+    public sealed record UploadFile(string Path, long Bytes, string Sha256);
+
+    /// <summary>Largest payload (before base64) the car accepts per upload_chunk.</summary>
+    public const int UploadChunkBytes = 32 * 1024;
+
+    public static ControlRequest UploadBegin(long id, string kind, string directoryName, IReadOnlyList<UploadFile> files)
+    {
+        ValidateKind(kind);
+        if (directoryName.Length == 0 || directoryName.Contains('/') || directoryName.Contains('\\') || directoryName.StartsWith('.'))
+            throw new ArgumentException("bad directory name", nameof(directoryName));
+        if (files.Count == 0) throw new ArgumentException("no files", nameof(files));
+        return Build(id, RequestType.UploadBegin, new
+        {
+            kind,
+            name = directoryName,
+            files = files.Select(f => new { path = f.Path, bytes = f.Bytes, sha256 = f.Sha256 }).ToArray(),
+        });
+    }
+
+    public static ControlRequest UploadChunk(long id, string path, long offset, ReadOnlyMemory<byte> data)
+    {
+        if (data.Length > UploadChunkBytes) throw new ArgumentOutOfRangeException(nameof(data), "chunk too large");
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        return Build(id, RequestType.UploadChunk, new { path, offset, data = Convert.ToBase64String(data.Span) });
+    }
+
+    public static ControlRequest UploadEnd(long id) => Build(id, RequestType.UploadEnd, null);
+    public static ControlRequest UploadAbort(long id) => Build(id, RequestType.UploadAbort, null);
+
+    public static ControlRequest DeleteVersion(long id, string kind, string directoryName)
+    {
+        ValidateKind(kind);
+        if (directoryName.Length == 0 || directoryName.Contains('/') || directoryName.Contains('\\') || directoryName.StartsWith('.'))
+            throw new ArgumentException("bad directory name", nameof(directoryName));
+        return Build(id, RequestType.DeleteVersion, new { kind, name = directoryName });
+    }
 
     private static void ValidateKind(string kind)
     {

@@ -161,6 +161,51 @@ void make_logic(const fs::path& dir, const std::string& name, const std::string&
     write_file(dir / "manifest.json", m.dump(2) + "\n");
 }
 
+std::string b64encode(const std::string& in) {
+    static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    size_t i = 0;
+    while (i + 2 < in.size()) {
+        const uint32_t v = (static_cast<uint8_t>(in[i]) << 16) | (static_cast<uint8_t>(in[i + 1]) << 8) | static_cast<uint8_t>(in[i + 2]);
+        out += tbl[(v >> 18) & 63]; out += tbl[(v >> 12) & 63]; out += tbl[(v >> 6) & 63]; out += tbl[v & 63];
+        i += 3;
+    }
+    if (i + 1 == in.size()) {
+        const uint32_t v = static_cast<uint8_t>(in[i]) << 16;
+        out += tbl[(v >> 18) & 63]; out += tbl[(v >> 12) & 63]; out += "==";
+    } else if (i + 2 == in.size()) {
+        const uint32_t v = (static_cast<uint8_t>(in[i]) << 16) | (static_cast<uint8_t>(in[i + 1]) << 8);
+        out += tbl[(v >> 18) & 63]; out += tbl[(v >> 12) & 63]; out += tbl[(v >> 6) & 63]; out += '=';
+    }
+    return out;
+}
+
+// Declared file list for upload_begin from a directory on disk.
+json file_list(const fs::path& dir) {
+    json files = json::array();
+    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string rel = fs::relative(entry.path(), dir).generic_string();
+        const std::string content = read_file(entry.path());
+        files.push_back({{"path", rel}, {"sha256", sha256_hex(content)}, {"bytes", content.size()}});
+    }
+    return files;
+}
+
+// Sends every file of `dir` in chunks of `chunk` bytes; returns the first failing response (or null).
+json send_files(Client& c, const fs::path& dir, size_t chunk) {
+    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string rel = fs::relative(entry.path(), dir).generic_string();
+        const std::string content = read_file(entry.path());
+        for (size_t off = 0; off < content.size(); off += chunk) {
+            const json r = request(c, "upload_chunk", {{"path", rel}, {"offset", off}, {"data", b64encode(content.substr(off, chunk))}});
+            if (!r["ok"].get<bool>()) return r;
+        }
+    }
+    return json();
+}
+
 // Stands in for the control loop's activation handling.
 struct FakeLoop {
     CarState& state;
@@ -248,7 +293,10 @@ void test_servers(const fs::path& base_pack) {
     std::atomic<int> connects{0}, disconnects{0};
     net::ControlServer control("127.0.0.1", 0,
         [&](const std::string& type, const json& params) { return handler.handle(type, params); },
-        [&](bool connected, const std::string&) { if (connected) ++connects; else ++disconnects; });
+        [&](bool connected, const std::string&) {
+            if (connected) ++connects;
+            else { ++disconnects; handler.on_client_disconnected(); }
+        });
     net::TelemetryServer telemetry("127.0.0.1", 0, 2);
     state.set_event_sink([&](const std::string& event, const json& data) { control.push_event(event, data); });
     control.start();
@@ -386,6 +434,106 @@ void test_servers(const fs::path& base_pack) {
         CHECK(threw);
     }
 
+    // --- uploads from the PC -----------------------------------------------------
+    {
+        const fs::path src = tmp / "src-0.3.0";
+        make_pack(src, "base-tof", "0.3.0", base_params + "\n\n\n");   // different content than 0.1.0
+        write_file(src / "notes" / "readme.txt", std::string(100000, 'x'));           // a sub-directory and a multi-chunk file
+        {   // the manifest must list every file: rewrite it with the extra file
+            json m = json::parse(read_file(src / "manifest.json"));
+            const std::string notes = read_file(src / "notes" / "readme.txt");
+            m["files"].push_back({{"path", "notes/readme.txt"}, {"sha256", sha256_hex(notes)}, {"bytes", notes.size()}});
+            write_file(src / "manifest.json", m.dump(2) + "\n");
+        }
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-0.3.0"}, {"files", file_list(src)}});
+        CHECK_MSG(r["ok"].get<bool>(), r.dump());
+        CHECK(r["result"]["chunk_bytes"] == 32768);
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "other-1.0.0"}, {"files", file_list(src)}});
+        CHECK(!r["ok"].get<bool>());   // one at a time
+        r = request(c, "upload_chunk", {{"path", "params.json"}, {"offset", 5}, {"data", "QUJD"}});
+        CHECK(!r["ok"].get<bool>());   // wrong offset
+        r = request(c, "upload_chunk", {{"path", "undeclared.bin"}, {"offset", 0}, {"data", "QUJD"}});
+        CHECK(!r["ok"].get<bool>());
+        r = request(c, "upload_chunk", {{"path", "params.json"}, {"offset", 0}, {"data", "not base64!"}});
+        CHECK(!r["ok"].get<bool>());
+        r = request(c, "upload_end", nullptr);
+        CHECK(!r["ok"].get<bool>());   // incomplete: nothing installed, upload discarded
+        CHECK(!fs::exists(state_dir / "packs" / "base-tof-0.3.0"));
+        CHECK(!fs::exists(state_dir / "incoming" / "pack-base-tof-0.3.0"));
+
+        // The whole thing, in 1000-byte chunks.
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-0.3.0"}, {"files", file_list(src)}});
+        CHECK_MSG(r["ok"].get<bool>(), r.dump());
+        json fail = send_files(c, src, 1000);
+        CHECK_MSG(fail.is_null(), fail.dump());
+        r = request(c, "upload_end", nullptr);
+        CHECK_MSG(r["ok"].get<bool>(), r.dump());
+        CHECK(r["result"]["version"] == "0.3.0" && r["result"]["id"] == "base-tof");
+        CHECK(fs::is_regular_file(state_dir / "packs" / "base-tof-0.3.0" / "notes" / "readme.txt"));
+        r = request(c, "list_versions", nullptr);
+        {
+            bool found = false;
+            for (const auto& p : r["result"]["packs"]) if (p["name"] == "base-tof-0.3.0") found = p["verified"].get<bool>();
+            CHECK(found);
+        }
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-0.3.0"}, {"files", file_list(src)}});
+        CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("already installed") != std::string::npos);
+
+        // Rejections at upload_begin.
+        json bad = file_list(src);
+        bad[0]["path"] = "../escape";
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "x-1.0.0"}, {"files", bad}});
+        CHECK(!r["ok"].get<bool>());
+        json no_manifest = json::array({{{"path", "params.json"}, {"sha256", std::string(64, 'a')}, {"bytes", 1}}});
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "x-1.0.0"}, {"files", no_manifest}});
+        CHECK(!r["ok"].get<bool>());
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "../x"}, {"files", file_list(src)}});
+        CHECK(!r["ok"].get<bool>());
+        r = request(c, "upload_begin", {{"kind", "firmware"}, {"name", "x-1.0.0"}, {"files", file_list(src)}});
+        CHECK(!r["ok"].get<bool>());
+
+        // Content that does not match its declared digest is refused at upload_end.
+        const fs::path bad_src = tmp / "src-bad";
+        make_pack(bad_src, "base-tof", "0.4.0", base_params + " ");
+        json declared = file_list(bad_src);
+        write_file(bad_src / "params.json", base_params + "!");   // changed after declaring (same length, other digest)
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-0.4.0"}, {"files", declared}});
+        CHECK(r["ok"].get<bool>());
+        fail = send_files(c, bad_src, 32768);
+        CHECK(fail.is_null());
+        r = request(c, "upload_end", nullptr);
+        CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("sha256") != std::string::npos);
+        CHECK(!fs::exists(state_dir / "packs" / "base-tof-0.4.0"));
+
+        // A directory name that does not match the manifest is refused at upload_end.
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-9.9.9"}, {"files", file_list(src)}});
+        CHECK(r["ok"].get<bool>());
+        fail = send_files(c, src, 32768);
+        CHECK(fail.is_null());
+        r = request(c, "upload_end", nullptr);
+        CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("does not match") != std::string::npos);
+
+        // abort cleans up and allows a new upload.
+        r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-0.5.0"}, {"files", file_list(src)}});
+        CHECK(r["ok"].get<bool>());
+        r = request(c, "upload_abort", nullptr);
+        CHECK(r["ok"].get<bool>());
+        CHECK(!fs::exists(state_dir / "incoming" / "pack-base-tof-0.5.0"));
+        r = request(c, "upload_end", nullptr);
+        CHECK(!r["ok"].get<bool>());
+
+        // delete_version: never the current or previous one.
+        r = request(c, "delete_version", {{"kind", "pack"}, {"name", "base-tof-0.1.0"}});
+        CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("current") != std::string::npos);
+        r = request(c, "delete_version", {{"kind", "pack"}, {"name", "base-tof-0.3.0"}});
+        CHECK_MSG(r["ok"].get<bool>(), r.dump());
+        CHECK(!fs::exists(state_dir / "packs" / "base-tof-0.3.0"));
+        r = request(c, "delete_version", {{"kind", "pack"}, {"name", "base-tof-0.3.0"}});
+        CHECK(!r["ok"].get<bool>());
+        r = request(c, "delete_version", {{"kind", "pack"}, {"name", "../x"}});
+        CHECK(!r["ok"].get<bool>());
+    }
+
     // --- misc requests -----------------------------------------------------------
     r = request(c, "set_wifi", {{"ssid", "X"}, {"channel", 6}});
     CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("not configured") != std::string::npos);
@@ -431,12 +579,11 @@ void test_servers(const fs::path& base_pack) {
     CHECK(t.connected());
     for (int i = 0; i < 100 && telemetry.client_count() == 0; ++i) std::this_thread::sleep_for(10ms);
     CHECK(telemetry.client_count() == 1);
+    // One frame at a time: the test server keeps only 2 frames per client, so
+    // publishing several before the reader catches up would (correctly) drop some.
     for (uint32_t seq = 1; seq <= 3; ++seq) {
         const json header = {{"seq", seq}, {"tof_mm", {100, 200, 300}}, {"state_name", "CRUISE"}};
         telemetry.publish(std::make_shared<const std::vector<uint8_t>>(net::encode_telemetry_frame(header.dump(), {})));
-        std::this_thread::sleep_for(5ms);
-    }
-    for (uint32_t seq = 1; seq <= 3; ++seq) {
         const auto fixed = t.read_exact(11);
         CHECK(fixed.size() == 11);
         if (fixed.size() != 11) break;
@@ -474,6 +621,8 @@ void test_servers(const fs::path& base_pack) {
     // --- disconnect and reconnect ----------------------------------------------
     r = request(c, "set_mode", {{"mode", "manual"}});
     CHECK(r["ok"].get<bool>());
+    r = request(c, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-0.6.0"}, {"files", file_list(tmp / "src-0.3.0")}});
+    CHECK(r["ok"].get<bool>());
     c.close();
     for (int i = 0; i < 200 && disconnects.load() == 0; ++i) std::this_thread::sleep_for(10ms);
     CHECK(disconnects.load() == 1);
@@ -485,6 +634,11 @@ void test_servers(const fs::path& base_pack) {
         CHECK(r["ok"].get<bool>());
         r = request(again, "get_status", nullptr);
         CHECK(r["ok"].get<bool>() && r["result"]["mode"] == "manual");
+        CHECK(!fs::exists(state_dir / "incoming" / "pack-base-tof-0.6.0"));   // discarded on disconnect
+        r = request(again, "upload_begin", {{"kind", "pack"}, {"name", "base-tof-0.6.0"}, {"files", file_list(tmp / "src-0.3.0")}});
+        CHECK(r["ok"].get<bool>());
+        r = request(again, "upload_abort", nullptr);
+        CHECK(r["ok"].get<bool>());
     }
     for (int i = 0; i < 200 && disconnects.load() < 2; ++i) std::this_thread::sleep_for(10ms);
     CHECK(disconnects.load() == 2);

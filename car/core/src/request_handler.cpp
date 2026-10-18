@@ -47,8 +47,12 @@ json versions_json(const std::vector<InstalledVersion>& list) {
 
 RequestHandler::RequestHandler(CarState& state, const VersionStore& store, WifiAp& wifi, std::string car_name,
                                std::string core_version, std::chrono::milliseconds activation_wait)
-    : state_(state), store_(store), wifi_(wifi), car_name_(std::move(car_name)), core_version_(std::move(core_version)),
-      activation_wait_(activation_wait) {}
+    : state_(state), store_(store), wifi_(wifi), uploads_(store.state_dir()), car_name_(std::move(car_name)),
+      core_version_(std::move(core_version)), activation_wait_(activation_wait) {
+    uploads_.clean_incoming();
+}
+
+void RequestHandler::on_client_disconnected() { uploads_.abort(); }
 
 json RequestHandler::activation_outcome(const char* what) {
     const uint64_t gen = state_.request_activation();
@@ -131,6 +135,28 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         }
         log::info("rollback requested by the PC: " + kind);
         return activation_outcome("rollback");
+    }
+    if (type == "upload_begin" || type == "upload_chunk" || type == "upload_end" || type == "upload_abort") {
+        try {
+            if (type == "upload_begin") return uploads_.begin(params);
+            if (type == "upload_chunk") return uploads_.chunk(params);
+            if (type == "upload_end") return uploads_.end();
+            uploads_.abort();
+            return nullptr;
+        } catch (const std::exception& e) {
+            throw RequestError(e.what());
+        }
+    }
+    if (type == "delete_version") {
+        const std::string kind = require_kind(params);
+        const std::string name = require_string(params, "name");
+        try {
+            store_.remove(kind, name);
+        } catch (const std::exception& e) {
+            throw RequestError(e.what());
+        }
+        log::info("deleted " + kind + " " + name + " at the PC's request");
+        return nullptr;
     }
     if (type == "set_wifi") {
         const std::string ssid = require_string(params, "ssid");
