@@ -1,5 +1,7 @@
 # RumiCar Zero2Cam
 
+[English](README.en.md) | **日本語**
+
 Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフトウェアです。
 車載側（C++）、PC 側の走行管理アプリ（C# / .NET 10）、両者の通信形式、配布形式、自動ビルドを一つのリポジトリで管理します。
 
