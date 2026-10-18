@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "loop_period_ms": 50,
+  "watchdog_ms": 200,
+  "activation_poll_ms": 500,
+  "max_drive_permille": 1000,
+  "paths": {
+    "state_dir": "/var/lib/rumicar"
+  },
+  "gpio": {
+    "chip": "/dev/gpiochip0",
+    "steer_in1": 17,
+    "steer_in2": 27,
+    "tof_xshut": [23, 24, 25]
+  },
+  "pwm": {
+    "chip": "/sys/class/pwm/pwmchip0",
+    "drive_in1": 0,
+    "drive_in2": 1,
+    "frequency_hz": 960,
+    "kick_permille": 784,
+    "kick_ms": 20
+  },
+  "i2c": {
+    "bus": 1,
+    "tof_addresses": [43, 45, 47],
+    "tof_read_timeout_ms": 100
+  }
+}

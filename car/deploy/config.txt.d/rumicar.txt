@@ -1,0 +1,11 @@
+# RumiCar Zero2Cam — lines to append to /boot/firmware/config.txt
+# (the image build appends this file; on a hand-made card copy it in).
+
+# I2C bus 1 for the three VL53L0X sensors (GPIO2 SDA / GPIO3 SCL)
+dtparam=i2c_arm=on
+
+# Hardware PWM for the drive motor: pwm0 -> GPIO18 (BIN1), pwm1 -> GPIO13 (BIN2)
+dtoverlay=pwm-2chan,pin=18,func=2,pin2=13,func2=4
+
+# Camera Module 2 on the libcamera stack (auto-detected)
+camera_auto_detect=1

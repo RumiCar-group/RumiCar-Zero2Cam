@@ -1,0 +1,22 @@
+[Unit]
+Description=RumiCar Zero2Cam control loop
+After=local-fs.target
+# The car must be able to drive without any network; do not wait for it.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rumicar-core /etc/rumicar/core.json
+Restart=on-failure
+RestartSec=5
+# Hardware access: GPIO, I2C and the PWM sysfs tree require root on a stock image.
+User=root
+# Keep the journal readable on a small SD card.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rumicar-core
+# Stop promptly; the core brakes the motors on SIGTERM.
+TimeoutStopSec=5
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
