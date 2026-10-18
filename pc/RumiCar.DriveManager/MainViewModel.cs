@@ -22,6 +22,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _logicState = "-";
     private string _tof = "- / - / -";
     private string _command = "-";
+    private string _logicCommand = "-";
+    private string _estop = "-";
     private string _versions = "-";
     private string _battery = "-";
     private string _frames = "0";
@@ -38,6 +40,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string LogicState { get => _logicState; set => Set(ref _logicState, value); }
     public string Tof { get => _tof; set => Set(ref _tof, value); }
     public string Command { get => _command; set => Set(ref _command, value); }
+    public string LogicCommand { get => _logicCommand; set => Set(ref _logicCommand, value); }
+    public string EStop { get => _estop; set => Set(ref _estop, value); }
     public string Versions { get => _versions; set => Set(ref _versions, value); }
     public string Battery { get => _battery; set => Set(ref _battery, value); }
     public string Frames { get => _frames; set => Set(ref _frames, value); }

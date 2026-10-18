@@ -18,6 +18,9 @@ public class TelemetryFrameTests
             StateName = "TURN_RIGHT",
             Flags = 0,
             Mode = "auto",
+            EStop = seq % 2 == 0,
+            LogicSteer = -1,
+            LogicDrivePermille = 420,
             LogicVersion = "0.1.0",
             PackVersion = "0.1.0",
             ImageWidth = jpegBytes > 0 ? 320 : 0,
@@ -37,8 +40,30 @@ public class TelemetryFrameTests
         Assert.Equal(5u, frame!.Header.Seq);
         Assert.Equal(new[] { 120, 8190, -1 }, frame.Header.TofMm);
         Assert.Equal("TURN_RIGHT", frame.Header.StateName);
+        Assert.False(frame.Header.EStop);
+        Assert.Equal(-1, frame.Header.LogicSteer);
+        Assert.Equal(420, frame.Header.LogicDrivePermille);
         Assert.Equal(1000, frame.Jpeg.Length);
         Assert.Equal((byte)(999 * 7 % 256), frame.Jpeg[999]);
+    }
+
+    [Fact]
+    public void HeaderWrittenByTheCarDecodes()
+    {
+        // Exactly the key set rumicar-core writes (car/core/src/main.cpp), plus an unknown key a later version might add.
+        const string json = "{\"battery_mv\":0,\"drive_permille\":650,\"estop\":true,\"flags\":1,\"image_h\":0,\"image_w\":0," +
+                            "\"logic_drive_permille\":700,\"logic_steer\":1,\"logic_version\":\"0.1.0\",\"mode\":\"manual\"," +
+                            "\"pack_version\":\"0.1.0\",\"seq\":42,\"state\":2,\"state_name\":\"TURN_RIGHT\",\"steer\":0," +
+                            "\"t_us\":123456789,\"tof_mm\":[120,8190,-1],\"future_key\":{\"x\":1}}";
+        var h = TelemetryFrameCodec.HeaderFromJson(json);
+        Assert.NotNull(h);
+        Assert.Equal(42u, h!.Seq);
+        Assert.True(h.EStop);
+        Assert.Equal("manual", h.Mode);
+        Assert.Equal(0, h.Steer);
+        Assert.Equal(1, h.LogicSteer);
+        Assert.Equal(700, h.LogicDrivePermille);
+        Assert.Equal(123456789UL, h.TimestampMicroseconds);
     }
 
     [Fact]

@@ -67,6 +67,9 @@ public partial class MainWindow : Window
             _vm.Connected = true;
             _vm.ConnectionState = "接続";
             ConnectButton.Content = "切断";
+            var carName = CarConnection.GetString(car.HelloResult, "car");
+            var coreVersion = CarConnection.GetString(car.HelloResult, "core_version");
+            if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}");
             var status = await car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None);
             if (status.Ok && status.Result is JsonElement result) ApplyStatus(result);
             else if (!status.Ok) _vm.AddLog("状態取得: 拒否 (" + status.Error + ")");
@@ -133,11 +136,21 @@ public partial class MainWindow : Window
                 if (evt.Data is JsonElement data) ApplyStatus(data);
                 break;
             case "estop":
-                _vm.AddLog("非常停止: " + (CarConnection.GetString(evt.Data, "reason") ?? ""));
+            {
+                var active = evt.Data is JsonElement d && d.ValueKind == JsonValueKind.Object && d.TryGetProperty("active", out var a) && a.ValueKind == JsonValueKind.True;
+                var reason = CarConnection.GetString(evt.Data, "reason") ?? "";
+                _vm.EStop = FormatEStop(active, reason);
+                _vm.AddLog(active ? "非常停止 作動: " + DescribeEStopReason(reason) : "非常停止 解除");
                 break;
+            }
             case "activation":
-                _vm.AddLog("切り替え: " + (CarConnection.GetString(evt.Data, "message") ?? ""));
+            {
+                var ok = evt.Data is JsonElement d && d.ValueKind == JsonValueKind.Object && d.TryGetProperty("ok", out var o) && o.ValueKind == JsonValueKind.True;
+                var error = CarConnection.GetString(evt.Data, "error") ?? "";
+                _vm.AddLog(ok ? "切り替え完了: " + (CarConnection.GetString(evt.Data, "logic_dir") ?? "") + " / " + (CarConnection.GetString(evt.Data, "pack_dir") ?? "")
+                              : "切り替え失敗（現行版を継続）: " + error);
                 break;
+            }
             default:
                 _vm.AddLog("event " + evt.Event);
                 break;
@@ -153,7 +166,25 @@ public partial class MainWindow : Window
         if (lv is not null || pv is not null) _vm.Versions = $"{lv ?? "?"} / {pv ?? "?"}";
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("battery_mv", out var mv) && mv.TryGetInt32(out var millivolts))
             _vm.Battery = FormatBattery(millivolts);
+        if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("estop", out var es) && (es.ValueKind == JsonValueKind.True || es.ValueKind == JsonValueKind.False))
+            _vm.EStop = FormatEStop(es.ValueKind == JsonValueKind.True, CarConnection.GetString(data, "estop_reason") ?? "");
+        var stateName = CarConnection.GetString(data, "state_name");
+        if (stateName is not null) _vm.LogicState = stateName;
     }
+
+    private static string FormatEStop(bool active, string reason) => active ? "作動中（" + DescribeEStopReason(reason) + "）" : "なし";
+
+    private static string DescribeEStopReason(string reason) => reason switch
+    {
+        "request" => "PC からの要求",
+        "heartbeat" => "heartbeat 途絶",
+        "disconnected" => "手動モード中に切断",
+        "" => "-",
+        _ => reason,
+    };
+
+    private static string DescribeCommand(int steer, int drivePermille) =>
+        $"操舵 {(steer < 0 ? "左" : steer > 0 ? "右" : "中央")}, 駆動 {drivePermille / 10.0:F1}%";
 
     private void SetMode(string mode)
     {
@@ -209,8 +240,11 @@ public partial class MainWindow : Window
         var h = frame.Header;
         _vm.Tof = $"{FormatTof(h.TofMm[0])} / {FormatTof(h.TofMm[1])} / {FormatTof(h.TofMm[2])}";
         _vm.LogicState = h.StateName.Length > 0 ? h.StateName : h.State.ToString();
-        _vm.Command = $"操舵 {(h.Steer < 0 ? "左" : h.Steer > 0 ? "右" : "中央")}, 駆動 {h.DrivePermille / 10.0:F1}%";
+        _vm.Command = DescribeCommand(h.Steer, h.DrivePermille);
+        _vm.LogicCommand = DescribeCommand(h.LogicSteer, h.LogicDrivePermille);
         if (h.Mode.Length > 0 && h.Mode != _vm.Mode) SetMode(h.Mode);
+        var estopText = h.EStop ? "作動中" : "なし";
+        if (!_vm.EStop.StartsWith(estopText, StringComparison.Ordinal)) _vm.EStop = estopText;
         if (h.LogicVersion.Length > 0 || h.PackVersion.Length > 0) _vm.Versions = $"{h.LogicVersion} / {h.PackVersion}";
         if (h.BatteryMillivolts > 0) _vm.Battery = FormatBattery(h.BatteryMillivolts);
 

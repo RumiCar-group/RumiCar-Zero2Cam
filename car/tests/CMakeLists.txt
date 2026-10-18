@@ -8,4 +8,9 @@ if(RUMICAR_BUILD_CORE)
   add_executable(test_pack test_pack.cpp)
   target_link_libraries(test_pack PRIVATE rumicar_core_lib)
   add_test(NAME pack COMMAND test_pack ${CMAKE_SOURCE_DIR}/packs/base $<TARGET_FILE:tof_drive>)
+
+  # Control/telemetry servers exercised over real TCP sockets on 127.0.0.1.
+  add_executable(test_network test_network.cpp)
+  target_link_libraries(test_network PRIVATE rumicar_core_lib)
+  add_test(NAME network COMMAND test_network ${CMAKE_SOURCE_DIR}/packs/base)
 endif()
