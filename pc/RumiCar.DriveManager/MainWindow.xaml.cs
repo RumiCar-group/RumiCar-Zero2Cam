@@ -100,7 +100,7 @@ public partial class MainWindow : Window
         _manualSteer = 0;
         _manualDrive = 0;
         ConnectButton.Content = "接続";
-        _vm.Versions.Clear();
+        _vm.InstalledVersions.Clear();
         _vm.PushStatus = "-";
         if (car is not null) await car.DisposeAsync();
     }
@@ -352,7 +352,7 @@ public partial class MainWindow : Window
                 return;
             }
             var selected = _vm.SelectedVersion?.Name;
-            _vm.Versions.Clear();
+            _vm.InstalledVersions.Clear();
             foreach (var (kind, key) in new[] { ("logic", "logic"), ("pack", "packs") })
             {
                 var current = GetNested(result, "current", kind);
@@ -361,7 +361,7 @@ public partial class MainWindow : Window
                 foreach (var v in arr.EnumerateArray())
                 {
                     var name = CarConnection.GetString(v, "name") ?? "";
-                    _vm.Versions.Add(new VersionRow
+                    _vm.InstalledVersions.Add(new VersionRow
                     {
                         Kind = kind,
                         Name = name,
@@ -373,7 +373,7 @@ public partial class MainWindow : Window
                     });
                 }
             }
-            _vm.SelectedVersion = _vm.Versions.FirstOrDefault(x => x.Name == selected);
+            _vm.SelectedVersion = _vm.InstalledVersions.FirstOrDefault(x => x.Name == selected);
         }
         catch (Exception ex)
         {
@@ -414,7 +414,7 @@ public partial class MainWindow : Window
             _vm.PushStatus = $"送信完了: {plan.Kind} {plan.DirectoryName}（「有効化」で切り替え）";
             _vm.AddLog("送信完了: " + plan.DirectoryName);
             await RefreshVersionsAsync();
-            _vm.SelectedVersion = _vm.Versions.FirstOrDefault(x => x.Name == plan.DirectoryName);
+            _vm.SelectedVersion = _vm.InstalledVersions.FirstOrDefault(x => x.Name == plan.DirectoryName);
         }
         catch (Exception ex)
         {

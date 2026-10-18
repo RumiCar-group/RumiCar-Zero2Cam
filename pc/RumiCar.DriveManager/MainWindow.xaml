@@ -80,7 +80,7 @@
             <TextBlock><Run Text="受信コマ数: "/><Run Text="{Binding Frames}"/></TextBlock>
 
             <TextBlock Text="版の管理（ロジック／データ）" FontWeight="Bold" Margin="0,12,0,0"/>
-            <ListBox x:Name="VersionList" ItemsSource="{Binding Versions}" SelectedItem="{Binding SelectedVersion}" DisplayMemberPath="Display" Height="150" Margin="0,4,0,4" FontFamily="Consolas"/>
+            <ListBox x:Name="VersionList" ItemsSource="{Binding InstalledVersions}" SelectedItem="{Binding SelectedVersion}" DisplayMemberPath="Display" Height="150" Margin="0,4,0,4" FontFamily="Consolas"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="一覧更新" Width="70" Click="OnVersionsRefreshClick" IsEnabled="{Binding Connected}"/>
                 <Button Content="送る…" Width="70" Margin="4,0,0,0" Click="OnPushClick" IsEnabled="{Binding Connected}"/>

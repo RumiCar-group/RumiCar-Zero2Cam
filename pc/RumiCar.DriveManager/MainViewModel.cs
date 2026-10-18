@@ -63,7 +63,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string Frames { get => _frames; set => Set(ref _frames, value); }
     public string PushStatus { get => _pushStatus; set => Set(ref _pushStatus, value); }
     public VersionRow? SelectedVersion { get => _selectedVersion; set => Set(ref _selectedVersion, value); }
-    public ObservableCollection<VersionRow> Versions { get; } = new();
+    public ObservableCollection<VersionRow> InstalledVersions { get; } = new();
     public BitmapImage? Image { get => _image; set => Set(ref _image, value); }
 
     public ObservableCollection<string> Log { get; } = new();
