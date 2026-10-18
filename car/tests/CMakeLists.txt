@@ -13,4 +13,8 @@ if(RUMICAR_BUILD_CORE)
   add_executable(test_network test_network.cpp)
   target_link_libraries(test_network PRIVATE rumicar_core_lib)
   add_test(NAME network COMMAND test_network ${CMAKE_SOURCE_DIR}/packs/base)
+
+  add_executable(test_camera test_camera.cpp)
+  target_link_libraries(test_camera PRIVATE rumicar_camera rumicar_core_lib)
+  add_test(NAME camera COMMAND test_camera)
 endif()

@@ -32,6 +32,9 @@ public sealed class TelemetryHeader
     /// <summary>Width/height of the JPEG, 0 when the frame carries no image.</summary>
     [JsonPropertyName("image_w")] public int ImageWidth { get; set; }
     [JsonPropertyName("image_h")] public int ImageHeight { get; set; }
+    /// <summary>Camera image counter and sensor timestamp (microseconds); 0 when the frame carries no image.</summary>
+    [JsonPropertyName("image_seq")] public uint ImageSeq { get; set; }
+    [JsonPropertyName("image_t_us")] public ulong ImageTimestampMicroseconds { get; set; }
 }
 
 /// <summary>One telemetry frame: header plus optional JPEG payload.</summary>

@@ -18,13 +18,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # arm64 is the car (Raspberry Pi Zero 2 W, 64-bit Raspberry Pi OS = Debian 13 "trixie").
+          # arm64 is the car (Raspberry Pi Zero 2 W, 64-bit Raspberry Pi OS = Debian 13 "trixie"
+          # plus the Raspberry Pi archive, which supplies the libcamera the car runs).
           - runner: ubuntu-24.04-arm
             arch: arm64
+            camera: "ON"
             publish: true
-          # amd64 is a second compiler pass for warnings and tests only.
+          # amd64 is a second compiler pass for warnings and tests only (no Raspberry Pi libcamera).
           - runner: ubuntu-24.04
             arch: amd64
+            camera: "OFF"
             publish: false
     runs-on: ${{ matrix.runner }}
     container: debian:trixie
@@ -35,16 +38,29 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config git ca-certificates python3 \
-            libgpiod-dev nlohmann-json3-dev libssl-dev
-          echo "gcc:      $(gcc --version | head -1)"
-          echo "cmake:    $(cmake --version | head -1)"
-          echo "libgpiod: $(pkg-config --modversion libgpiod)"
+            build-essential cmake pkg-config git ca-certificates curl gnupg python3 \
+            libgpiod-dev nlohmann-json3-dev libssl-dev libturbojpeg0-dev
+          echo "gcc:       $(gcc --version | head -1)"
+          echo "cmake:     $(cmake --version | head -1)"
+          echo "libgpiod:  $(pkg-config --modversion libgpiod)"
+          echo "turbojpeg: $(pkg-config --modversion libturbojpeg)"
+
+      - name: Add the Raspberry Pi archive and install libcamera (car build only)
+        if: matrix.camera == 'ON'
+        run: |
+          curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ trixie main" \
+            > /etc/apt/sources.list.d/raspi.list
+          apt-get update
+          apt-get install -y --no-install-recommends libcamera-dev
+          echo "libcamera: $(pkg-config --modversion libcamera)"
+          apt-cache policy libcamera-dev | head -5
 
       - uses: actions/checkout@v6
 
       - name: Configure
-        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release -DRUMICAR_WITH_CAMERA=${{ matrix.camera }}
 
       - name: Build (all warnings are errors)
         run: cmake --build build --parallel
