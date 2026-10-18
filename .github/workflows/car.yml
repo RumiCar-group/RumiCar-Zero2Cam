@@ -38,7 +38,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config git ca-certificates curl gnupg python3 \
+            build-essential cmake pkg-config git ca-certificates curl gnupg python3 dpkg-dev file \
             libgpiod-dev nlohmann-json3-dev libssl-dev libturbojpeg0-dev
           echo "gcc:       $(gcc --version | head -1)"
           echo "cmake:     $(cmake --version | head -1)"
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Configure
-        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release -DRUMICAR_WITH_CAMERA=${{ matrix.camera }}
+        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DRUMICAR_WITH_CAMERA=${{ matrix.camera }}
 
       - name: Build (all warnings are errors)
         run: cmake --build build --parallel
@@ -83,21 +83,33 @@ jobs:
       - name: Verify the bundled base pack
         run: python3 car/tools/make_manifest.py verify car/packs/base
 
-      - name: Stage an install tree
+      - name: Build the Debian package
         if: matrix.publish
         run: |
-          DESTDIR="$PWD/stage" cmake --install build --prefix /usr/local
-          ver="$(sed -n 's/^set(TOF_DRIVE_VERSION "\([^"]*\)").*/\1/p' car/logic/CMakeLists.txt)"
-          test -n "$ver"
-          python3 car/tools/make_manifest.py logic "stage/usr/local/lib/rumicar/logic/tof_drive-$ver" \
-            --name tof_drive --version "$ver" --entry libtof_drive.so
-          python3 car/tools/make_manifest.py verify "stage/usr/local/lib/rumicar/logic/tof_drive-$ver"
-          find stage -type f | sort
+          cd build && cpack -G DEB
+          ls -l *.deb
+          dpkg-deb --info *.deb
+          dpkg-deb --contents *.deb
 
-      - name: Upload car install tree
+      - name: Install the package in the container (postinst, dependencies from the Raspberry Pi archive)
+        if: matrix.publish
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./build/rumicar-zero2cam_*.deb
+          echo "--- /var/lib/rumicar"; find /var/lib/rumicar | sort
+          test "$(readlink /var/lib/rumicar/current/logic)" = "../logic/tof_drive-$(sed -n 's/^set(TOF_DRIVE_VERSION "\([^"]*\)").*/\1/p' car/CMakeLists.txt)"
+          test -L /var/lib/rumicar/current/pack
+          python3 car/tools/make_manifest.py verify /var/lib/rumicar/logic/tof_drive-*
+          python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/base-tof-*
+          test "$(stat -c %a /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection)" = "600"
+          test -x /usr/bin/rumicar-core && test -x /usr/bin/rumicar-activate
+          ldd /usr/bin/rumicar-core | grep -E "libcamera|libgpiod|libturbojpeg|libcrypto"
+          rumicar-activate show
+          mkdir -p dist && cp build/rumicar-zero2cam_*.deb dist/
+
+      - name: Upload the Debian package
         if: matrix.publish
         uses: actions/upload-artifact@v5
         with:
-          name: car-${{ matrix.arch }}
-          path: stage
+          name: rumicar-zero2cam-deb-${{ matrix.arch }}
+          path: dist
           if-no-files-found: error

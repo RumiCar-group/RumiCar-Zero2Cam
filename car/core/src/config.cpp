@@ -40,6 +40,14 @@ struct Section {
         return it->get<bool>();
     }
 
+    std::string get_string_allow_empty(const char* key, const std::string& current) {
+        auto it = j.find(key);
+        if (it == j.end()) return current;
+        seen.insert(key);
+        if (!it->is_string()) throw std::runtime_error("core.json: " + name + "." + key + " must be a string");
+        return it->get<std::string>();
+    }
+
     std::string get_string(const char* key, const std::string& current) {
         auto it = j.find(key);
         if (it == j.end()) return current;
@@ -151,6 +159,8 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.telemetry_port = s.get_int("telemetry_port", c.telemetry_port, 1, 65535);
         c.heartbeat_timeout_ms = s.get_int("heartbeat_timeout_ms", c.heartbeat_timeout_ms, 200, 10000);
         c.telemetry_queue_frames = s.get_int("telemetry_queue_frames", c.telemetry_queue_frames, 1, 200);
+        c.ap_connection = s.get_string_allow_empty("ap_connection", c.ap_connection);
+        c.nmcli_path = s.get_string("nmcli", c.nmcli_path);
         s.reject_unknown();
     }
     for (auto it = root.begin(); it != root.end(); ++it) {

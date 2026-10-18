@@ -1,0 +1,28 @@
+# RumiCar Zero2Cam — Wi-Fi access point profile for NetworkManager.
+# Installed to /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection (mode 0600).
+# The SSID/channel here are the defaults restored at every boot; set_wifi from the
+# PC changes them in memory only (nmcli connection modify --temporary).
+# An open network is intentional (docs 5.1, decision A).
+[connection]
+id=RumiCar-AP
+uuid=25015d74-b8aa-5e76-a603-282cf8a3790b
+type=wifi
+interface-name=wlan0
+autoconnect=true
+autoconnect-priority=100
+
+[wifi]
+mode=ap
+ssid=RumiCar
+band=bg
+channel=6
+powersave=2
+
+[ipv4]
+method=shared
+address1=10.42.0.1/24
+
+[ipv6]
+method=disabled
+
+[proxy]

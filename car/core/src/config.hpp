@@ -54,6 +54,8 @@ struct CoreConfig {
     int telemetry_port = 5601;
     int heartbeat_timeout_ms = 1000;  // manual mode: stop when the PC's heartbeat is older than this
     int telemetry_queue_frames = 16;  // per client; older frames are dropped beyond this
+    std::string ap_connection = "RumiCar-AP";   // NetworkManager connection id of the access point ("" = no set_wifi)
+    std::string nmcli_path = "/usr/bin/nmcli";
 };
 
 // Parse core.json text.  Every key is optional (defaults above) but unknown

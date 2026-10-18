@@ -22,6 +22,8 @@ add_library(rumicar_core_lib STATIC
   src/version_store.cpp
   src/car_state.cpp
   src/request_handler.cpp
+  src/wifi.cpp
+  src/util/process.cpp
   src/net/socket.cpp
   src/net/telemetry_frame.cpp
   src/net/telemetry_server.cpp
@@ -56,7 +58,11 @@ add_executable(rumicar-core src/main.cpp)
 target_compile_definitions(rumicar-core PRIVATE RUMICAR_CORE_VERSION="${RUMICAR_CORE_VERSION}")
 target_link_libraries(rumicar-core PRIVATE rumicar_core_lib rumicar_hw rumicar_camera Threads::Threads)
 
-install(TARGETS rumicar-core RUNTIME DESTINATION bin)
-install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-activate DESTINATION bin)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-core.service DESTINATION lib/systemd/system)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-core.service.in ${CMAKE_CURRENT_BINARY_DIR}/rumicar-core.service @ONLY)
+install(TARGETS rumicar-core RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-activate DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/rumicar-core.service DESTINATION lib/systemd/system)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/core.json DESTINATION /etc/rumicar)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/RumiCar-AP.nmconnection DESTINATION /etc/NetworkManager/system-connections
+        PERMISSIONS OWNER_READ OWNER_WRITE)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/config.txt.d/rumicar.txt DESTINATION share/rumicar/config.txt.d)

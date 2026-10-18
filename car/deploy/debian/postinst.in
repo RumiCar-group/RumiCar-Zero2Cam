@@ -1,0 +1,57 @@
+#!/bin/sh
+# rumicar-zero2cam postinst — seed the state directory with the shipped
+# logic and pack, point current/* at them, and enable the service.
+# (Generated from car/deploy/debian/postinst.in by CMake.)
+set -e
+
+STATE_DIR=/var/lib/rumicar
+LOGIC_DIR="@RUMICAR_LOGIC_INSTALL_DIR@"      # e.g. /usr/lib/rumicar/logic
+PACKS_DIR="@RUMICAR_PACKS_INSTALL_DIR@"      # e.g. /usr/share/rumicar/packs
+LOGIC_NAME="@RUMICAR_SHIPPED_LOGIC@"         # e.g. tof_drive-0.1.0
+PACK_NAME="@RUMICAR_SHIPPED_PACK@"           # e.g. base-tof-0.1.0
+ACTIVATE="@RUMICAR_BINDIR@/rumicar-activate"
+
+case "$1" in
+    configure)
+        mkdir -p "$STATE_DIR/logic" "$STATE_DIR/packs" "$STATE_DIR/current" "$STATE_DIR/previous" "$STATE_DIR/status"
+        # Copy the shipped versions into the state directory (never overwrite a
+        # version that is already there: the state directory is live data).
+        for d in "$LOGIC_DIR"/*/; do
+            n="$(basename "$d")"
+            [ -d "$STATE_DIR/logic/$n" ] || cp -a "$d" "$STATE_DIR/logic/$n"
+        done
+        for d in "$PACKS_DIR"/*/; do
+            n="$(basename "$d")"
+            [ -d "$STATE_DIR/packs/$n" ] || cp -a "$d" "$STATE_DIR/packs/$n"
+        done
+        # Make the shipped versions the active ones (previous/* keeps what ran before).
+        if [ "$(readlink "$STATE_DIR/current/logic" 2>/dev/null)" != "../logic/$LOGIC_NAME" ]; then
+            "$ACTIVATE" logic "$LOGIC_NAME"
+        fi
+        if [ "$(readlink "$STATE_DIR/current/pack" 2>/dev/null)" != "../packs/$PACK_NAME" ]; then
+            "$ACTIVATE" pack "$PACK_NAME"
+        fi
+        # NetworkManager must be able to read the access-point profile and must not share it.
+        if [ -f /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection ]; then
+            chmod 0600 /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection
+        fi
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+            systemctl enable rumicar-core.service || true
+            # A running core is restarted so the new binary takes over (it brakes on stop).
+            if systemctl is-active --quiet rumicar-core.service; then
+                systemctl restart rumicar-core.service || true
+            else
+                systemctl start rumicar-core.service || true
+            fi
+            if systemctl is-active --quiet NetworkManager.service; then
+                nmcli connection reload || true
+            fi
+        else
+            # Inside an image build (chroot): enable only; the first boot starts it.
+            systemctl enable rumicar-core.service 2>/dev/null || true
+        fi
+        ;;
+esac
+
+exit 0

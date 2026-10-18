@@ -38,6 +38,7 @@
 #include "request_handler.hpp"
 #include "rumicar/logic_api.h"
 #include "version_store.hpp"
+#include "wifi.hpp"
 
 #ifndef RUMICAR_CORE_VERSION
 #define RUMICAR_CORE_VERSION "0.0.0"
@@ -214,7 +215,8 @@ int main(int argc, char** argv) {
     }
 
     // --- network (optional: the car drives without it) -------------------------
-    RequestHandler handler(state, store, cfg.car_name, RUMICAR_CORE_VERSION);
+    WifiAp wifi(cfg.nmcli_path, cfg.ap_connection);
+    RequestHandler handler(state, store, wifi, cfg.car_name, RUMICAR_CORE_VERSION);
     net::TelemetryServer telemetry(cfg.bind_address, static_cast<uint16_t>(cfg.telemetry_port),
                                    static_cast<size_t>(cfg.telemetry_queue_frames));
     net::ControlServer control(

@@ -1,5 +1,7 @@
 #include "telemetry_server.hpp"
 
+#include <chrono>
+#include <poll.h>
 #include <stdexcept>
 
 #include "../log.hpp"
@@ -92,8 +94,19 @@ void TelemetryServer::client_loop(Client& c) {
         Frame frame;
         {
             std::unique_lock<std::mutex> lock(c.m);
-            c.cv.wait(lock, [&] { return c.closing || !c.queue.empty(); });
+            // Wake up periodically so a client that hung up is noticed even
+            // while no frames are being published.
+            c.cv.wait_for(lock, std::chrono::milliseconds(200), [&] { return c.closing || !c.queue.empty(); });
             if (c.closing) break;
+            if (c.queue.empty()) {
+                lock.unlock();
+                pollfd pfd{c.fd.get(), POLLRDHUP, 0};
+                if (::poll(&pfd, 1, 0) > 0 && (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR)) != 0) {
+                    why = "peer closed";
+                    break;
+                }
+                continue;
+            }
             frame = std::move(c.queue.front());
             c.queue.pop_front();
         }
