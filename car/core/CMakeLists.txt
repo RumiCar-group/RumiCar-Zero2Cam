@@ -2,10 +2,16 @@
 
 set(RUMICAR_CORE_VERSION "0.1.0")
 
+option(RUMICAR_WITH_CAMERA "Capture images with libcamera (needs libcamera-dev and libturbojpeg0-dev)" ON)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GPIOD REQUIRED IMPORTED_TARGET libgpiod>=2.0)
+pkg_check_modules(TURBOJPEG REQUIRED IMPORTED_TARGET libturbojpeg)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(Threads REQUIRED)
+if(RUMICAR_WITH_CAMERA)
+  pkg_check_modules(LIBCAMERA REQUIRED IMPORTED_TARGET libcamera>=0.5)
+endif()
 
 # Non-hardware parts, reusable by tests and tools.
 add_library(rumicar_core_lib STATIC
@@ -35,9 +41,20 @@ add_library(rumicar_hw STATIC
 target_include_directories(rumicar_hw PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rumicar_hw PUBLIC PkgConfig::GPIOD)
 
+# Camera layer: JPEG encoding (always) and the image source compiled in.
+add_library(rumicar_camera STATIC src/camera/jpeg.cpp)
+target_include_directories(rumicar_camera PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(rumicar_camera PUBLIC PkgConfig::TURBOJPEG)
+if(RUMICAR_WITH_CAMERA)
+  target_sources(rumicar_camera PRIVATE src/camera/libcamera_source.cpp)
+  target_link_libraries(rumicar_camera PUBLIC PkgConfig::LIBCAMERA)
+else()
+  target_sources(rumicar_camera PRIVATE src/camera/no_camera_source.cpp)
+endif()
+
 add_executable(rumicar-core src/main.cpp)
 target_compile_definitions(rumicar-core PRIVATE RUMICAR_CORE_VERSION="${RUMICAR_CORE_VERSION}")
-target_link_libraries(rumicar-core PRIVATE rumicar_core_lib rumicar_hw Threads::Threads)
+target_link_libraries(rumicar-core PRIVATE rumicar_core_lib rumicar_hw rumicar_camera Threads::Threads)
 
 install(TARGETS rumicar-core RUNTIME DESTINATION bin)
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-activate DESTINATION bin)

@@ -32,6 +32,14 @@ struct Section {
         return static_cast<int>(v);
     }
 
+    bool get_bool(const char* key, bool current) {
+        auto it = j.find(key);
+        if (it == j.end()) return current;
+        seen.insert(key);
+        if (!it->is_boolean()) throw std::runtime_error("core.json: " + name + "." + key + " must be true or false");
+        return it->get<bool>();
+    }
+
     std::string get_string(const char* key, const std::string& current) {
         auto it = j.find(key);
         if (it == j.end()) return current;
@@ -128,6 +136,15 @@ CoreConfig parse_core_config(const std::string& json_text) {
         s.reject_unknown();
     }
     {
+        Section s{section(root, "camera", seen_top), "camera", {}};
+        c.camera_enabled = s.get_bool("enabled", c.camera_enabled);
+        c.camera_width = static_cast<unsigned>(s.get_int("width", static_cast<int>(c.camera_width), 64, 1920));
+        c.camera_height = static_cast<unsigned>(s.get_int("height", static_cast<int>(c.camera_height), 64, 1080));
+        c.camera_fps = s.get_int("fps", c.camera_fps, 1, 60);
+        c.camera_jpeg_quality = s.get_int("jpeg_quality", c.camera_jpeg_quality, 1, 100);
+        s.reject_unknown();
+    }
+    {
         Section s{section(root, "network", seen_top), "network", {}};
         c.bind_address = s.get_string("bind", c.bind_address);
         c.control_port = s.get_int("control_port", c.control_port, 1, 65535);
@@ -154,6 +171,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
     if (c.watchdog_ms < 2 * c.loop_period_ms) throw std::runtime_error("core.json: watchdog_ms must be at least twice loop_period_ms");
     if (c.control_port == c.telemetry_port) throw std::runtime_error("core.json: network.control_port and telemetry_port must differ");
     if (c.car_name.size() > 32) throw std::runtime_error("core.json: car_name must be at most 32 characters");
+    if (c.camera_width % 2 != 0 || c.camera_height % 2 != 0) throw std::runtime_error("core.json: camera.width and height must be even");
     return c;
 }
 

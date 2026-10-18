@@ -17,7 +17,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 ## 車載側のビルド（Raspberry Pi OS Lite 64bit / Debian 13）
 
 ```sh
-sudo apt install build-essential cmake pkg-config libgpiod-dev nlohmann-json3-dev libssl-dev
+sudo apt install build-essential cmake pkg-config libgpiod-dev nlohmann-json3-dev libssl-dev libturbojpeg0-dev libcamera-dev
 cmake -S car -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
@@ -36,9 +36,11 @@ GitHub Actions が同じ手順で実行ファイルを作り、成果物（`car-
 
 ## 本版（0.1.0）の範囲
 
-- 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only）と非常停止、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、ロジック／パックの走行中差し替え（ssh または PC から）、manifest による検証、systemd サービス
+- 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、ロジック／パックの走行中差し替え（ssh または PC から）、manifest による検証、systemd サービス
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリの画面
-- 未実装（次の版）：カメラ取り込み、Wi-Fi AP 設定（set_wifi）、SD カードイメージ、走行管理アプリからのファイル転送
+- 未実装（次の版）：Wi-Fi AP 設定（set_wifi）、SD カードイメージ、走行管理アプリからのファイル転送、画像を使う走行ロジック
+
+libcamera 無しの環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF だけで走ります）。
 
 ## ライセンス
 

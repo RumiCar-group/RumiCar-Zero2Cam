@@ -41,6 +41,13 @@ struct CoreConfig {
     std::array<uint8_t, 3> tof_addresses{0x2B, 0x2D, 0x2F}; // left, centre, right
     int tof_read_timeout_ms = 100;   // per sensor, per frame
 
+    // Camera (docs 3.8).  enabled=false runs the car on the ToF sensors only.
+    bool camera_enabled = true;
+    unsigned camera_width = 320;
+    unsigned camera_height = 240;
+    int camera_fps = 20;
+    int camera_jpeg_quality = 80;
+
     // Network (control and telemetry servers, docs 5.1)
     std::string bind_address = "0.0.0.0";
     int control_port = 5600;

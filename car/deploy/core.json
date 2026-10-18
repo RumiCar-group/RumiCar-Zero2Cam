@@ -27,6 +27,13 @@
     "tof_addresses": [43, 45, 47],
     "tof_read_timeout_ms": 100
   },
+  "camera": {
+    "enabled": true,
+    "width": 320,
+    "height": 240,
+    "fps": 20,
+    "jpeg_quality": 80
+  },
   "network": {
     "bind": "0.0.0.0",
     "control_port": 5600,

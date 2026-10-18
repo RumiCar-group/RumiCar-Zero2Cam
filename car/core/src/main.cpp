@@ -1,6 +1,6 @@
 // rumicar-core — control loop of the RumiCar Zero 2 W camera model.
 //
-//   sensors (3x VL53L0X) -> driving logic (plug-in) -> DRV8835 motors
+//   sensors (3x VL53L0X) + camera -> driving logic (plug-in) -> DRV8835 motors
 //                                   |
 //            control server (TCP 5600) / telemetry server (TCP 5601) <-> PC
 //
@@ -23,6 +23,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "camera/image_source.hpp"
 #include "car_state.hpp"
 #include "config.hpp"
 #include "hw/drv8835.hpp"
@@ -198,6 +199,20 @@ int main(int argc, char** argv) {
     }
     publish_running(state, active, 0, 0);
 
+    // --- camera (optional: the car drives on the ToF sensors without it) -------
+    std::unique_ptr<cam::ImageSource> camera;
+    if (cfg.camera_enabled) {
+        camera = cam::make_image_source(cam::CameraConfig{cfg.camera_width, cfg.camera_height, cfg.camera_fps, cfg.camera_jpeg_quality});
+        try {
+            camera->start();
+        } catch (const std::exception& e) {
+            log::error(std::string("camera not started, driving without images: ") + e.what());
+            camera.reset();
+        }
+    } else {
+        log::info("camera disabled in the configuration");
+    }
+
     // --- network (optional: the car drives without it) -------------------------
     RequestHandler handler(state, store, cfg.car_name, RUMICAR_CORE_VERSION);
     net::TelemetryServer telemetry(cfg.bind_address, static_cast<uint16_t>(cfg.telemetry_port),
@@ -254,6 +269,7 @@ int main(int argc, char** argv) {
     bool have_failed_selection = false;
     int overruns = 0;
     const std::vector<uint8_t> no_image;
+    uint32_t last_image_seq = 0;
 
     log::info("control loop started, period " + std::to_string(cfg.loop_period_ms) + " ms");
     while (!g_stop.load()) {
@@ -270,6 +286,18 @@ int main(int argc, char** argv) {
                 log::warn(sensors[i]->label() + ": " + status_name(last_status[i]) + " -> " + status_name(r.status));
                 last_status[i] = r.status;
             }
+        }
+
+        // Newest camera image, attached only once (the camera may be slower than the loop).
+        std::shared_ptr<const cam::Image> image = camera ? camera->latest() : nullptr;
+        if (image && image->sequence != last_image_seq) {
+            last_image_seq = image->sequence;
+            frame.image = image->rgb.data();
+            frame.image_width = image->width;
+            frame.image_height = image->height;
+            frame.image_stride = image->stride;
+        } else {
+            image.reset();
         }
 
         // The logic always runs (its state is reported even when it is not driving).
@@ -332,10 +360,13 @@ int main(int argc, char** argv) {
                     {"logic_version", active.lib->manifest().version},
                     {"pack_version", active.instance->pack_manifest().version},
                     {"battery_mv", 0},
-                    {"image_w", 0},
-                    {"image_h", 0},
+                    {"image_w", image ? image->width : 0u},
+                    {"image_h", image ? image->height : 0u},
+                    {"image_seq", image ? image->sequence : 0u},
+                    {"image_t_us", image ? image->sensor_t_us : 0ull},
                 };
-                telemetry.publish(std::make_shared<const std::vector<uint8_t>>(net::encode_telemetry_frame(header.dump(), no_image)));
+                telemetry.publish(std::make_shared<const std::vector<uint8_t>>(
+                    net::encode_telemetry_frame(header.dump(), image ? image->jpeg : no_image)));
             } catch (const std::exception& e) {
                 log::error(std::string("telemetry frame not sent: ") + e.what());
             }
@@ -392,6 +423,10 @@ int main(int argc, char** argv) {
     try { motors->stop(); } catch (const std::exception&) {}
     control.stop();
     telemetry.stop();
+    if (camera) {
+        try { camera->stop(); } catch (const std::exception& e) { log::error(std::string("camera stop: ") + e.what()); }
+        camera.reset();
+    }
     state.set_event_sink(nullptr);
     active.instance.reset();
     active.lib.reset();

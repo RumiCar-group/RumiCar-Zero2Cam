@@ -25,6 +25,8 @@ public class TelemetryFrameTests
             PackVersion = "0.1.0",
             ImageWidth = jpegBytes > 0 ? 320 : 0,
             ImageHeight = jpegBytes > 0 ? 240 : 0,
+            ImageSeq = jpegBytes > 0 ? seq : 0,
+            ImageTimestampMicroseconds = jpegBytes > 0 ? 777_000UL + seq : 0,
         },
         Jpeg = Enumerable.Range(0, jpegBytes).Select(i => (byte)(i * 7)).ToArray(),
     };
@@ -44,6 +46,8 @@ public class TelemetryFrameTests
         Assert.Equal(-1, frame.Header.LogicSteer);
         Assert.Equal(420, frame.Header.LogicDrivePermille);
         Assert.Equal(1000, frame.Jpeg.Length);
+        Assert.Equal(5u, frame.Header.ImageSeq);
+        Assert.Equal(777_005UL, frame.Header.ImageTimestampMicroseconds);
         Assert.Equal((byte)(999 * 7 % 256), frame.Jpeg[999]);
     }
 

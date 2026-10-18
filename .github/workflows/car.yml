@@ -18,13 +18,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # arm64 is the car (Raspberry Pi Zero 2 W, 64-bit Raspberry Pi OS = Debian 13 "trixie").
+          # arm64 is the car (Raspberry Pi Zero 2 W, 64-bit Raspberry Pi OS = Debian 13 "trixie"
+          # plus the Raspberry Pi archive, which supplies the libcamera the car runs).
           - runner: ubuntu-24.04-arm
             arch: arm64
+            camera: "ON"
             publish: true
-          # amd64 is a second compiler pass for warnings and tests only.
+          # amd64 is a second compiler pass for warnings and tests only (no Raspberry Pi libcamera).
           - runner: ubuntu-24.04
             arch: amd64
+            camera: "OFF"
             publish: false
     runs-on: ${{ matrix.runner }}
     container: debian:trixie
@@ -35,16 +38,41 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config git ca-certificates python3 \
-            libgpiod-dev nlohmann-json3-dev libssl-dev
-          echo "gcc:      $(gcc --version | head -1)"
-          echo "cmake:    $(cmake --version | head -1)"
-          echo "libgpiod: $(pkg-config --modversion libgpiod)"
+            build-essential cmake pkg-config git ca-certificates curl gnupg python3 \
+            libgpiod-dev nlohmann-json3-dev libssl-dev libturbojpeg0-dev
+          echo "gcc:       $(gcc --version | head -1)"
+          echo "cmake:     $(cmake --version | head -1)"
+          echo "libgpiod:  $(pkg-config --modversion libgpiod)"
+          echo "turbojpeg: $(pkg-config --modversion libturbojpeg)"
+
+      - name: Add the Raspberry Pi archive and install libcamera (car build only)
+        if: matrix.camera == 'ON'
+        run: |
+          # Failures are reported as annotations (the raw log is not always reachable).
+          report() { echo "::error title=$1::$(tail -n 40 "$2" | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1; }
+          # The archive is signed by a key whose legacy (SHA-1) binding signature
+          # trixie's apt (sequoia) rejects since 2026-02-01; the current
+          # raspberrypi-archive-keyring package carries the re-signed key, so
+          # install that package (over HTTPS from the archive's pool) first.
+          pool="https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring"
+          curl -fsSL "$pool/" -o /tmp/pool.html 2>/tmp/pool.err || report "keyring pool listing failed" /tmp/pool.err
+          deb="$(grep -o 'raspberrypi-archive-keyring_[^"<>]*_all\.deb' /tmp/pool.html | sort -uV | tail -n 1)"
+          test -n "$deb" || { cp /tmp/pool.html /tmp/pool.log; report "no keyring package in the pool listing" /tmp/pool.log; }
+          echo "keyring package: $deb"
+          curl -fsSL "$pool/$deb" -o "/tmp/$deb" 2>/tmp/deb.err || report "keyring download failed" /tmp/deb.err
+          dpkg -i "/tmp/$deb" > /tmp/dpkg.log 2>&1 || report "keyring install failed" /tmp/dpkg.log
+          echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ trixie main" \
+            > /etc/apt/sources.list.d/raspi.list
+          apt-get update > /tmp/update.log 2>&1 || report "apt-get update failed" /tmp/update.log
+          apt-cache policy libcamera-dev libcamera0.7 | tee /tmp/policy.log
+          apt-get install -y --no-install-recommends libcamera-dev > /tmp/install.log 2>&1 || report "libcamera-dev install failed" /tmp/install.log
+          tail -n 5 /tmp/install.log
+          echo "libcamera: $(pkg-config --modversion libcamera)"
 
       - uses: actions/checkout@v6
 
       - name: Configure
-        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release -DRUMICAR_WITH_CAMERA=${{ matrix.camera }}
 
       - name: Build (all warnings are errors)
         run: cmake --build build --parallel
