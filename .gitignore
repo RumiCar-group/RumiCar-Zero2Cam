@@ -1,0 +1,19 @@
+# C++ (car)
+build/
+build-*/
+car/build/
+
+# .NET (pc)
+bin/
+obj/
+publish/
+TestResults/
+*.user
+.vs/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
