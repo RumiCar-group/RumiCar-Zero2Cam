@@ -16,7 +16,7 @@ jobs:
     name: build (windows x64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -39,7 +39,7 @@ jobs:
           -p:DebugType=none --output publish
 
       - name: Upload RumiCarDriveManager.exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: RumiCarDriveManager-win-x64
           path: publish
@@ -47,7 +47,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: pc-test-results
           path: pc/RumiCar.Protocol.Tests/TestResults

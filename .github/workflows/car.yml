@@ -41,7 +41,7 @@ jobs:
           echo "cmake:    $(cmake --version | head -1)"
           echo "libgpiod: $(pkg-config --modversion libgpiod)"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure
         run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release
@@ -68,7 +68,7 @@ jobs:
 
       - name: Upload car install tree
         if: matrix.publish
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: car-${{ matrix.arch }}
           path: stage

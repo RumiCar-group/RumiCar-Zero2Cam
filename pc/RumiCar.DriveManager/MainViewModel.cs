@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;   // WPF projects do not get System.IO from implicit usings (System.Windows.Shapes.Path clash)
 using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
 using RumiCar.Protocol;
