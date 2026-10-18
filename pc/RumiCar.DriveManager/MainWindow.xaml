@@ -31,7 +31,8 @@
         </StackPanel>
 
         <!-- Live image -->
-        <Border Grid.Row="1" Grid.Column="0" BorderBrush="#9E9E9E" BorderThickness="1" Background="#212121">
+        <Border x:Name="ImageBorder" Grid.Row="1" Grid.Column="0" BorderBrush="#9E9E9E" BorderThickness="1" Background="#212121"
+                Focusable="True" MouseLeftButtonDown="OnImageClick">
             <Image Source="{Binding Image}" Stretch="Uniform"/>
         </Border>
 

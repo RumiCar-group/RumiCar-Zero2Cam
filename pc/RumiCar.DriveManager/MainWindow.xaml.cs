@@ -306,6 +306,9 @@ public partial class MainWindow : Window
     private Task SetModeAsync(string mode) =>
         SendAsync(car => ControlCodec.SetMode(car.NextId(), mode), "モード " + mode);
 
+    // Clicking the image takes keyboard focus away from the text boxes so the arrow keys drive.
+    private void OnImageClick(object sender, MouseButtonEventArgs e) => ImageBorder.Focus();
+
     // Manual driving with the arrow keys; only effective while the car is in manual mode.
     private async void OnKey(object sender, KeyEventArgs e)
     {
