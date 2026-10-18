@@ -6,7 +6,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=local:MainViewModel}"
-        Title="RumiCar 走行管理" Height="640" Width="960">
+        Title="RumiCar 走行管理" Height="800" Width="1040">
     <Grid Margin="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -78,6 +78,20 @@
                 <Button x:Name="RecordButton" Content="収録開始" Width="80" Margin="4,0,0,0" Click="OnRecordClick" IsEnabled="{Binding Connected}"/>
             </StackPanel>
             <TextBlock><Run Text="受信コマ数: "/><Run Text="{Binding Frames}"/></TextBlock>
+
+            <TextBlock Text="版の管理（ロジック／データ）" FontWeight="Bold" Margin="0,12,0,0"/>
+            <ListBox x:Name="VersionList" ItemsSource="{Binding Versions}" SelectedItem="{Binding SelectedVersion}" DisplayMemberPath="Display" Height="150" Margin="0,4,0,4" FontFamily="Consolas"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <Button Content="一覧更新" Width="70" Click="OnVersionsRefreshClick" IsEnabled="{Binding Connected}"/>
+                <Button Content="送る…" Width="70" Margin="4,0,0,0" Click="OnPushClick" IsEnabled="{Binding Connected}"/>
+                <Button Content="有効化" Width="70" Margin="4,0,0,0" Click="OnActivateClick" IsEnabled="{Binding Connected}"/>
+                <Button Content="削除" Width="70" Margin="4,0,0,0" Click="OnDeleteClick" IsEnabled="{Binding Connected}"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <Button Content="ロジックを戻す" Width="110" Click="OnRollbackLogicClick" IsEnabled="{Binding Connected}"/>
+                <Button Content="データを戻す" Width="110" Margin="4,0,0,0" Click="OnRollbackPackClick" IsEnabled="{Binding Connected}"/>
+            </StackPanel>
+            <TextBlock Text="{Binding PushStatus}" TextWrapping="Wrap" Foreground="#616161"/>
         </StackPanel>
 
         <!-- Log -->

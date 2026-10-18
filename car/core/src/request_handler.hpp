@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include "car_state.hpp"
+#include "upload.hpp"
 #include "version_store.hpp"
 #include "wifi.hpp"
 
@@ -21,6 +22,9 @@ public:
     // Returns the result (json null = none).  Throws net::RequestError for ok=false.
     nlohmann::json handle(const std::string& type, const nlohmann::json& params);
 
+    // The control client went away: an unfinished upload is discarded.
+    void on_client_disconnected();
+
     static constexpr int kProtocolVersion = 1;
     static constexpr int kMaxLogLines = 500;
 
@@ -30,6 +34,7 @@ private:
     CarState& state_;
     const VersionStore& store_;
     WifiAp& wifi_;
+    UploadManager uploads_;
     std::string car_name_;
     std::string core_version_;
     std::chrono::milliseconds activation_wait_;

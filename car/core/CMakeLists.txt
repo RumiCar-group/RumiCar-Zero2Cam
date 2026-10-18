@@ -23,6 +23,7 @@ add_library(rumicar_core_lib STATIC
   src/car_state.cpp
   src/request_handler.cpp
   src/wifi.cpp
+  src/upload.cpp
   src/util/process.cpp
   src/net/socket.cpp
   src/net/telemetry_frame.cpp

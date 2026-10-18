@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RumiCar.Protocol.Control;
+using RumiCar.Protocol.Packs;
 using RumiCar.Protocol.Recording;
 using RumiCar.Protocol.Telemetry;
 
@@ -32,6 +33,7 @@ public partial class MainWindow : Window
     private int _manualSteer;
     private int _manualDrive;
     private bool _manualMode;
+    private bool _pushing;
 
     public MainWindow()
     {
@@ -73,6 +75,7 @@ public partial class MainWindow : Window
             var status = await car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None);
             if (status.Ok && status.Result is JsonElement result) ApplyStatus(result);
             else if (!status.Ok) _vm.AddLog("状態取得: 拒否 (" + status.Error + ")");
+            await RefreshVersionsAsync();
         }
         catch (Exception ex)
         {
@@ -97,6 +100,8 @@ public partial class MainWindow : Window
         _manualSteer = 0;
         _manualDrive = 0;
         ConnectButton.Content = "接続";
+        _vm.Versions.Clear();
+        _vm.PushStatus = "-";
         if (car is not null) await car.DisposeAsync();
     }
 
@@ -149,6 +154,7 @@ public partial class MainWindow : Window
                 var error = CarConnection.GetString(evt.Data, "error") ?? "";
                 _vm.AddLog(ok ? "切り替え完了: " + (CarConnection.GetString(evt.Data, "logic_dir") ?? "") + " / " + (CarConnection.GetString(evt.Data, "pack_dir") ?? "")
                               : "切り替え失敗（現行版を継続）: " + error);
+                _ = RefreshVersionsAsync();
                 break;
             }
             default:
@@ -329,6 +335,127 @@ public partial class MainWindow : Window
         {
             _vm.AddLog("手動操作を送れません: " + ex.Message);
         }
+    }
+
+    // --- versions (list / push / activate / rollback / delete) ------------------
+
+    private async Task RefreshVersionsAsync()
+    {
+        var car = _car;
+        if (car is null) return;
+        try
+        {
+            var r = await car.RequestAsync(ControlCodec.ListVersions(car.NextId()), CancellationToken.None);
+            if (!r.Ok || r.Result is not JsonElement result)
+            {
+                _vm.AddLog("版の一覧: 拒否 (" + r.Error + ")");
+                return;
+            }
+            var selected = _vm.SelectedVersion?.Name;
+            _vm.Versions.Clear();
+            foreach (var (kind, key) in new[] { ("logic", "logic"), ("pack", "packs") })
+            {
+                var current = GetNested(result, "current", kind);
+                var previous = GetNested(result, "previous", kind);
+                if (!result.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array) continue;
+                foreach (var v in arr.EnumerateArray())
+                {
+                    var name = CarConnection.GetString(v, "name") ?? "";
+                    _vm.Versions.Add(new VersionRow
+                    {
+                        Kind = kind,
+                        Name = name,
+                        Version = CarConnection.GetString(v, "version") ?? "",
+                        Verified = v.TryGetProperty("verified", out var ok) && ok.ValueKind == JsonValueKind.True,
+                        Error = CarConnection.GetString(v, "error") ?? "",
+                        IsCurrent = name == current,
+                        IsPrevious = name == previous,
+                    });
+                }
+            }
+            _vm.SelectedVersion = _vm.Versions.FirstOrDefault(x => x.Name == selected);
+        }
+        catch (Exception ex)
+        {
+            _vm.AddLog("版の一覧: 失敗 (" + ex.Message + ")");
+        }
+    }
+
+    private static string? GetNested(JsonElement e, string outer, string inner) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(outer, out var o) ? CarConnection.GetString(o, inner) : null;
+
+    private async void OnVersionsRefreshClick(object sender, RoutedEventArgs e) => await RefreshVersionsAsync();
+
+    private async void OnPushClick(object sender, RoutedEventArgs e)
+    {
+        var car = _car;
+        if (car is null || _pushing) return;
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "車に送るロジック／データのフォルダ（manifest.json を含む）" };
+        if (dialog.ShowDialog(this) != true) return;
+        var directory = dialog.FolderName;
+        VersionPush.Plan plan;
+        try
+        {
+            plan = VersionPush.Prepare(directory);
+        }
+        catch (Exception ex)
+        {
+            _vm.AddLog("送信前の検証に失敗: " + ex.Message);
+            _vm.PushStatus = "検証失敗: " + ex.Message;
+            return;
+        }
+        _pushing = true;
+        _vm.PushStatus = $"送信中 {plan.Kind} {plan.DirectoryName} (0 / {plan.TotalBytes} バイト)";
+        _vm.AddLog($"送信開始: {plan.Kind} {plan.DirectoryName} ({plan.Files.Count} ファイル, {plan.TotalBytes} バイト)");
+        var progress = new Progress<long>(sent => _vm.PushStatus = $"送信中 {plan.Kind} {plan.DirectoryName} ({sent} / {plan.TotalBytes} バイト)");
+        try
+        {
+            await VersionPush.PushAsync(directory, plan, car.RequestAsync, car.NextId, progress, CancellationToken.None);
+            _vm.PushStatus = $"送信完了: {plan.Kind} {plan.DirectoryName}（「有効化」で切り替え）";
+            _vm.AddLog("送信完了: " + plan.DirectoryName);
+            await RefreshVersionsAsync();
+            _vm.SelectedVersion = _vm.Versions.FirstOrDefault(x => x.Name == plan.DirectoryName);
+        }
+        catch (Exception ex)
+        {
+            _vm.PushStatus = "送信失敗: " + ex.Message;
+            _vm.AddLog("送信失敗: " + ex.Message);
+        }
+        finally
+        {
+            _pushing = false;
+        }
+    }
+
+    private async void OnActivateClick(object sender, RoutedEventArgs e)
+    {
+        var v = _vm.SelectedVersion;
+        if (v is null) { _vm.AddLog("有効化: 一覧から版を選んでください"); return; }
+        if (v.IsCurrent) { _vm.AddLog("有効化: " + v.Name + " は使用中です"); return; }
+        await SendAsync(car => ControlCodec.Activate(car.NextId(), v.Kind, v.Name), "有効化 " + v.Name);
+        await RefreshVersionsAsync();
+    }
+
+    private async void OnRollbackLogicClick(object sender, RoutedEventArgs e)
+    {
+        await SendAsync(car => ControlCodec.Rollback(car.NextId(), "logic"), "ロジックを戻す");
+        await RefreshVersionsAsync();
+    }
+
+    private async void OnRollbackPackClick(object sender, RoutedEventArgs e)
+    {
+        await SendAsync(car => ControlCodec.Rollback(car.NextId(), "pack"), "データを戻す");
+        await RefreshVersionsAsync();
+    }
+
+    private async void OnDeleteClick(object sender, RoutedEventArgs e)
+    {
+        var v = _vm.SelectedVersion;
+        if (v is null) { _vm.AddLog("削除: 一覧から版を選んでください"); return; }
+        if (v.IsCurrent || v.IsPrevious) { _vm.AddLog("削除: 使用中または直前の版は削除できません"); return; }
+        if (MessageBox.Show(this, $"{v.Kind} {v.Name} を車から削除します。よろしいですか？", "削除の確認", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
+        await SendAsync(car => ControlCodec.DeleteVersion(car.NextId(), v.Kind, v.Name), "削除 " + v.Name);
+        await RefreshVersionsAsync();
     }
 
     // --- recording ------------------------------------------------------------

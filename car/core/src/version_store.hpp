@@ -67,6 +67,10 @@ public:
     // All directories under logic/ or packs/ with their verification result.
     std::vector<InstalledVersion> list(const std::string& kind) const;
 
+    // Delete an installed version that is neither current nor previous.
+    // Throws std::runtime_error.
+    void remove(const std::string& kind, const std::string& dir_name) const;
+
     // Write status/active.json atomically.
     void write_active(const std::string& logic_dir, const std::string& logic_version,
                       const std::string& pack_dir, const std::string& pack_version) const;
