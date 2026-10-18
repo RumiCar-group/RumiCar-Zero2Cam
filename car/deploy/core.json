@@ -39,6 +39,8 @@
     "control_port": 5600,
     "telemetry_port": 5601,
     "heartbeat_timeout_ms": 1000,
-    "telemetry_queue_frames": 16
+    "telemetry_queue_frames": 16,
+    "ap_connection": "RumiCar-AP",
+    "nmcli": "/usr/bin/nmcli"
   }
 }

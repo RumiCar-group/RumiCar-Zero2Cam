@@ -9,12 +9,13 @@
 
 #include "car_state.hpp"
 #include "version_store.hpp"
+#include "wifi.hpp"
 
 namespace rumicar {
 
 class RequestHandler {
 public:
-    RequestHandler(CarState& state, const VersionStore& store, std::string car_name, std::string core_version,
+    RequestHandler(CarState& state, const VersionStore& store, WifiAp& wifi, std::string car_name, std::string core_version,
                    std::chrono::milliseconds activation_wait = std::chrono::milliseconds(5000));
 
     // Returns the result (json null = none).  Throws net::RequestError for ok=false.
@@ -28,6 +29,7 @@ private:
 
     CarState& state_;
     const VersionStore& store_;
+    WifiAp& wifi_;
     std::string car_name_;
     std::string core_version_;
     std::chrono::milliseconds activation_wait_;

@@ -1,7 +1,7 @@
 # Driving-logic plug-ins.  Each plug-in is a shared library exporting
 # rumi_logic_get_api() (see include/rumicar/logic_api.h).
 
-set(TOF_DRIVE_VERSION "0.1.0")
+# TOF_DRIVE_VERSION is defined in the top-level CMakeLists.txt (shared with packaging).
 
 # Pure computation part, reusable by tests and tools (no I/O).
 add_library(tof_drive_logic STATIC
@@ -22,4 +22,16 @@ set_target_properties(tof_drive PROPERTIES
   VISIBILITY_INLINES_HIDDEN ON
 )
 
-install(TARGETS tof_drive LIBRARY DESTINATION lib/rumicar/logic/tof_drive-${TOF_DRIVE_VERSION})
+# Staged logic directory with its manifest (what gets installed and shipped).
+set(TOF_DRIVE_STAGE ${CMAKE_CURRENT_BINARY_DIR}/stage/tof_drive-${TOF_DRIVE_VERSION})
+add_custom_command(
+  OUTPUT ${TOF_DRIVE_STAGE}/manifest.json
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${TOF_DRIVE_STAGE}
+  COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:tof_drive> ${TOF_DRIVE_STAGE}/libtof_drive.so
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${TOF_DRIVE_STAGE}
+          --name tof_drive --version ${TOF_DRIVE_VERSION} --entry libtof_drive.so
+  DEPENDS tof_drive ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
+  COMMENT "Writing manifest.json for tof_drive ${TOF_DRIVE_VERSION}"
+  VERBATIM)
+add_custom_target(tof_drive_manifest ALL DEPENDS ${TOF_DRIVE_STAGE}/manifest.json)
+install(DIRECTORY ${TOF_DRIVE_STAGE}/ DESTINATION lib/rumicar/logic/tof_drive-${TOF_DRIVE_VERSION})

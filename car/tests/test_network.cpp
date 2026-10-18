@@ -25,6 +25,7 @@
 #include "request_handler.hpp"
 #include "sha256.hpp"
 #include "version_store.hpp"
+#include "wifi.hpp"
 
 using namespace rumicar;
 using json = nlohmann::json;
@@ -242,7 +243,8 @@ void test_servers(const fs::path& base_pack) {
     CHECK(store.link_target("previous", "pack").empty());
 
     CarState state(300);   // short heartbeat timeout for the test
-    RequestHandler handler(state, store, "TestCar", "9.9.9", 2000ms);
+    WifiAp wifi("/usr/bin/nmcli", "");   // no access point profile on the test host
+    RequestHandler handler(state, store, wifi, "TestCar", "9.9.9", 2000ms);
     std::atomic<int> connects{0}, disconnects{0};
     net::ControlServer control("127.0.0.1", 0,
         [&](const std::string& type, const json& params) { return handler.handle(type, params); },
@@ -386,7 +388,9 @@ void test_servers(const fs::path& base_pack) {
 
     // --- misc requests -----------------------------------------------------------
     r = request(c, "set_wifi", {{"ssid", "X"}, {"channel", 6}});
-    CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("not available") != std::string::npos);
+    CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("not configured") != std::string::npos);
+    r = request(c, "set_wifi", {{"ssid", "X"}, {"channel", 14}});
+    CHECK(!r["ok"].get<bool>());
     r = request(c, "get_log", {{"lines", 3}});
     CHECK(r["ok"].get<bool>() && r["result"]["lines"].is_array() && r["result"]["lines"].size() == 3);
     r = request(c, "get_log", {{"lines", 0}});

@@ -1,0 +1,14 @@
+#!/bin/sh
+# rumicar-zero2cam postrm — on purge, also remove the state directory (live data:
+# installed logic/pack versions and status).  A plain remove keeps it.
+set -e
+case "$1" in
+    purge)
+        rm -rf /var/lib/rumicar
+        rm -f /etc/systemd/system/multi-user.target.wants/rumicar-core.service
+        ;;
+esac
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+exit 0

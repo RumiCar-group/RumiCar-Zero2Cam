@@ -45,9 +45,9 @@ json versions_json(const std::vector<InstalledVersion>& list) {
 
 } // namespace
 
-RequestHandler::RequestHandler(CarState& state, const VersionStore& store, std::string car_name, std::string core_version,
-                               std::chrono::milliseconds activation_wait)
-    : state_(state), store_(store), car_name_(std::move(car_name)), core_version_(std::move(core_version)),
+RequestHandler::RequestHandler(CarState& state, const VersionStore& store, WifiAp& wifi, std::string car_name,
+                               std::string core_version, std::chrono::milliseconds activation_wait)
+    : state_(state), store_(store), wifi_(wifi), car_name_(std::move(car_name)), core_version_(std::move(core_version)),
       activation_wait_(activation_wait) {}
 
 json RequestHandler::activation_outcome(const char* what) {
@@ -133,7 +133,14 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         return activation_outcome("rollback");
     }
     if (type == "set_wifi") {
-        throw RequestError("set_wifi is not available in this version of the car software");
+        const std::string ssid = require_string(params, "ssid");
+        const int channel = require_int(params, "channel", 1, 13);
+        try {
+            wifi_.set(ssid, channel);
+        } catch (const std::exception& e) {
+            throw RequestError(e.what());
+        }
+        return json{{"ssid", ssid}, {"channel", channel}, {"reconnect_in_ms", 500}};
     }
     if (type == "get_log") {
         const int lines = optional_int(params, "lines", 100, 1, kMaxLogLines);

@@ -5,7 +5,7 @@ After=local-fs.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/rumicar-core /etc/rumicar/core.json
+ExecStart=@RUMICAR_BINDIR@/rumicar-core /etc/rumicar/core.json
 Restart=on-failure
 RestartSec=5
 # Hardware access: GPIO, I2C and the PWM sysfs tree require root on a stock image.

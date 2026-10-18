@@ -21,8 +21,10 @@ sudo apt install build-essential cmake pkg-config libgpiod-dev nlohmann-json3-de
 cmake -S car -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-sudo cmake --install build --prefix /usr/local
+sudo cmake --install build --prefix /usr/local   # 手動インストール
 ```
+
+車に入れるときは Debian パッケージを使います（CI の成果物 `rumicar-zero2cam-deb-arm64`、または `cmake -S car -B build -DCMAKE_INSTALL_PREFIX=/usr` で構成して `cd build && cpack -G DEB`）。`sudo apt install ./rumicar-zero2cam_<version>_arm64.deb` で本体・同梱ロジック／パック・systemd サービス・Wi-Fi AP（SSID `RumiCar`、10.42.0.1）のプロファイルが入り、状態ディレクトリ `/var/lib/rumicar` が用意されます。
 
 ## PC 側のビルド（Windows / .NET 10 SDK）
 
@@ -36,9 +38,9 @@ GitHub Actions が同じ手順で実行ファイルを作り、成果物（`car-
 
 ## 本版（0.1.0）の範囲
 
-- 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、ロジック／パックの走行中差し替え（ssh または PC から）、manifest による検証、systemd サービス
+- 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager）と `set_wifi`、ロジック／パックの走行中差し替え（ssh または PC から）、manifest による検証、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリの画面
-- 未実装（次の版）：Wi-Fi AP 設定（set_wifi）、SD カードイメージ、走行管理アプリからのファイル転送、画像を使う走行ロジック
+- 未実装（次の版）：SD カードイメージ、走行管理アプリからのファイル転送、画像を使う走行ロジック
 
 libcamera 無しの環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF だけで走ります）。
 
