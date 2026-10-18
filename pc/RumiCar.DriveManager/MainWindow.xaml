@@ -1,0 +1,82 @@
+<Window x:Class="RumiCar.DriveManager.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:RumiCar.DriveManager"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=local:MainViewModel}"
+        Title="RumiCar 走行管理" Height="640" Width="960">
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="140"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2*"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Connection bar -->
+        <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="車両" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <TextBox Width="120" Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding NotConnected}" VerticalAlignment="Center"/>
+            <TextBlock Text="名前" VerticalAlignment="Center" Margin="12,0,4,0"/>
+            <TextBox Width="100" Text="{Binding CarName, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding NotConnected}" VerticalAlignment="Center"/>
+            <Button x:Name="ConnectButton" Content="接続" Width="80" Margin="12,0,0,0" Click="OnConnectClick"/>
+            <TextBlock Text="{Binding ConnectionState}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+            <Button Content="非常停止" Width="90" Margin="24,0,0,0" Background="#C62828" Foreground="White" FontWeight="Bold" Click="OnEStopClick" IsEnabled="{Binding Connected}"/>
+            <Button Content="非常停止解除" Width="100" Margin="4,0,0,0" Click="OnEStopClearClick" IsEnabled="{Binding Connected}"/>
+        </StackPanel>
+
+        <!-- Live image -->
+        <Border Grid.Row="1" Grid.Column="0" BorderBrush="#9E9E9E" BorderThickness="1" Background="#212121">
+            <Image Source="{Binding Image}" Stretch="Uniform"/>
+        </Border>
+
+        <!-- Status / controls -->
+        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
+            <TextBlock Text="状態" FontWeight="Bold"/>
+            <Grid Margin="0,4,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="モード" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Mode}"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="判断状態" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LogicState}"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="ToF 左/中/右 [mm]" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Tof}"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="指令" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Command}"/>
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="版（ロジック/データ）" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Versions}"/>
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="バッテリー" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Battery}"/>
+            </Grid>
+
+            <TextBlock Text="走行モード" FontWeight="Bold"/>
+            <StackPanel Orientation="Horizontal" Margin="0,4,0,8">
+                <Button Content="自動" Width="70" Click="OnModeAutoClick" IsEnabled="{Binding Connected}"/>
+                <Button Content="手動" Width="70" Margin="4,0,0,0" Click="OnModeManualClick" IsEnabled="{Binding Connected}"/>
+                <Button Content="収録のみ" Width="70" Margin="4,0,0,0" Click="OnModeRecordOnlyClick" IsEnabled="{Binding Connected}"/>
+            </StackPanel>
+            <TextBlock Text="手動操作：矢印キー（↑前進 ↓後退 ←→操舵）。手動モードで画像をクリックしてから操作します。" TextWrapping="Wrap" Foreground="#616161" Margin="0,0,0,8"/>
+
+            <TextBlock Text="収録" FontWeight="Bold"/>
+            <StackPanel Orientation="Horizontal" Margin="0,4,0,8">
+                <TextBox Width="220" Text="{Binding DataRoot, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"/>
+                <Button x:Name="RecordButton" Content="収録開始" Width="80" Margin="4,0,0,0" Click="OnRecordClick" IsEnabled="{Binding Connected}"/>
+            </StackPanel>
+            <TextBlock><Run Text="受信コマ数: "/><Run Text="{Binding Frames}"/></TextBlock>
+        </StackPanel>
+
+        <!-- Log -->
+        <ListBox Grid.Row="2" Grid.ColumnSpan="2" ItemsSource="{Binding Log}" Margin="0,8,0,0" FontFamily="Consolas"/>
+    </Grid>
+</Window>
