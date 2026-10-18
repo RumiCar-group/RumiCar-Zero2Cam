@@ -1,0 +1,54 @@
+name: pc
+
+on:
+  push:
+    branches: [main]
+    paths: ['pc/**', '.github/workflows/pc.yml']
+  pull_request:
+    paths: ['pc/**', '.github/workflows/pc.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (windows x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore pc/RumiCar.sln
+
+      - name: Build (all warnings are errors)
+        run: dotnet build pc/RumiCar.sln --configuration Release --no-restore
+
+      - name: Unit tests
+        run: dotnet test pc/RumiCar.Protocol.Tests/RumiCar.Protocol.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=protocol.trx"
+
+      - name: Publish the drive manager (single file, self-contained)
+        run: >
+          dotnet publish pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj
+          --configuration Release --runtime win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none --output publish
+
+      - name: Upload RumiCarDriveManager.exe
+        uses: actions/upload-artifact@v5
+        with:
+          name: RumiCarDriveManager-win-x64
+          path: publish
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: pc-test-results
+          path: pc/RumiCar.Protocol.Tests/TestResults
+          if-no-files-found: ignore

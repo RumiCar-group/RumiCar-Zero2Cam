@@ -1,0 +1,82 @@
+#!/bin/sh
+# rumicar-activate — switch the active logic or pack atomically.
+#
+#   rumicar-activate logic <dir-name>     e.g. tof_drive-0.2.0
+#   rumicar-activate pack  <dir-name>     e.g. base-tof-0.1.0
+#   rumicar-activate rollback logic|pack  back to the previous selection
+#   rumicar-activate show
+#
+# Directories live under $RUMICAR_STATE_DIR (default /var/lib/rumicar):
+#   logic/<dir>  packs/<dir>  current/{logic,pack}  previous/{logic,pack}
+# The running rumicar-core notices the new link within activation_poll_ms,
+# verifies the manifest and swaps at a frame boundary; the result is written
+# to status/activation.json.  If verification fails the core keeps running the
+# old versions, so this script only ever moves links.
+set -eu
+
+STATE_DIR="${RUMICAR_STATE_DIR:-/var/lib/rumicar}"
+
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+link_atomic() { # link_atomic <kind> <relative target>
+    kind="$1"; target="$2"
+    mkdir -p "$STATE_DIR/current" "$STATE_DIR/previous"
+    if [ -L "$STATE_DIR/current/$kind" ]; then
+        old="$(readlink "$STATE_DIR/current/$kind")"
+        ln -s "$old" "$STATE_DIR/previous/.$kind.tmp"
+        mv -T "$STATE_DIR/previous/.$kind.tmp" "$STATE_DIR/previous/$kind"
+    fi
+    ln -s "$target" "$STATE_DIR/current/.$kind.tmp"
+    mv -T "$STATE_DIR/current/.$kind.tmp" "$STATE_DIR/current/$kind"
+    sync
+}
+
+activate() { # activate <kind> <dir-name>
+    kind="$1"; name="$2"
+    case "$kind" in
+        logic) sub=logic ;;
+        pack)  sub=packs ;;
+        *) usage ;;
+    esac
+    case "$name" in
+        */*|.*|"") echo "error: bad directory name '$name'" >&2; exit 1 ;;
+    esac
+    dir="$STATE_DIR/$sub/$name"
+    [ -d "$dir" ] || { echo "error: $dir does not exist" >&2; exit 1; }
+    [ -f "$dir/manifest.json" ] || { echo "error: $dir has no manifest.json" >&2; exit 1; }
+    link_atomic "$kind" "../$sub/$name"
+    echo "current/$kind -> ../$sub/$name"
+}
+
+rollback() { # rollback <kind>
+    kind="$1"
+    [ -L "$STATE_DIR/previous/$kind" ] || { echo "error: no previous $kind" >&2; exit 1; }
+    target="$(readlink "$STATE_DIR/previous/$kind")"
+    link_atomic "$kind" "$target"
+    echo "current/$kind -> $target"
+}
+
+show() {
+    for kind in logic pack; do
+        if [ -L "$STATE_DIR/current/$kind" ]; then
+            printf 'current/%s -> %s\n' "$kind" "$(readlink "$STATE_DIR/current/$kind")"
+        else
+            printf 'current/%s (unset)\n' "$kind"
+        fi
+        if [ -L "$STATE_DIR/previous/$kind" ]; then
+            printf 'previous/%s -> %s\n' "$kind" "$(readlink "$STATE_DIR/previous/$kind")"
+        fi
+    done
+    for f in active activation; do
+        [ -f "$STATE_DIR/status/$f.json" ] && { echo "status/$f.json:"; cat "$STATE_DIR/status/$f.json"; }
+    done
+    return 0
+}
+
+[ $# -ge 1 ] || usage
+case "$1" in
+    logic|pack) [ $# -eq 2 ] || usage; activate "$1" "$2" ;;
+    rollback)   [ $# -eq 2 ] || usage; rollback "$2" ;;
+    show)       show ;;
+    *) usage ;;
+esac

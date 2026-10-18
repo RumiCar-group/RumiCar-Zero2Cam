@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "kind": "pack",
+  "id": "base-tof",
+  "version": "0.1.0",
+  "created": "2026-10-18T10:56:06Z",
+  "logic": {
+    "name": "tof_drive",
+    "min_abi": 1
+  },
+  "files": [
+    {
+      "path": "params.json",
+      "sha256": "0bb483ba08646ccb7bb25455de61800193b15aa54f5f200546ab54aee6a0dce3",
+      "bytes": 549
+    }
+  ]
+}
