@@ -14,6 +14,10 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 | `docs/` | 仕様書 |
 | `.github/workflows/` | 自動ビルド（`car.yml`: Debian 13 arm64/amd64、`pc.yml`: Windows） |
 
+## 車への導入（標準 SD カードイメージ）
+
+[Releases](https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases) の `rumicar-zero2cam-<版>-<日付>.img.xz` を Raspberry Pi Imager の「Use custom」で SD カードに書き込むと、起動後すぐ走り出し、Wi-Fi AP `RumiCar`（開放、車は 10.42.0.1）が立ちます。初期ユーザーは `rumicar` / `rumicar`（SSH 有効、ホスト名 `rumicar`）。イメージは `car/image/build-image.sh` で作られ（公式 Raspberry Pi OS Lite 64bit ＋ パッケージ ＋ 初回起動設定）、`vX.Y.Z` のタグを push すると CI が Release を作ります。
+
 ## 車載側のビルド（Raspberry Pi OS Lite 64bit / Debian 13）
 
 ```sh
@@ -40,7 +44,8 @@ GitHub Actions が同じ手順で実行ファイルを作り、成果物（`car-
 
 - 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager）と `set_wifi`、ロジック／パックの走行中差し替え（ssh または PC から）、manifest による検証、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリの画面
-- 未実装（次の版）：SD カードイメージ、走行管理アプリからのファイル転送、画像を使う走行ロジック
+- 配布：標準 SD カードイメージ（`car/image/`）、タグで GitHub Release（イメージ・.deb・PC アプリ）
+- 未実装（次の版）：走行管理アプリからのファイル転送（push）、画像を使う走行ロジック
 
 libcamera 無しの環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF だけで走ります）。
 
