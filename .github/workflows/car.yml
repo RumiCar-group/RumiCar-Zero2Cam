@@ -48,14 +48,18 @@ jobs:
       - name: Add the Raspberry Pi archive and install libcamera (car build only)
         if: matrix.camera == 'ON'
         run: |
-          curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-            | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg
+          # Failures are reported as annotations (the raw log is not always reachable).
+          report() { echo "::error title=$1::$(tail -n 40 "$2" | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1; }
+          curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key -o /tmp/raspberrypi.gpg.key 2>&1 | tee /tmp/key.log \
+            || report "key download failed" /tmp/key.log
+          gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg /tmp/raspberrypi.gpg.key
           echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ trixie main" \
             > /etc/apt/sources.list.d/raspi.list
-          apt-get update
-          apt-get install -y --no-install-recommends libcamera-dev
+          apt-get update > /tmp/update.log 2>&1 || report "apt-get update failed" /tmp/update.log
+          apt-cache policy libcamera-dev libcamera0.7 | tee /tmp/policy.log
+          apt-get install -y --no-install-recommends libcamera-dev > /tmp/install.log 2>&1 || report "libcamera-dev install failed" /tmp/install.log
+          tail -n 5 /tmp/install.log
           echo "libcamera: $(pkg-config --modversion libcamera)"
-          apt-cache policy libcamera-dev | head -5
 
       - uses: actions/checkout@v6
 
