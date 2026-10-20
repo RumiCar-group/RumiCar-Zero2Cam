@@ -127,7 +127,7 @@
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LogicState}" Style="{StaticResource Text.Value}"/>
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="ToF 左 / 中 / 右 [mm]" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Tof}" Style="{StaticResource Text.Value}"/>
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="モーター出力" Style="{StaticResource Text.Label}" ToolTip="実際にモーターへ出した指令。駆動の % は PWM のデューティ比（1000‰ = 100%）"/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="モーター出力" Style="{StaticResource Text.Label}" ToolTip="実際にモーターへ出した指令。駆動の % は PWM のデューティ比（1000‰ = 100%）、括弧内は Arduino の analogWrite 換算（0〜255）"/>
                             <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Command}" Style="{StaticResource Text.Value}"/>
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="ロジックの判断" Style="{StaticResource Text.Label}" ToolTip="ロジックがそのコマで決めた指令（手動・収録のみ・非常停止中でも表示）"/>
                             <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding LogicCommand}" Style="{StaticResource Text.Value}"/>
@@ -164,6 +164,9 @@
                             <Button x:Name="RecordButton" Grid.Column="1" Content="収録開始" Style="{StaticResource Button.Primary}" MinWidth="96" Margin="8,0,0,0"
                                     Click="OnRecordClick" IsEnabled="{Binding Connected}"/>
                         </Grid>
+                        <CheckBox Content="接続したら自動で収録を開始する" IsChecked="{Binding AutoRecord}" Margin="0,8,0,0"
+                                  ToolTip="オン（既定）：接続のたびに新しい収録フォルダを作り、受信した全コマを保存します。切断で収録を閉じます"/>
+                        <TextBlock Text="{Binding RecordingStatus}" Style="{StaticResource Text.Muted}" Margin="0,6,0,0"/>
                     </StackPanel>
                 </Border>
 

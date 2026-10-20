@@ -77,9 +77,9 @@ The drive manager's user interface is in Japanese; the table below gives the mea
 | 非常停止 / 非常停止解除 | Emergency stop / clear. The e-stop brakes in every mode and the car stays stopped until cleared. It is also latched automatically when, in manual mode, the PC's heartbeat stops for 1 s or the PC disconnects |
 | Image | Latest camera image (320×240, about 20 frames/s). Untick 「画像を表示」 to stop only the display (frames are still received and recorded; lowers the PC load) |
 | 状態 (status) | モード = mode; 非常停止 = e-stop (green = none, red = active, with reason); 判断状態 = logic state (CRUISE / TURN_LEFT / TURN_RIGHT / EMERGENCY_BRAKE / RECOVER_REVERSE / SENSOR_FAULT); ToF 左/中/右 = left/centre/right distance [mm] (`open` = nothing nearby, `--` = no reading); モーター出力 = what went to the motors; ロジックの判断 = what the logic decided; 版 = logic / pack versions |
-| モーター出力 / ロジックの判断 | Shown as 「操舵 左/中央/右 / 前進 74.8%」: steering left/centre/right, then 前進 forward / 後退 reverse / 停止 coast / ブレーキ brake. The percentage is the **PWM duty cycle** of the drive motor (the car uses per mille 0–1000; 748‰ ≈ 191 of 255 in the Arduino `analogWrite` scale). モーター出力 is what actually went to the motors; ロジックの判断 is what the logic decided for that frame (shown even in manual, record-only and e-stop) |
+| モーター出力 / ロジックの判断 | Shown as 「操舵 左/中央/右 / 前進 74.8% (191/255)」: steering left/centre/right, then 前進 forward / 後退 reverse / 停止 coast / ブレーキ brake. The percentage is the **PWM duty cycle** of the drive motor (the car uses per mille 0–1000) and the bracketed value is the same duty on the Arduino `analogWrite` scale 0–255 (748 × 255 ÷ 1000 ≈ 191). モーター出力 is what actually went to the motors; ロジックの判断 is what the logic decided for that frame (shown even in manual, record-only and e-stop) |
 | 走行モード (drive mode) | **自動** auto: the car's logic drives / **手動** manual: arrow keys on the PC (↑ forward 50 %, ↓ reverse 50 %, ←→ steer; click the image first so the keys reach the car) / **収録のみ** record-only: motors stopped, images and status still streamed (push the car by hand to collect data) |
-| 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`) and 収録開始 / 収録停止 (start / stop). Every received frame is saved. The "(画像付き N)" count next to 受信コマ数 grows when camera images arrive |
+| 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`) and 収録開始 / 収録停止 (start / stop). **By default a recording starts automatically on every connection** (the 「接続したら自動で収録を開始する」 checkbox) and closes on disconnect. Every received frame is saved. The "(画像付き N)" count next to 受信コマ数 grows when camera images arrive |
 | 版の管理 (versions) | Logic and packs installed on the car (`[使用中]` = active, `[直前]` = previous, with verification failures shown). 一覧更新 refresh, 送る… send, 有効化 activate, 削除 delete, ロジックを戻す roll back the logic, データを戻す roll back the pack (section 6) |
 | ログ (log) | Connection, responses, events and errors with timestamps |
 
@@ -89,7 +89,7 @@ Press 「切断」 to disconnect. The car keeps driving after you close the app 
 
 ### 6.1 Record
 
-「収録開始」 creates one folder per recording under the destination:
+Connecting (or 「収録開始」 when the automatic start is unchecked) creates one folder per recording under the destination:
 
 ```
 RumiCarData/

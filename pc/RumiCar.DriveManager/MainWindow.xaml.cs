@@ -72,6 +72,7 @@ public partial class MainWindow : Window
             _vm.Connected = true;
             _vm.ConnectionState = "接続";
             ConnectButton.Content = "切断";
+            if (_vm.AutoRecord) StartRecording();   // default: every connection is recorded
             var carName = CarConnection.GetString(car.HelloResult, "car");
             var coreVersion = CarConnection.GetString(car.HelloResult, "core_version");
             if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}");
@@ -192,15 +193,24 @@ public partial class MainWindow : Window
         _ => reason,
     };
 
-    /// <summary>Steering plus drive as direction and PWM duty (per mille shown as %).</summary>
+    /// <summary>
+    /// Steering plus drive as direction and PWM duty: per mille shown as % and, in
+    /// brackets, on the Arduino analogWrite scale (0..255) used by RumiCar-lib.
+    /// </summary>
     private static string DescribeCommand(int steer, int drivePermille, bool brake)
     {
         var steering = steer < 0 ? "左" : steer > 0 ? "右" : "中央";
         var drive = brake ? "ブレーキ"
-                  : drivePermille > 0 ? $"前進 {drivePermille / 10.0:F1}%"
-                  : drivePermille < 0 ? $"後退 {-drivePermille / 10.0:F1}%"
+                  : drivePermille > 0 ? $"前進 {FormatDuty(drivePermille)}"
+                  : drivePermille < 0 ? $"後退 {FormatDuty(-drivePermille)}"
                   : "停止";
         return $"操舵 {steering} / {drive}";
+    }
+
+    private static string FormatDuty(int permille)
+    {
+        var scale255 = (int)Math.Round(permille * 255.0 / 1000.0, MidpointRounding.AwayFromZero);
+        return $"{permille / 10.0:F1}% ({scale255}/255)";
     }
 
     private void SetMode(string mode)
@@ -478,21 +488,26 @@ public partial class MainWindow : Window
 
     private void OnRecordClick(object sender, RoutedEventArgs e)
     {
-        if (_session is not null)
-        {
-            StopRecording();
-            return;
-        }
+        if (_session is not null) StopRecording();
+        else StartRecording();
+    }
+
+    /// <summary>Opens a new session folder; frames are written from the next one received.</summary>
+    private void StartRecording()
+    {
+        if (_session is not null) return;
         try
         {
             var session = new SessionWriter(_vm.DataRoot.Trim(), _vm.CarName.Trim(), DateTimeOffset.Now);
             lock (_sessionLock) _session = session;
             _vm.Recording = true;
+            _vm.RecordingStatus = "収録中: " + session.Directory;
             RecordButton.Content = "収録停止";
             _vm.AddLog("収録開始: " + session.Directory);
         }
         catch (Exception ex)
         {
+            _vm.RecordingStatus = "収録できません: " + ex.Message;
             _vm.AddLog("収録を開始できません: " + ex.Message);
         }
     }
@@ -515,6 +530,7 @@ public partial class MainWindow : Window
             _vm.AddLog("収録の終了処理に失敗: " + ex.Message);
         }
         _vm.Recording = false;
+        _vm.RecordingStatus = $"停止（直前の収録: {s.FramesWritten} コマ）";
         RecordButton.Content = "収録開始";
         _vm.AddLog($"収録停止: {s.FramesWritten} コマ, 欠け {s.SequenceGaps} 回");
     }
