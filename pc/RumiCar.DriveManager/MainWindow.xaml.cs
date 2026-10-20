@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private TelemetryFrame? _latestFrame;
     private bool _renderQueued;
     private int _framesReceived;
+    private int _imagesReceived;
 
     private int _manualSteer;
     private int _manualDrive;
@@ -65,7 +66,9 @@ public partial class MainWindow : Window
             await car.ConnectAsync("RumiCarDriveManager", cts.Token);
             _car = car;
             _framesReceived = 0;
+            _imagesReceived = 0;
             _vm.Frames = "0";
+            _vm.Images = "0";
             _vm.Connected = true;
             _vm.ConnectionState = "接続";
             ConnectButton.Content = "切断";
@@ -207,6 +210,7 @@ public partial class MainWindow : Window
     private void OnFrameReceived(TelemetryFrame frame)
     {
         Interlocked.Increment(ref _framesReceived);
+        if (frame.Jpeg.Length > 0) Interlocked.Increment(ref _imagesReceived);
         try
         {
             lock (_sessionLock) _session?.Write(frame);
@@ -243,6 +247,7 @@ public partial class MainWindow : Window
         if (frame is null) return;
 
         _vm.Frames = Volatile.Read(ref _framesReceived).ToString();
+        _vm.Images = Volatile.Read(ref _imagesReceived).ToString();
         var h = frame.Header;
         _vm.Tof = $"{FormatTof(h.TofMm[0])} / {FormatTof(h.TofMm[1])} / {FormatTof(h.TofMm[2])}";
         _vm.LogicState = h.StateName.Length > 0 ? h.StateName : h.State.ToString();
@@ -254,7 +259,7 @@ public partial class MainWindow : Window
         if (h.LogicVersion.Length > 0 || h.PackVersion.Length > 0) _vm.Versions = $"{h.LogicVersion} / {h.PackVersion}";
         if (h.BatteryMillivolts > 0) _vm.Battery = FormatBattery(h.BatteryMillivolts);
 
-        if (frame.Jpeg.Length == 0) return;
+        if (frame.Jpeg.Length == 0 || !_vm.ShowImage) return;   // hidden: no decoding either
         try
         {
             var bmp = new BitmapImage();

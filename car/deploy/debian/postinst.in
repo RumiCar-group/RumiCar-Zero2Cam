@@ -36,6 +36,8 @@ case "$1" in
             chmod 0600 /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection
         fi
         if [ -d /run/systemd/system ]; then
+            # /dev/i2c-1 for the ToF sensors (the modules-load.d file covers the next boot).
+            modprobe i2c-dev 2>/dev/null || true
             systemctl daemon-reload || true
             systemctl enable rumicar-core.service || true
             # A running core is restarted so the new binary takes over (it brakes on stop).
