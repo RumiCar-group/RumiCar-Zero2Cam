@@ -353,6 +353,7 @@ int main(int argc, char** argv) {
                     {"tof_mm", {frame.tof_mm[0], frame.tof_mm[1], frame.tof_mm[2]}},
                     {"steer", out_steer},
                     {"drive_permille", out_drive},
+                    {"brake", out_brake},
                     {"state", rc == 0 ? cmd.state : last_state},
                     {"state_name", active.instance->state_name(rc == 0 ? cmd.state : last_state)},
                     {"flags", rc == 0 ? cmd.flags : 0u},

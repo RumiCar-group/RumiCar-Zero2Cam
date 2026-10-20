@@ -14,9 +14,10 @@ public sealed class TelemetryHeader
     [JsonPropertyName("seq")] public uint Seq { get; set; }
     [JsonPropertyName("t_us")] public ulong TimestampMicroseconds { get; set; }
     [JsonPropertyName("tof_mm")] public int[] TofMm { get; set; } = new int[3];
-    /// <summary>What was actually sent to the motors.</summary>
+    /// <summary>What was actually sent to the motors: steer -1/0/1, drive as PWM duty in per mille (negative = reverse), brake = both bridge inputs high.</summary>
     [JsonPropertyName("steer")] public int Steer { get; set; }
     [JsonPropertyName("drive_permille")] public int DrivePermille { get; set; }
+    [JsonPropertyName("brake")] public bool Brake { get; set; }
     [JsonPropertyName("state")] public int State { get; set; }
     [JsonPropertyName("state_name")] public string StateName { get; set; } = "";
     [JsonPropertyName("flags")] public uint Flags { get; set; }

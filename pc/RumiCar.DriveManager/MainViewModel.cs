@@ -43,6 +43,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _frames = "0";
     private string _images = "0";
     private bool _showImage = true;
+    private bool _autoRecord = true;
+    private string _recordingStatus = "停止（接続すると自動で始まります）";
     private string _pushStatus = "-";
     private VersionRow? _selectedVersion;
     private BitmapImage? _image;
@@ -73,6 +75,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
     public System.Windows.Visibility ImageVisibility => _showImage ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
     public System.Windows.Visibility ImageHiddenNoteVisibility => _showImage ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+    /// <summary>Start a recording session whenever a connection is made (default on).</summary>
+    public bool AutoRecord
+    {
+        get => _autoRecord;
+        set { if (Set(ref _autoRecord, value) && !_recording) RecordingStatus = value ? "停止（接続すると自動で始まります）" : "停止"; }
+    }
+    public string RecordingStatus { get => _recordingStatus; set => Set(ref _recordingStatus, value); }
     public string PushStatus { get => _pushStatus; set => Set(ref _pushStatus, value); }
     public VersionRow? SelectedVersion { get => _selectedVersion; set => Set(ref _selectedVersion, value); }
     public ObservableCollection<VersionRow> InstalledVersions { get; } = new();
