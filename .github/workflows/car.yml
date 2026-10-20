@@ -72,8 +72,19 @@ jobs:
 
       - uses: actions/checkout@v6
 
+      - name: Version from the release tag (vX.Y.Z), otherwise the one in CMakeLists.txt
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "flag=-DRUMICAR_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "version ${GITHUB_REF_NAME#v} (from the tag)"
+          else
+            echo "flag=" >> "$GITHUB_OUTPUT"
+            echo "version from car/CMakeLists.txt"
+          fi
+
       - name: Configure
-        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DRUMICAR_WITH_CAMERA=${{ matrix.camera }}
+        run: cmake -S car -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DRUMICAR_WITH_CAMERA=${{ matrix.camera }} ${{ steps.version.outputs.flag }}
 
       - name: Build (all warnings are errors)
         run: cmake --build build --parallel
@@ -103,6 +114,7 @@ jobs:
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/base-tof-*
           test "$(stat -c %a /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection)" = "600"
           test -x /usr/bin/rumicar-core && test -x /usr/bin/rumicar-activate
+          grep -qx "i2c-dev" /usr/lib/modules-load.d/rumicar.conf
           ldd /usr/bin/rumicar-core | grep -E "libcamera|libgpiod|libturbojpeg|libcrypto"
           rumicar-activate show
           mkdir -p dist && cp build/rumicar-zero2cam_*.deb dist/

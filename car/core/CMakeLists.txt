@@ -1,6 +1,6 @@
 # rumicar-core: control loop, hardware layer, pack/logic management.
 
-set(RUMICAR_CORE_VERSION "0.1.0")
+set(RUMICAR_CORE_VERSION "${PROJECT_VERSION}")
 
 option(RUMICAR_WITH_CAMERA "Capture images with libcamera (needs libcamera-dev and libturbojpeg0-dev)" ON)
 
@@ -67,3 +67,4 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/core.json DESTINATION /etc/r
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/RumiCar-AP.nmconnection DESTINATION /etc/NetworkManager/system-connections
         PERMISSIONS OWNER_READ OWNER_WRITE)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/config.txt.d/rumicar.txt DESTINATION share/rumicar/config.txt.d)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/modules-load.d/rumicar.conf DESTINATION lib/modules-load.d)

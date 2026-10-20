@@ -75,10 +75,10 @@ The drive manager's user interface is in Japanese; the table below gives the mea
 |---|---|
 | 車両 / 名前 | Car address (default `10.42.0.1`) and the car name used in recording folder names (default `RumiCar`) |
 | 非常停止 / 非常停止解除 | Emergency stop / clear. The e-stop brakes in every mode and the car stays stopped until cleared. It is also latched automatically when, in manual mode, the PC's heartbeat stops for 1 s or the PC disconnects |
-| Image | Latest camera image (320×240, about 20 frames/s) |
+| Image | Latest camera image (320×240, about 20 frames/s). Untick 「画像を表示」 to stop only the display (frames are still received and recorded; lowers the PC load) |
 | 状態 (status) | モード = mode; 非常停止 = e-stop (with reason); 判断状態 = logic state (CRUISE / TURN_LEFT / TURN_RIGHT / EMERGENCY_BRAKE / RECOVER_REVERSE / SENSOR_FAULT); ToF 左/中/右 = left/centre/right distance [mm] (`open` = nothing nearby, `--` = no reading); モーター出力 = what went to the motors; ロジックの判断 = what the logic decided; 版 = logic / pack versions; 受信コマ数 = frames received |
 | 走行モード (drive mode) | **自動** auto: the car's logic drives / **手動** manual: arrow keys on the PC (↑ forward 50 %, ↓ reverse 50 %, ←→ steer; click the image first so the keys reach the car) / **収録のみ** record-only: motors stopped, images and status still streamed (push the car by hand to collect data) |
-| 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`) and 収録開始 / 収録停止 (start / stop). Every received frame is saved |
+| 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`) and 収録開始 / 収録停止 (start / stop). Every received frame is saved. The "(画像付き N)" count next to 受信コマ数 grows when camera images arrive |
 | 版の管理 (versions) | Logic and packs installed on the car (`[使用中]` = active, `[直前]` = previous, with verification failures shown). 一覧更新 refresh, 送る… send, 有効化 activate, 削除 delete, ロジックを戻す roll back the logic, データを戻す roll back the pack (section 6) |
 | ログ (log) | Connection, responses, events and errors with timestamps |
 
@@ -169,6 +169,7 @@ sudo nmcli device wifi connect "<home SSID>" password "<password>"
 | The app cannot connect | Is the PC on `RumiCar` with a `10.42.0.x` address (`ipconfig`)? Firewall allowed? On the car: `systemctl status rumicar-core` |
 | No image | On the car: `sudo journalctl -u rumicar-core -b \| grep -i camera`. Camera ribbon orientation. `rpicam-hello --list-cameras` shows the camera? |
 | The car does not drive | Does `sudo journalctl -u rumicar-core -b` start with `hardware bring-up failed`? (The I2C/PWM settings are appended to `/boot/firmware/config.txt`.) Is the e-stop latched (「非常停止解除」 in the app)? ToF readings of `--` mean SENSOR_FAULT, which stops the car |
+| `hardware bring-up failed: open /dev/i2c-1` | The v0.1.1 image did not load the `i2c-dev` kernel module, so `/dev/i2c-1` was missing. `sudo raspi-config` → Interface Options → I2C → Yes fixes it (persists across reboots). Not needed with the v0.1.2 image and package |
 | A switch fails | The reason in the app's log (manifest mismatch, missing keys, wrong logic name…). `rumicar-activate show` on the car |
 | SSH password rejected | The first-boot setup may not have finished yet. Reboot and wait a few minutes |
 

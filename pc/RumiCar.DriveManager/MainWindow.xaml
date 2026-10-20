@@ -33,7 +33,11 @@
         <!-- Live image -->
         <Border x:Name="ImageBorder" Grid.Row="1" Grid.Column="0" BorderBrush="#9E9E9E" BorderThickness="1" Background="#212121"
                 Focusable="True" MouseLeftButtonDown="OnImageClick">
-            <Image Source="{Binding Image}" Stretch="Uniform"/>
+            <Grid>
+                <Image Source="{Binding Image}" Stretch="Uniform" Visibility="{Binding ImageVisibility}"/>
+                <TextBlock Text="画像の表示はオフです（受信と収録は続いています）" Foreground="#9E9E9E" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Visibility="{Binding ImageHiddenNoteVisibility}"/>
+            </Grid>
         </Border>
 
         <!-- Status / controls -->
@@ -78,7 +82,8 @@
                 <TextBox Width="220" Text="{Binding DataRoot, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"/>
                 <Button x:Name="RecordButton" Content="収録開始" Width="80" Margin="4,0,0,0" Click="OnRecordClick" IsEnabled="{Binding Connected}"/>
             </StackPanel>
-            <TextBlock><Run Text="受信コマ数: "/><Run Text="{Binding Frames}"/></TextBlock>
+            <TextBlock><Run Text="受信コマ数: "/><Run Text="{Binding Frames}"/><Run Text="（画像付き "/><Run Text="{Binding Images}"/><Run Text="）"/></TextBlock>
+            <CheckBox Content="画像を表示（オフにすると表示だけ止めます。受信と収録には影響しません）" IsChecked="{Binding ShowImage}" Margin="0,4,0,0"/>
 
             <TextBlock Text="版の管理（ロジック／データ）" FontWeight="Bold" Margin="0,12,0,0"/>
             <ListBox x:Name="VersionList" ItemsSource="{Binding InstalledVersions}" SelectedItem="{Binding SelectedVersion}" DisplayMemberPath="Display" Height="150" Margin="0,4,0,4" FontFamily="Consolas"/>

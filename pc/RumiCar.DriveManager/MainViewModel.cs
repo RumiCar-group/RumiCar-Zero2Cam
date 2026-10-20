@@ -41,6 +41,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _versions = "-";
     private string _battery = "-";
     private string _frames = "0";
+    private string _images = "0";
+    private bool _showImage = true;
     private string _pushStatus = "-";
     private VersionRow? _selectedVersion;
     private BitmapImage? _image;
@@ -61,6 +63,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string Versions { get => _versions; set => Set(ref _versions, value); }
     public string Battery { get => _battery; set => Set(ref _battery, value); }
     public string Frames { get => _frames; set => Set(ref _frames, value); }
+    /// <summary>Frames that carried a camera image.</summary>
+    public string Images { get => _images; set => Set(ref _images, value); }
+    /// <summary>Show the live image.  Off: frames are still received and recorded, just not decoded or drawn.</summary>
+    public bool ShowImage
+    {
+        get => _showImage;
+        set { if (Set(ref _showImage, value)) { OnPropertyChanged(nameof(ImageVisibility)); OnPropertyChanged(nameof(ImageHiddenNoteVisibility)); if (!value) Image = null; } }
+    }
+    public System.Windows.Visibility ImageVisibility => _showImage ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+    public System.Windows.Visibility ImageHiddenNoteVisibility => _showImage ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
     public string PushStatus { get => _pushStatus; set => Set(ref _pushStatus, value); }
     public VersionRow? SelectedVersion { get => _selectedVersion; set => Set(ref _selectedVersion, value); }
     public ObservableCollection<VersionRow> InstalledVersions { get; } = new();

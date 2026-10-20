@@ -32,12 +32,22 @@ jobs:
       - name: Unit tests
         run: dotnet test pc/RumiCar.Protocol.Tests/RumiCar.Protocol.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=protocol.trx"
 
+      - name: Version from the release tag (vX.Y.Z), otherwise the one in the project file
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && printf '%s' "${GITHUB_REF_NAME}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "flag=-p:Version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish the drive manager (single file, self-contained)
         run: >
           dotnet publish pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj
           --configuration Release --runtime win-x64 --self-contained true
           -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:DebugType=none --output publish
+          -p:DebugType=none --output publish ${{ steps.version.outputs.flag }}
 
       - name: Upload RumiCarDriveManager.exe
         uses: actions/upload-artifact@v5
