@@ -192,8 +192,16 @@ public partial class MainWindow : Window
         _ => reason,
     };
 
-    private static string DescribeCommand(int steer, int drivePermille) =>
-        $"操舵 {(steer < 0 ? "左" : steer > 0 ? "右" : "中央")}, 駆動 {drivePermille / 10.0:F1}%";
+    /// <summary>Steering plus drive as direction and PWM duty (per mille shown as %).</summary>
+    private static string DescribeCommand(int steer, int drivePermille, bool brake)
+    {
+        var steering = steer < 0 ? "左" : steer > 0 ? "右" : "中央";
+        var drive = brake ? "ブレーキ"
+                  : drivePermille > 0 ? $"前進 {drivePermille / 10.0:F1}%"
+                  : drivePermille < 0 ? $"後退 {-drivePermille / 10.0:F1}%"
+                  : "停止";
+        return $"操舵 {steering} / {drive}";
+    }
 
     private void SetMode(string mode)
     {
@@ -251,8 +259,8 @@ public partial class MainWindow : Window
         var h = frame.Header;
         _vm.Tof = $"{FormatTof(h.TofMm[0])} / {FormatTof(h.TofMm[1])} / {FormatTof(h.TofMm[2])}";
         _vm.LogicState = h.StateName.Length > 0 ? h.StateName : h.State.ToString();
-        _vm.Command = DescribeCommand(h.Steer, h.DrivePermille);
-        _vm.LogicCommand = DescribeCommand(h.LogicSteer, h.LogicDrivePermille);
+        _vm.Command = DescribeCommand(h.Steer, h.DrivePermille, h.Brake);
+        _vm.LogicCommand = DescribeCommand(h.LogicSteer, h.LogicDrivePermille, (h.Flags & 0x3) != 0);   // BRAKE or FAULT flag
         if (h.Mode.Length > 0 && h.Mode != _vm.Mode) SetMode(h.Mode);
         var estopText = h.EStop ? "作動中" : "なし";
         if (!_vm.EStop.StartsWith(estopText, StringComparison.Ordinal)) _vm.EStop = estopText;

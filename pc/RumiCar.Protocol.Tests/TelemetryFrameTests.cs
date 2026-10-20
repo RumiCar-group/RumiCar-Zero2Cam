@@ -14,6 +14,7 @@ public class TelemetryFrameTests
             TofMm = new[] { 120, 8190, -1 },
             Steer = 1,
             DrivePermille = 650,
+            Brake = seq % 3 == 0,
             State = 2,
             StateName = "TURN_RIGHT",
             Flags = 0,
@@ -43,6 +44,7 @@ public class TelemetryFrameTests
         Assert.Equal(new[] { 120, 8190, -1 }, frame.Header.TofMm);
         Assert.Equal("TURN_RIGHT", frame.Header.StateName);
         Assert.False(frame.Header.EStop);
+        Assert.False(frame.Header.Brake);
         Assert.Equal(-1, frame.Header.LogicSteer);
         Assert.Equal(420, frame.Header.LogicDrivePermille);
         Assert.Equal(1000, frame.Jpeg.Length);
