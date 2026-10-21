@@ -1,0 +1,11 @@
+#!/bin/sh
+# rumicar-ap-ensure <connection-id> — activate the NetworkManager access-point
+# profile unless it is already active.  Run by rumicar-ap.timer as a fallback
+# to rumicar-core, which activates the profile itself at start-up (docs 3.9).
+set -u
+conn="${1:-RumiCar-AP}"
+state="$(nmcli -g GENERAL.STATE connection show "$conn" 2>/dev/null)" || state=""
+case "$state" in
+    activated) exit 0 ;;
+esac
+exec nmcli connection up "$conn"

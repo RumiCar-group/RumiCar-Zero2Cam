@@ -1,0 +1,12 @@
+[Unit]
+Description=RumiCar Zero2Cam access point fallback
+# rumicar-core activates the access point itself (docs 3.9); this unit, run by
+# rumicar-ap.timer, activates it when the core has not (crashed, disabled, or
+# not yet running) so the car stays reachable over Wi-Fi.
+After=NetworkManager.service
+Wants=NetworkManager.service
+ConditionPathExists=/etc/NetworkManager/system-connections/RumiCar-AP.nmconnection
+
+[Service]
+Type=oneshot
+ExecStart=@RUMICAR_BINDIR@/rumicar-ap-ensure RumiCar-AP

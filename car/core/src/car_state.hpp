@@ -10,6 +10,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -24,8 +25,13 @@ bool parse_drive_mode(const std::string& s, DriveMode& out);
 struct RunningStatus {
     std::string logic_name;
     std::string logic_version;
+    std::string logic_description;          // manifest "description" (may be empty)
     std::string pack_id;
     std::string pack_version;
+    std::string pack_description;           // manifest "description"
+    std::vector<std::string> pack_capabilities;   // manifest "capabilities", e.g. walls, traffic_light
+    std::vector<std::string> pack_scenarios;      // manifest "scenarios": recorded scenarios it was built from
+    std::string pack_parent;                // manifest "parent": the pack it was derived from
     std::string state_name;   // logic state of the last frame
     uint8_t     state = 0;
     uint32_t    flags = 0;    // logic command flags of the last frame
@@ -43,7 +49,8 @@ public:
     using Clock = std::chrono::steady_clock;
     using EventSink = std::function<void(const std::string& event, const nlohmann::json& data)>;
 
-    explicit CarState(int heartbeat_timeout_ms);
+    // initial_mode: the driving mode at start-up (core.json startup_mode).
+    explicit CarState(int heartbeat_timeout_ms, DriveMode initial_mode = DriveMode::Auto);
 
     // Receives "status", "estop" and "activation" events (called with no lock held).
     void set_event_sink(EventSink sink);
@@ -76,6 +83,11 @@ public:
     // --- running status (loop -> control server) -----------------------------
     void update_running(const RunningStatus& s);
     RunningStatus running() const;
+
+    // Firmware throttling flags (docs 3.9): bit 0 under-voltage now, bit 16
+    // under-voltage since boot, etc.  Returns true when the value changed.
+    bool update_throttled(uint32_t flags);
+    uint32_t throttled() const;
     nlohmann::json status_json() const;   // get_status result / status event data
     void emit_status();                   // send a status event with the current state
 
@@ -96,7 +108,8 @@ private:
     EventSink sink_;
     const std::chrono::milliseconds heartbeat_timeout_;
 
-    DriveMode mode_ = DriveMode::Auto;
+    DriveMode mode_;
+    const DriveMode startup_mode_;
     bool estop_ = false;
     std::string estop_reason_;
     int8_t manual_steer_ = 0;
@@ -105,6 +118,7 @@ private:
     bool client_connected_ = false;
 
     RunningStatus running_;
+    uint32_t throttled_ = 0;
 
     uint64_t activation_requested_gen_ = 0;
     uint64_t activation_completed_gen_ = 0;

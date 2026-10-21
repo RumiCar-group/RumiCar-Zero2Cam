@@ -1,0 +1,13 @@
+[Unit]
+Description=RumiCar Zero2Cam access point fallback (periodic check)
+
+[Timer]
+# First check 90 s after boot (the core normally has the AP up well before),
+# then every 60 s; each run exits at once when the AP is already active.
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=rumicar-ap.service
+
+[Install]
+WantedBy=timers.target

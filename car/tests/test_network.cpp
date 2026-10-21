@@ -139,13 +139,15 @@ void write_file(const fs::path& p, const std::string& content) {
 }
 
 // A pack directory with a fresh manifest (same layout as make_manifest.py).
-void make_pack(const fs::path& dir, const std::string& id, const std::string& version, const std::string& params) {
+void make_pack(const fs::path& dir, const std::string& id, const std::string& version, const std::string& params,
+               const json& metadata = json::object()) {
     write_file(dir / "params.json", params);
     json m = {
         {"schema", 1}, {"kind", "pack"}, {"id", id}, {"version", version}, {"created", "2026-10-18T00:00:00Z"},
         {"logic", {{"name", "tof_drive"}, {"min_abi", 1}}},
         {"files", json::array({{{"path", "params.json"}, {"sha256", sha256_hex(params)}, {"bytes", params.size()}}})},
     };
+    for (auto it = metadata.begin(); it != metadata.end(); ++it) m[it.key()] = it.value();
     write_file(dir / "manifest.json", m.dump(2) + "\n");
 }
 
@@ -256,6 +258,23 @@ void test_log_ring() {
     CHECK(r.front().find("ring 7") != std::string::npos);
 }
 
+void test_startup_mode() {
+    // The mode the core starts in comes from core.json (startup_mode); the
+    // default is record_only so the car waits for the PC (docs 3.5 / 3.9).
+    CarState rec(1000, DriveMode::RecordOnly);
+    CHECK(rec.mode() == DriveMode::RecordOnly);
+    CHECK(rec.frame_inputs(CarState::Clock::now()).mode == DriveMode::RecordOnly);
+    CHECK(rec.status_json()["mode"] == "record_only" && rec.status_json()["startup_mode"] == "record_only");
+    rec.set_mode(DriveMode::Auto, CarState::Clock::now());
+    CHECK(rec.mode() == DriveMode::Auto && rec.status_json()["startup_mode"] == "record_only");
+    CarState dflt(1000);
+    CHECK(dflt.mode() == DriveMode::Auto);
+    DriveMode m;
+    CHECK(parse_drive_mode("record_only", m) && m == DriveMode::RecordOnly);
+    CHECK(parse_drive_mode("auto", m) && m == DriveMode::Auto);
+    CHECK(!parse_drive_mode("", m));
+}
+
 void test_version_store_names() {
     CHECK(VersionStore::is_plain_dir_name("base-tof-0.1.0"));
     CHECK(!VersionStore::is_plain_dir_name(""));
@@ -271,7 +290,9 @@ void test_servers(const fs::path& base_pack) {
     const fs::path state_dir = tmp / "state";
     const std::string base_params = read_file(base_pack / "params.json");
     make_pack(state_dir / "packs" / "base-tof-0.1.0", "base-tof", "0.1.0", base_params);
-    make_pack(state_dir / "packs" / "base-tof-0.2.0", "base-tof", "0.2.0", base_params);
+    make_pack(state_dir / "packs" / "base-tof-0.2.0", "base-tof", "0.2.0", base_params,
+              {{"description", "信号機ありケース1"}, {"capabilities", {"walls", "traffic_light"}},
+               {"scenarios", {"壁のみの走行データ", "信号機ありケース1"}}, {"parent", "base-tof-0.1.0"}});
     make_pack(state_dir / "packs" / "broken-0.1.0", "broken", "0.1.0", base_params);
     write_file(state_dir / "packs" / "broken-0.1.0" / "params.json", "tampered");
     make_logic(state_dir / "logic" / "tof_drive-0.1.0", "tof_drive", "0.1.0");
@@ -327,14 +348,27 @@ void test_servers(const fs::path& base_pack) {
     running.logic_version = "0.1.0";
     running.pack_id = "base-tof";
     running.pack_version = "0.1.0";
+    running.pack_description = "壁のみ";
+    running.pack_capabilities = {"walls"};
     running.state_name = "CRUISE";
     state.update_running(running);
     r = request(c, "get_status", nullptr);
     CHECK(r["ok"].get<bool>());
     CHECK(r["result"]["mode"] == "auto");
+    CHECK(r["result"]["startup_mode"] == "auto");
     CHECK(r["result"]["estop"] == false);
     CHECK(r["result"]["logic_version"] == "0.1.0");
     CHECK(r["result"]["state_name"] == "CRUISE");
+    CHECK(r["result"]["pack_description"] == "壁のみ");
+    CHECK(r["result"]["pack_capabilities"] == json::array({"walls"}));
+    CHECK(r["result"]["pack_scenarios"] == json::array());
+    CHECK(r["result"]["throttled"] == 0);
+    // Power flags from the firmware are reported in the status (docs 3.9).
+    CHECK(state.update_throttled(0x50001u));
+    CHECK(!state.update_throttled(0x50001u));
+    r = request(c, "get_status", nullptr);
+    CHECK(r["result"]["throttled"] == 0x50001u);
+    CHECK(state.update_throttled(0));
 
     // --- modes, manual drive, heartbeat -----------------------------------------
     r = request(c, "manual_drive", {{"steer", 1}, {"drive_permille", 500}});
@@ -391,13 +425,17 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["result"]["current"]["pack"] == "base-tof-0.1.0");
     CHECK(r["result"]["current"]["logic"] == "tof_drive-0.1.0");
     {
-        bool saw_ok = false, saw_broken = false;
+        bool saw_ok = false, saw_broken = false, saw_meta = false;
         for (const auto& p : r["result"]["packs"]) {
-            if (p["name"] == "base-tof-0.1.0") saw_ok = p["verified"].get<bool>() && p["version"] == "0.1.0";
+            if (p["name"] == "base-tof-0.1.0") saw_ok = p["verified"].get<bool>() && p["version"] == "0.1.0" && p["description"] == "" && p["capabilities"] == json::array();
             if (p["name"] == "broken-0.1.0") saw_broken = !p["verified"].get<bool>() && !p["error"].get<std::string>().empty();
+            if (p["name"] == "base-tof-0.2.0")
+                saw_meta = p["description"] == "信号機ありケース1" && p["capabilities"] == json::array({"walls", "traffic_light"}) &&
+                           p["scenarios"].size() == 2 && p["parent"] == "base-tof-0.1.0";
         }
         CHECK(saw_ok);
         CHECK(saw_broken);
+        CHECK_MSG(saw_meta, "list_versions must carry the manifest metadata");
     }
     r = request(c, "activate", {{"kind", "pack"}, {"name", "base-tof-0.2.0"}});
     CHECK_MSG(r["ok"].get<bool>(), r.dump());
@@ -657,6 +695,7 @@ int main(int argc, char** argv) {
     }
     test_telemetry_frame_encoding();
     test_log_ring();
+    test_startup_mode();
     test_version_store_names();
     test_servers(argv[1]);
     return check::summary("test_network");

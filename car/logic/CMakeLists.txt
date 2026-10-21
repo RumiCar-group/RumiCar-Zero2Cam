@@ -30,6 +30,7 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:tof_drive> ${TOF_DRIVE_STAGE}/libtof_drive.so
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${TOF_DRIVE_STAGE}
           --name tof_drive --version ${TOF_DRIVE_VERSION} --entry libtof_drive.so
+          --description "ToF driving logic: avoids walls and obstacles with the three distance sensors; the camera image is not used"
   DEPENDS tof_drive ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
   COMMENT "Writing manifest.json for tof_drive ${TOF_DRIVE_VERSION}"
   VERBATIM)

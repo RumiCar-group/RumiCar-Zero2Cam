@@ -27,9 +27,14 @@ public sealed class TelemetryHeader
     /// <summary>What the driving logic decided this frame, even when it was not applied (manual / record_only / e-stop).</summary>
     [JsonPropertyName("logic_steer")] public int LogicSteer { get; set; }
     [JsonPropertyName("logic_drive_permille")] public int LogicDrivePermille { get; set; }
+    /// <summary>Identity of the logic and pack that produced this frame (recorded with every frame so a session's lineage is known).</summary>
+    [JsonPropertyName("logic_name")] public string LogicName { get; set; } = "";
     [JsonPropertyName("logic_version")] public string LogicVersion { get; set; } = "";
+    [JsonPropertyName("pack_id")] public string PackId { get; set; } = "";
     [JsonPropertyName("pack_version")] public string PackVersion { get; set; } = "";
     [JsonPropertyName("battery_mv")] public int BatteryMillivolts { get; set; }
+    /// <summary>Firmware throttling flags (bit 0 under-voltage now, bit 16 under-voltage since boot, ...); 0 when fine or unsupported.</summary>
+    [JsonPropertyName("throttled")] public uint Throttled { get; set; }
     /// <summary>Width/height of the JPEG, 0 when the frame carries no image.</summary>
     [JsonPropertyName("image_w")] public int ImageWidth { get; set; }
     [JsonPropertyName("image_h")] public int ImageHeight { get; set; }

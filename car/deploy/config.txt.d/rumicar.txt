@@ -9,3 +9,6 @@ dtoverlay=pwm-2chan,pin=18,func=2,pin2=13,func2=4
 
 # Camera Module 2 on the libcamera stack (auto-detected)
 camera_auto_detect=1
+
+# Bluetooth is not used; leaving it off saves a little battery current (docs 3.9)
+dtoverlay=disable-bt

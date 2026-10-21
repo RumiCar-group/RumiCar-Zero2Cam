@@ -31,7 +31,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 | Windows PC（64bit、Windows 10/11） | Wi-Fi 付き。走行管理アプリを動かす |
 | SD カードを書くソフト | [Raspberry Pi Imager](https://www.raspberrypi.com/software/) |
 
-車は **電源を入れるとすぐ走り出します**（Arduino 版と同じ動作）。初回起動や確認のときは、車輪が床に着かないよう台に載せてください。
+車は **電源を入れただけでは走りません**。起動すると「収録のみ」（モーターはブレーキ）で待ち、走行管理アプリで **「自動」** を押すと走り出します（v0.1.3 から。それまでは電源投入で走り出していました）。PC なしで電源投入だけで走らせたいときは `/etc/rumicar/core.json` の `startup_mode` を `auto` にします（7 章）。初回起動や確認のときは、車輪が床に着かないよう台に載せてください。
 
 ## 2. SD カードを作る
 
@@ -48,7 +48,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 
 1. 車を台に載せ、電源を入れます。
 2. 初回はパーティションの拡張のため 1 回自動で再起動します。2〜3 分待ちます。
-3. 起動すると `rumicar-core` が動き始め、**前方に障害物が無ければ走り出します**。同時に Wi-Fi のアクセスポイントが立ちます。
+3. 起動すると `rumicar-core` が動き始め、センサーの初期化 → Wi-Fi のアクセスポイント → （PC がつながったら）カメラ の順に立ち上がります。乾電池での電圧低下を避けるため、電気を食う部分は同時には起動しません（9 章）。**この時点では走りません**（収録のみ）。走らせるには 4 章の手順で接続して「自動」を押します。
 
 イメージに入っている初期設定：
 
@@ -74,10 +74,11 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 | 車両／名前 | 車のアドレス（既定 `10.42.0.1`）と、収録フォルダ名に使う車の名前（既定 `RumiCar`） |
 | 非常停止／非常停止解除 | 非常停止はモードに関係なくブレーキし、解除するまで走りません。手動モードで PC との通信が 1 秒途絶えたときや、手動モード中に切断したときも自動でかかります |
 | 画像 | 車のカメラの最新画像（320×240、約 20 コマ/秒）。「画像を表示」のチェックを外すと表示だけ止まります（受信と収録は続きます。PC の負荷を下げたいときに） |
-| 状態 | モード、非常停止（緑 = なし、赤 = 作動中・理由付き）、判断状態（CRUISE／TURN_LEFT／TURN_RIGHT／EMERGENCY_BRAKE／RECOVER_REVERSE／SENSOR_FAULT）、ToF 左／中／右 [mm]（`open` = 近くに何もない、`--` = 読めず）、モーター出力、ロジックの判断、版（ロジック／データ） |
+| 状態 | モード、非常停止（緑 = なし、赤 = 作動中・理由付き）、判断状態（CRUISE／TURN_LEFT／TURN_RIGHT／EMERGENCY_BRAKE／RECOVER_REVERSE／SENSOR_FAULT）、ToF 左／中／右 [mm]（`open` = 近くに何もない、`--` = 読めず）、モーター出力、ロジックの判断、版（ロジック／データ）、**判断データ**（使用中のパックの名前・版と説明）、**対応機能**（壁／信号機／車両／交差点）、**学習元**（そのパックを作るのに使った収録シナリオと元の版）、**電源**（車のファームウェアが報告する低電圧・処理速度制限。「正常（低電圧なし）」が通常） |
 | モーター出力／ロジックの判断 | 「操舵 左／中央／右 / 前進 74.8% (191/255)」のように表示。% は駆動モーターの **PWM のデューティ比**（車は千分率 0〜1000 で扱い、1000 = 100%）、括弧内は同じ値を Arduino 版の `analogWrite` の 0〜255 に換算したもの（748‰ × 255 ÷ 1000 ≈ 191）。前進／後退／停止（惰行）／ブレーキ（両入力 High）を区別します。「モーター出力」は実際にモーターへ出した値、「ロジックの判断」はロジックがそのコマで決めた値（手動・収録のみ・非常停止中でも表示） |
-| 走行モード | **自動**：車のロジックが走行／**手動**：PC の矢印キーで操作（↑前進 50%、↓後退 50%、←→操舵。画像をクリックしてから押す）／**収録のみ**：モーターを止めたまま画像と状態を受信（手で動かしてデータを集めるときに） |
-| 収録 | 保存先（既定 `C:\Users\<ユーザー>\RumiCarData`）と「収録開始／収録停止」。**既定では接続すると自動で収録が始まり**（「接続したら自動で収録を開始する」のチェック）、切断で閉じます。受信した全コマを保存します。「受信コマ数」の（画像付き N）が増えていればカメラの画像が届いています |
+| 走行モード | **自動**：車のロジックが走行／**手動**：PC の矢印キーで操作（↑前進 50%、↓後退 50%、←→操舵。画像をクリックしてから押す）／**収録のみ**：モーターを止めたまま画像と状態を受信（手で動かしてデータを集めるときに）。下に「起動時のモード」（既定は収録のみ）が出ます |
+| 収録 | 保存先（既定 `C:\Users\<ユーザー>\RumiCarData`）、**シナリオ**（この収録が何の場面か。例：「壁のみの走行データ」「信号機ありケース1」。入力するか、前に使った名前を選ぶ）、**メモ**（任意）、「収録開始／収録停止」。**既定では接続すると自動で収録が始まり**（「接続したら自動で収録を開始する」のチェック）、切断で閉じます。シナリオとメモは収録開始時の値が `session.json` に書かれます。受信した全コマを保存します。「受信コマ数」の（画像付き N）が増えていればカメラの画像が届いています |
+| 動画を作る… | 収録フォルダを選ぶと、その画像から `video.avi`（Motion JPEG、実時間、20 コマ/秒）を同じフォルダに作ります。接続していなくても使えます（6.4） |
 | 版の管理 | 車に入っているロジック／データの一覧（`[使用中]`、`[直前]`、検証失敗の表示）。「一覧更新」「送る…」「有効化」「削除」「ロジックを戻す」「データを戻す」（6 章） |
 | ログ | 接続・応答・イベント・エラーを時刻付きで表示 |
 
@@ -95,10 +96,13 @@ RumiCarData/
     RumiCar_20261018-123456/      車の名前_開始時刻（UTC）
       frames/000001.jpg …        画像（番号は収録内の通し番号）
       meta.jsonl                 1 行 1 コマ：{"index":1,"image":"000001.jpg","received":"…","header":{…車から来た状態…}}
-      session.json               収録の概要（コマ数、欠けた回数）
+      session.json               収録の概要（シナリオ、メモ、開始時に車が使っていたロジック／パックとその説明・対応機能・学習元、コマ数、画像枚数、欠けた回数、低電圧の有無）
+  scenarios.json                 これまでに使ったシナリオ名の一覧（新しい順、回数付き）
 ```
 
-`header` には、そのコマの ToF 値、ロジックの状態と判断（操舵・駆動）、実際にモーターへ出した値、モード、非常停止、版、画像の連番と時刻が入っています。
+`header` には、そのコマの ToF 値、ロジックの状態と判断（操舵・駆動）、実際にモーターへ出した値、モード、非常停止、ロジックとパックの名前と版（`logic_name`／`pack_id`）、電源の状態（`throttled`）、画像の連番と時刻が入っています。
+
+**シナリオの付け方**：収録の前に「シナリオ」欄に場面の名前を入れます。「壁のみの走行データ」「信号機ありケース1」「信号機と交差点ロジックあり」のように、あとで判断データを作るときにどの収録を使うか選べる名前にします。同じ名前は `scenarios.json` から選べます。
 
 ### 6.2 Claude のデスクトップアプリで改良する
 
@@ -109,10 +113,14 @@ RumiCarData/
 ```
 base-tof-0.2.0/            フォルダ名は <id>-<version>
   params.json              全キー必須
-  manifest.json            python car/tools/make_manifest.py pack base-tof-0.2.0 --id base-tof --version 0.2.0 --logic tof_drive
+  manifest.json            python car/tools/make_manifest.py pack base-tof-0.2.0 --id base-tof --version 0.2.0 --logic tof_drive \
+                               --description "壁のみ。旋回を早めに始めるよう d_turn_enter_mm を 220 に" \
+                               --capability walls --scenario "壁のみの走行データ" --parent base-tof-0.1.1
 ```
 
 版の名前（`0.2.0` など）は、車に入っているものと重ならない新しい番号にします。
+
+`--description`（何の版か）、`--capability`（扱える場面：`walls` 壁、`traffic_light` 信号機、`vehicle` 車両、`intersection` 交差点。複数可）、`--scenario`（作るのに使った収録シナリオ。複数可）、`--parent`（元にした版）は任意ですが、付けておくと走行管理アプリの「判断データ」「対応機能」「学習元」と版の一覧に表示され、どのロジック／データで走っているかが分かります。`python car/tools/make_manifest.py show <フォルダ>` で確認できます。
 
 ### 6.3 車に送って切り替える
 
@@ -121,6 +129,10 @@ base-tof-0.2.0/            フォルダ名は <id>-<version>
 3. 具合が悪ければ **「データを戻す」** で直前の版に戻ります。不要になった版は選んで「削除」（使用中と直前の版は削除できません）。
 
 ロジック本体（`tof_drive` の .so）を作り直した場合も同じ手順で送れます（`make_manifest.py logic …`、仕様書 4 章）。
+
+### 6.4 収録から動画を作る
+
+走行管理アプリの「動画を作る…」で収録フォルダを選ぶと、`frames/` の画像から `video.avi` を作ります（Motion JPEG：受信した JPEG をそのまま並べるので画質は落ちません。20 コマ/秒、画像の時刻に沿った実時間。コマが届かなかった区間は直前のコマを最大 1 秒保持し、それより長い空白は詰めます）。VLC、Windows のメディア プレーヤー、ffmpeg で再生できます。Claude のデスクトップアプリから作るときは同じ処理の `python car/tools/session_video.py <収録フォルダ>` が使えます（Python 3 だけで動きます）。MP4 にしたいときは `ffmpeg -i video.avi -c:v libx264 -pix_fmt yuv420p video.mp4`。
 
 ## 7. 車に直接入る（SSH）
 
@@ -132,7 +144,7 @@ rumicar-activate show                  # 使用中／直前の版と、最後の
 sudo nano /etc/rumicar/core.json       # 設定（変更後は sudo systemctl restart rumicar-core）
 ```
 
-主な設定（`/etc/rumicar/core.json`、仕様書 3.3）：`car_name`（車の名前）、`max_drive_permille`（駆動の上限、1000 = 100%）、`camera.enabled`、`camera.fps`、`network.heartbeat_timeout_ms`。
+主な設定（`/etc/rumicar/core.json`、仕様書 3.3）：`car_name`（車の名前）、`startup_mode`（起動時のモード：`record_only` 既定／`auto` 電源投入で走り出す）、`max_drive_permille`（駆動の上限、1000 = 100%）、`camera.enabled`、`camera.on_demand`（PC 接続中か自動モードのときだけカメラを動かす。既定 true）、`camera.fps`、`network.heartbeat_timeout_ms`、`network.ap_start`（アクセスポイントを `core` が立てる（既定）か `boot` で NetworkManager に任せるか）、`network.wifi_txpower_dbm`（無線の送信出力の上限。0 = 既定のまま。電池での電圧低下が気になるときに 10〜14 程度を試す）、`power.throttled_path`（低電圧・処理速度制限の監視。空で無効）。
 
 ## 8. 更新する
 
@@ -167,7 +179,9 @@ sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 | Wi-Fi に `RumiCar` が出ない | 起動後 1〜2 分待つ。SSH が使えるなら `nmcli connection show` に `RumiCar-AP` があるか、`sudo journalctl -u NetworkManager -b` にエラーが無いか、`iw reg get` が `JP` か |
 | アプリが接続できない | PC が `RumiCar` につながり `10.42.0.x` のアドレスを得ているか（`ipconfig`）。ファイアウォールの許可。車で `systemctl status rumicar-core` |
 | 画像が出ない | 車で `sudo journalctl -u rumicar-core -b | grep -i camera`。カメラのケーブルの向き。`rpicam-hello --list-cameras` でカメラが見えるか |
-| 走らない | `sudo journalctl -u rumicar-core -b` の先頭に `hardware bring-up failed` が無いか（I2C／PWM の設定は `/boot/firmware/config.txt` の末尾に追記されています）。非常停止がかかっていないか（アプリの「非常停止解除」）。ToF の値が `--`（読めず）のときは SENSOR_FAULT で止まります |
+| 走らない | 起動直後は「収録のみ」で待っています（アプリで「自動」を押す。PC なしで走らせるなら `startup_mode` を `auto` に）。`sudo journalctl -u rumicar-core -b` の先頭に `hardware bring-up failed` が無いか（I2C／PWM の設定は `/boot/firmware/config.txt` の末尾に追記されています）。非常停止がかかっていないか（アプリの「非常停止解除」）。ToF の値が `--`（読めず）のときは SENSOR_FAULT で止まります |
+| 起動の途中で電源が落ちる・再起動する（乾電池） | 起動時に電気を食う部分（Wi-Fi、カメラ、モーター）が重ならないよう、v0.1.3 から本体がセンサー → Wi-Fi → カメラの順に立ち上げ、モーターは「自動」を押すまで止めています。それでも落ちるときは、電池を新しいものか充電式（ニッケル水素）にする、`network.wifi_txpower_dbm` を 10 程度にして無線の送信出力を下げる、アプリの「電源」欄に「低電圧」と出ていないか見る（出る機種なら原因の切り分けに使えます）。走行中に落ちるなら `max_drive_permille` を下げて加速時の電流を抑えます |
+| Wi-Fi が途中で消えた | 本体（rumicar-core）が止まるとアクセスポイントも立ちませんが、`rumicar-ap.timer` が起動 90 秒後から 60 秒ごとに立て直します。`systemctl status rumicar-ap.timer` と `nmcli connection show --active` で確認します |
 | `hardware bring-up failed: open /dev/i2c-1` | v0.1.1 のイメージはカーネルモジュール `i2c-dev` を読み込む設定が無く、`/dev/i2c-1` ができませんでした。`sudo raspi-config` → Interface Options → I2C → Yes で直ります（再起動後も有効）。v0.1.2 以降のイメージとパッケージでは不要です |
 | 切り替えに失敗する | アプリのログの理由（manifest の不一致、必須キー不足、ロジック名の不一致など）。車の `rumicar-activate show` |
 | SSH のパスワードが通らない | 初回起動の設定が反映される前の可能性。再起動して数分待つ |
@@ -207,8 +221,8 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 ## 本版（0.1.x）の範囲
 
-- 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager）と `set_wifi`、ロジック／パックの走行中差し替え（PC または ssh から）、manifest による検証、systemd サービス、Debian パッケージ
-- PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、モード、非常停止、手動操作、収録、版の管理）
+- 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときだけ動かす）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序立てて起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中差し替え（PC または ssh から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
+- PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、モード、非常停止、手動操作、シナリオ付き収録、版の管理、収録からの動画作成）
 - 配布：標準 SD カードイメージ、タグで GitHub Release
 - 未実装（次の版）：画像を使う走行ロジック
 

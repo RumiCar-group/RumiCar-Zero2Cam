@@ -111,6 +111,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.activation_poll_ms = s.get_int("activation_poll_ms", c.activation_poll_ms, 100, 10000);
         c.max_drive_permille = s.get_int("max_drive_permille", c.max_drive_permille, 0, 1000);
         c.car_name = s.get_string("car_name", c.car_name);
+        c.startup_mode = s.get_string("startup_mode", c.startup_mode);
         seen_top.insert(s.seen.begin(), s.seen.end());
     }
     {
@@ -146,6 +147,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
     {
         Section s{section(root, "camera", seen_top), "camera", {}};
         c.camera_enabled = s.get_bool("enabled", c.camera_enabled);
+        c.camera_on_demand = s.get_bool("on_demand", c.camera_on_demand);
         c.camera_width = static_cast<unsigned>(s.get_int("width", static_cast<int>(c.camera_width), 64, 1920));
         c.camera_height = static_cast<unsigned>(s.get_int("height", static_cast<int>(c.camera_height), 64, 1080));
         c.camera_fps = s.get_int("fps", c.camera_fps, 1, 60);
@@ -161,6 +163,16 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.telemetry_queue_frames = s.get_int("telemetry_queue_frames", c.telemetry_queue_frames, 1, 200);
         c.ap_connection = s.get_string_allow_empty("ap_connection", c.ap_connection);
         c.nmcli_path = s.get_string("nmcli", c.nmcli_path);
+        c.ap_start = s.get_string("ap_start", c.ap_start);
+        c.wifi_txpower_dbm = s.get_int("wifi_txpower_dbm", c.wifi_txpower_dbm, 0, 30);
+        c.wifi_device = s.get_string("wifi_device", c.wifi_device);
+        c.iw_path = s.get_string("iw", c.iw_path);
+        s.reject_unknown();
+    }
+    {
+        Section s{section(root, "power", seen_top), "power", {}};
+        c.throttled_path = s.get_string_allow_empty("throttled_path", c.throttled_path);
+        c.power_poll_ms = s.get_int("poll_ms", c.power_poll_ms, 100, 60000);
         s.reject_unknown();
     }
     for (auto it = root.begin(); it != root.end(); ++it) {
@@ -181,6 +193,9 @@ CoreConfig parse_core_config(const std::string& json_text) {
     if (c.watchdog_ms < 2 * c.loop_period_ms) throw std::runtime_error("core.json: watchdog_ms must be at least twice loop_period_ms");
     if (c.control_port == c.telemetry_port) throw std::runtime_error("core.json: network.control_port and telemetry_port must differ");
     if (c.car_name.size() > 32) throw std::runtime_error("core.json: car_name must be at most 32 characters");
+    if (c.startup_mode != "record_only" && c.startup_mode != "auto")
+        throw std::runtime_error("core.json: startup_mode must be 'record_only' or 'auto'");
+    if (c.ap_start != "core" && c.ap_start != "boot") throw std::runtime_error("core.json: network.ap_start must be 'core' or 'boot'");
     if (c.camera_width % 2 != 0 || c.camera_height % 2 != 0) throw std::runtime_error("core.json: camera.width and height must be even");
     return c;
 }

@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "car_name": "RumiCar",
+  "startup_mode": "record_only",
   "loop_period_ms": 50,
   "watchdog_ms": 200,
   "activation_poll_ms": 500,
@@ -29,6 +30,7 @@
   },
   "camera": {
     "enabled": true,
+    "on_demand": true,
     "width": 320,
     "height": 240,
     "fps": 20,
@@ -41,6 +43,14 @@
     "heartbeat_timeout_ms": 1000,
     "telemetry_queue_frames": 16,
     "ap_connection": "RumiCar-AP",
-    "nmcli": "/usr/bin/nmcli"
+    "nmcli": "/usr/bin/nmcli",
+    "ap_start": "core",
+    "wifi_txpower_dbm": 0,
+    "wifi_device": "wlan0",
+    "iw": "/usr/sbin/iw"
+  },
+  "power": {
+    "throttled_path": "/sys/devices/platform/soc/soc:firmware/get_throttled",
+    "poll_ms": 1000
   }
 }

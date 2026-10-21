@@ -122,6 +122,7 @@
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="判断状態" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LogicState}" Style="{StaticResource Text.Value}"/>
@@ -133,8 +134,16 @@
                             <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding LogicCommand}" Style="{StaticResource Text.Value}"/>
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="版（ロジック / データ）" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Versions}" Style="{StaticResource Text.Value}"/>
-                            <TextBlock Grid.Row="5" Grid.Column="0" Text="バッテリー" Style="{StaticResource Text.Label}"/>
-                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Battery}" Style="{StaticResource Text.Value}"/>
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="判断データ" Style="{StaticResource Text.Label}" ToolTip="使用中の判断データ（パック）の名前・版と、manifest に書かれた説明"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding PackInfo}" Style="{StaticResource Text.Value}" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="対応機能" Style="{StaticResource Text.Label}" ToolTip="判断データが扱える場面（壁 / 信号機 / 車両 / 交差点）"/>
+                            <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding PackCapabilities}" Style="{StaticResource Text.Value}" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Row="7" Grid.Column="0" Text="学習元" Style="{StaticResource Text.Label}" ToolTip="判断データを作るのに使った収録シナリオ"/>
+                            <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding PackScenarios}" Style="{StaticResource Text.Value}" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Row="8" Grid.Column="0" Text="電源" Style="{StaticResource Text.Label}" ToolTip="車のファームウェアが報告する低電圧・処理速度制限の状態"/>
+                            <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding Power}" Style="{StaticResource Text.Value}"/>
+                            <TextBlock Grid.Row="9" Grid.Column="0" Text="バッテリー" Style="{StaticResource Text.Label}"/>
+                            <TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding Battery}" Style="{StaticResource Text.Value}"/>
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -149,6 +158,9 @@
                         </StackPanel>
                         <TextBlock Style="{StaticResource Text.Muted}" Margin="0,8,0,0"
                                    Text="手動：矢印キー（↑ 前進 ↓ 後退 ← → 操舵）。手動モードで画像をクリックしてから操作します。"/>
+                        <TextBlock Style="{StaticResource Text.Muted}" Margin="0,4,0,0">
+                            <Run Text="起動時のモード: "/><Run Text="{Binding StartupMode}"/><Run Text="（収録のみ = 電源を入れても走らず、「自動」を押すと走り出します）"/>
+                        </TextBlock>
                     </StackPanel>
                 </Border>
 
@@ -164,9 +176,35 @@
                             <Button x:Name="RecordButton" Grid.Column="1" Content="収録開始" Style="{StaticResource Button.Primary}" MinWidth="96" Margin="8,0,0,0"
                                     Click="OnRecordClick" IsEnabled="{Binding Connected}"/>
                         </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="シナリオ" Style="{StaticResource Text.Label}"
+                                       ToolTip="この収録が何の場面か（例：壁のみの走行データ、信号機ありケース1）。session.json に書かれ、判断データの学習元として使います"/>
+                            <ComboBox Grid.Row="0" Grid.Column="1" IsEditable="True" ItemsSource="{Binding ScenarioHistory}"
+                                      Text="{Binding Scenario, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                      ToolTip="入力するか、使ったことのある名前を選びます。収録開始時の値が記録されます"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="メモ" Style="{StaticResource Text.Label}"/>
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Note, UpdateSourceTrigger=PropertyChanged}" ToolTip="自由記述（任意）。session.json に書かれます"/>
+                        </Grid>
                         <CheckBox Content="接続したら自動で収録を開始する" IsChecked="{Binding AutoRecord}" Margin="0,8,0,0"
                                   ToolTip="オン（既定）：接続のたびに新しい収録フォルダを作り、受信した全コマを保存します。切断で収録を閉じます"/>
                         <TextBlock Text="{Binding RecordingStatus}" Style="{StaticResource Text.Muted}" Margin="0,6,0,0"/>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="VideoButton" Grid.Column="0" Content="動画を作る…" MinWidth="110" Click="OnVideoClick"
+                                    ToolTip="収録フォルダを選び、その画像から動画（video.avi、Motion JPEG、実時間）を作ります。接続していなくても使えます"/>
+                            <TextBlock Grid.Column="1" Text="{Binding VideoStatus}" Style="{StaticResource Text.Muted}" Margin="10,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -174,6 +212,7 @@
                     <StackPanel>
                         <TextBlock Text="版の管理（ロジック / データ）" Style="{StaticResource Text.Section}"/>
                         <ListBox x:Name="VersionList" ItemsSource="{Binding InstalledVersions}" SelectedItem="{Binding SelectedVersion}" DisplayMemberPath="Display" Height="140"/>
+                        <TextBlock Text="{Binding SelectedVersion.Details}" Style="{StaticResource Text.Muted}" Margin="0,6,0,0" TextWrapping="Wrap"/>
                         <WrapPanel Margin="0,8,0,0">
                             <Button Content="一覧更新" Click="OnVersionsRefreshClick" IsEnabled="{Binding Connected}" Margin="0,0,6,6"/>
                             <Button Content="送る…" Style="{StaticResource Button.Primary}" Click="OnPushClick" IsEnabled="{Binding Connected}" Margin="0,0,6,6"/>

@@ -1,5 +1,6 @@
 using RumiCar.Protocol.Control;
 using System.Text;
+using System.Text.Json;
 using RumiCar.Protocol.Packs;
 using RumiCar.Protocol.Recording;
 using RumiCar.Protocol.Telemetry;
@@ -113,9 +114,87 @@ public class ManifestAndRecordingTests : IDisposable
         Assert.Contains("\"image\":\"000001.jpg\"", meta[0]);
         Assert.Contains("\"image\":null", meta[1]);
         var session = File.ReadAllText(Path.Combine(dir, "session.json"));
+        Assert.Contains("\"schema\": 2", session);
         Assert.Contains("\"frames\": 3", session);
+        Assert.Contains("\"images\": 1", session);
         Assert.Contains("\"sequence_gaps\": 1", session);
+        Assert.Contains("\"scenario\": \"\"", session);
         Assert.Throws<ArgumentException>(() => new SessionWriter(_tmp, "bad/name", started));
+    }
+
+    [Fact]
+    public void SessionJsonCarriesScenarioAndCarLineage()
+    {
+        var status = JsonDocument.Parse("{\"mode\":\"record_only\",\"logic_name\":\"tof_drive\",\"logic_version\":\"0.1.0\",\"pack_id\":\"base-tof\",\"pack_version\":\"0.1.1\","
+                                        + "\"pack_description\":\"壁のみ\",\"pack_capabilities\":[\"walls\"],\"pack_scenarios\":[],\"pack_parent\":\"\",\"throttled\":0}").RootElement;
+        var info = SessionInfo.FromStatus(status, " 信号機ありケース1 ", "メモ", "RumiCar", "0.1.3", "RumiCarDriveManager 0.1.3");
+        Assert.Equal("信号機ありケース1", info.Scenario);
+        Assert.Equal("walls", Assert.Single(info.PackCapabilities));
+        Assert.Equal("record_only", info.Mode);
+        var started = new DateTimeOffset(2026, 10, 21, 1, 2, 3, TimeSpan.Zero);
+        string dir;
+        using (var w = new SessionWriter(_tmp, "RumiCar", started, info))
+        {
+            dir = w.Directory;
+            w.Write(new TelemetryFrame { Header = new TelemetryHeader { Seq = 1, TofMm = new[] { 1, 2, 3 }, Throttled = 0x10001 } });
+            w.Write(new TelemetryFrame { Header = new TelemetryHeader { Seq = 2, TofMm = new[] { 1, 2, 3 } } });
+        }
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "session.json")));
+        var root = doc.RootElement;
+        Assert.Equal(2, root.GetProperty("schema").GetInt32());
+        Assert.Equal("信号機ありケース1", root.GetProperty("scenario").GetString());
+        Assert.Equal("メモ", root.GetProperty("note").GetString());
+        Assert.Equal("record_only", root.GetProperty("mode_at_start").GetString());
+        Assert.Equal("base-tof", root.GetProperty("pack").GetProperty("id").GetString());
+        Assert.Equal("壁のみ", root.GetProperty("pack").GetProperty("description").GetString());
+        Assert.Equal("walls", root.GetProperty("pack").GetProperty("capabilities")[0].GetString());
+        Assert.Equal(0x10001u, root.GetProperty("throttled_seen").GetUInt32());
+        Assert.Equal(2, root.GetProperty("frames").GetInt32());
+        Assert.Equal(0, root.GetProperty("images").GetInt32());
+        // The scenario name is stored as text, not escaped.
+        Assert.Contains("信号機ありケース1", File.ReadAllText(Path.Combine(dir, "session.json")));
+        // Missing status keys stay empty rather than failing.
+        var bare = SessionInfo.FromStatus(null, "", "", "", "", "");
+        Assert.Equal("", bare.PackId);
+        Assert.Empty(bare.PackCapabilities);
+    }
+
+    [Fact]
+    public void ScenarioHistoryKeepsNewestFirstWithCounts()
+    {
+        var root = Path.Combine(_tmp, "data");
+        Assert.Empty(ScenarioHistory.Load(root));
+        var t = new DateTimeOffset(2026, 10, 21, 0, 0, 0, TimeSpan.Zero);
+        ScenarioHistory.RecordUse(root, "壁のみの走行データ", t);
+        ScenarioHistory.RecordUse(root, "信号機ありケース1", t.AddMinutes(1));
+        ScenarioHistory.RecordUse(root, " 壁のみの走行データ ", t.AddMinutes(2));
+        ScenarioHistory.RecordUse(root, "   ", t.AddMinutes(3));   // ignored
+        var list = ScenarioHistory.Load(root);
+        Assert.Equal(2, list.Count);
+        Assert.Equal("壁のみの走行データ", list[0].Name);
+        Assert.Equal(2, list[0].Sessions);
+        Assert.Equal("信号機ありケース1", list[1].Name);
+        Assert.Equal(1, list[1].Sessions);
+        Assert.True(File.Exists(Path.Combine(root, ScenarioHistory.FileName)));
+        // An unreadable file is treated as empty, not as an error.
+        File.WriteAllText(Path.Combine(root, ScenarioHistory.FileName), "{broken");
+        Assert.Empty(ScenarioHistory.Load(root));
+    }
+
+    [Fact]
+    public void TelemetryHeaderRoundTripsNewFields()
+    {
+        var header = new TelemetryHeader { Seq = 5, TofMm = new[] { 1, 2, 3 }, LogicName = "tof_drive", PackId = "base-tof", Throttled = 0x50001 };
+        var back = TelemetryFrameCodec.HeaderFromJson(TelemetryFrameCodec.HeaderToJson(header));
+        Assert.NotNull(back);
+        Assert.Equal("tof_drive", back!.LogicName);
+        Assert.Equal("base-tof", back.PackId);
+        Assert.Equal(0x50001u, back.Throttled);
+        // A header from an older car (without the new keys) still decodes.
+        var old = TelemetryFrameCodec.HeaderFromJson("{\"seq\":1,\"tof_mm\":[1,2,3]}");
+        Assert.NotNull(old);
+        Assert.Equal("", old!.PackId);
+        Assert.Equal(0u, old.Throttled);
     }
 }
 

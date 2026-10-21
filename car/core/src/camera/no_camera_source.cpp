@@ -14,6 +14,7 @@ public:
     void start() override { throw std::runtime_error("this build of rumicar-core has no camera support (RUMICAR_WITH_CAMERA=OFF)"); }
     void stop() override {}
     std::shared_ptr<const Image> latest() const override { return nullptr; }
+    void set_jpeg_enabled(bool) override {}
     uint64_t captured() const override { return 0; }
     std::string description() const override { return "none"; }
 };

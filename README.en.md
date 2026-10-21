@@ -31,7 +31,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 | Windows PC (64-bit, Windows 10/11) | With Wi-Fi; runs the drive manager |
 | SD-card writer | [Raspberry Pi Imager](https://www.raspberrypi.com/software/) |
 
-The car **starts driving as soon as it is powered on** (like the Arduino version). Put it on a stand so the wheels are off the floor for the first boot and while you check things.
+The car **does not drive just because it is powered on**: it boots into "record only" (motors braked) and starts driving when you press **「自動」** (auto) in the drive manager (since v0.1.3; earlier versions drove off at power-on). To have it drive at power-on without a PC, set `startup_mode` to `auto` in `/etc/rumicar/core.json` (section 7). Put the car on a stand so the wheels are off the floor for the first boot and while you check things.
 
 ## 2. Write the SD card
 
@@ -48,7 +48,7 @@ Optional check of the download: the values in the Release's `SHA256SUMS.txt` mus
 
 1. Put the car on a stand and switch it on.
 2. The first boot expands the partition and reboots once by itself. Wait 2–3 minutes.
-3. `rumicar-core` then starts and **the car drives off if nothing is in front of it**. At the same time the Wi-Fi access point comes up.
+3. `rumicar-core` then starts and brings things up one after another: sensors → Wi-Fi access point → camera (once a PC connects). The power-hungry parts are deliberately not started at the same time, to avoid brown-outs on dry-cell batteries (section 9). **The car does not drive yet** (record only); connect as in section 4 and press 「自動」.
 
 Defaults built into the image:
 
@@ -76,10 +76,11 @@ The drive manager's user interface is in Japanese; the table below gives the mea
 | 車両 / 名前 | Car address (default `10.42.0.1`) and the car name used in recording folder names (default `RumiCar`) |
 | 非常停止 / 非常停止解除 | Emergency stop / clear. The e-stop brakes in every mode and the car stays stopped until cleared. It is also latched automatically when, in manual mode, the PC's heartbeat stops for 1 s or the PC disconnects |
 | Image | Latest camera image (320×240, about 20 frames/s). Untick 「画像を表示」 to stop only the display (frames are still received and recorded; lowers the PC load) |
-| 状態 (status) | モード = mode; 非常停止 = e-stop (green = none, red = active, with reason); 判断状態 = logic state (CRUISE / TURN_LEFT / TURN_RIGHT / EMERGENCY_BRAKE / RECOVER_REVERSE / SENSOR_FAULT); ToF 左/中/右 = left/centre/right distance [mm] (`open` = nothing nearby, `--` = no reading); モーター出力 = what went to the motors; ロジックの判断 = what the logic decided; 版 = logic / pack versions |
+| 状態 (status) | モード = mode; 非常停止 = e-stop (green = none, red = active, with reason); 判断状態 = logic state (CRUISE / TURN_LEFT / TURN_RIGHT / EMERGENCY_BRAKE / RECOVER_REVERSE / SENSOR_FAULT); ToF 左/中/右 = left/centre/right distance [mm] (`open` = nothing nearby, `--` = no reading); モーター出力 = what went to the motors; ロジックの判断 = what the logic decided; 版 = logic / pack versions; **判断データ** = the active pack's name, version and description; **対応機能** = what it handles (壁 walls / 信号機 traffic light / 車両 vehicle / 交差点 intersection); **学習元** = the recorded scenarios it was built from and its parent version; **電源** = under-voltage / throttling reported by the car's firmware (「正常（低電圧なし）」 is normal) |
 | モーター出力 / ロジックの判断 | Shown as 「操舵 左/中央/右 / 前進 74.8% (191/255)」: steering left/centre/right, then 前進 forward / 後退 reverse / 停止 coast / ブレーキ brake. The percentage is the **PWM duty cycle** of the drive motor (the car uses per mille 0–1000) and the bracketed value is the same duty on the Arduino `analogWrite` scale 0–255 (748 × 255 ÷ 1000 ≈ 191). モーター出力 is what actually went to the motors; ロジックの判断 is what the logic decided for that frame (shown even in manual, record-only and e-stop) |
-| 走行モード (drive mode) | **自動** auto: the car's logic drives / **手動** manual: arrow keys on the PC (↑ forward 50 %, ↓ reverse 50 %, ←→ steer; click the image first so the keys reach the car) / **収録のみ** record-only: motors stopped, images and status still streamed (push the car by hand to collect data) |
-| 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`) and 収録開始 / 収録停止 (start / stop). **By default a recording starts automatically on every connection** (the 「接続したら自動で収録を開始する」 checkbox) and closes on disconnect. Every received frame is saved. The "(画像付き N)" count next to 受信コマ数 grows when camera images arrive |
+| 走行モード (drive mode) | **自動** auto: the car's logic drives / **手動** manual: arrow keys on the PC (↑ forward 50 %, ↓ reverse 50 %, ←→ steer; click the image first so the keys reach the car) / **収録のみ** record-only: motors stopped, images and status still streamed (push the car by hand to collect data). The line below shows the start-up mode (default: record only) |
+| 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`), **シナリオ** scenario (what this recording is: e.g. "壁のみの走行データ" walls only, "信号機ありケース1" traffic light case 1; type a name or pick one used before), **メモ** note (optional), and 収録開始 / 収録停止 (start / stop). **By default a recording starts automatically on every connection** (the 「接続したら自動で収録を開始する」 checkbox) and closes on disconnect. The scenario and note at the moment the recording starts are written to `session.json`. Every received frame is saved. The "(画像付き N)" count next to 受信コマ数 grows when camera images arrive |
+| 動画を作る… (make video) | Pick a session folder; its images become `video.avi` (Motion JPEG, real time, 20 fps) in that folder. Works without a connection (6.4) |
 | 版の管理 (versions) | Logic and packs installed on the car (`[使用中]` = active, `[直前]` = previous, with verification failures shown). 一覧更新 refresh, 送る… send, 有効化 activate, 削除 delete, ロジックを戻す roll back the logic, データを戻す roll back the pack (section 6) |
 | ログ (log) | Connection, responses, events and errors with timestamps |
 
@@ -97,10 +98,13 @@ RumiCarData/
     RumiCar_20261018-123456/      <car name>_<start time, UTC>
       frames/000001.jpg …        images (numbered within the recording)
       meta.jsonl                 one line per frame: {"index":1,"image":"000001.jpg","received":"…","header":{…status from the car…}}
-      session.json               summary of the recording (frame count, gaps)
+      session.json               summary: scenario, note, the logic/pack the car ran at the start (with description, capabilities, source scenarios), frame and image counts, gaps, whether under-voltage was seen
+  scenarios.json                 the scenario names used so far (newest first, with counts)
 ```
 
-`header` holds, for that frame, the ToF values, the logic state and decision (steer, drive), what was actually sent to the motors, the mode, the e-stop state, the versions, and the image's sequence number and timestamp.
+`header` holds, for that frame, the ToF values, the logic state and decision (steer, drive), what was actually sent to the motors, the mode, the e-stop state, the logic and pack names and versions (`logic_name` / `pack_id`), the power flags (`throttled`), and the image's sequence number and timestamp.
+
+**Naming scenarios**: before recording, type the scene into the シナリオ box — "壁のみの走行データ" (walls only), "信号機ありケース1" (traffic light, case 1), "信号機と交差点ロジックあり" (traffic light and intersection) — so that the recordings to build a pack from can be picked later. Names used before are offered from `scenarios.json`.
 
 ### 6.2 Improve the data with the Claude desktop app
 
@@ -111,10 +115,14 @@ RumiCarData/
 ```
 base-tof-0.2.0/            folder name is <id>-<version>
   params.json              every key is required
-  manifest.json            python car/tools/make_manifest.py pack base-tof-0.2.0 --id base-tof --version 0.2.0 --logic tof_drive
+  manifest.json            python car/tools/make_manifest.py pack base-tof-0.2.0 --id base-tof --version 0.2.0 --logic tof_drive \
+                               --description "Walls only; turns start earlier (d_turn_enter_mm 220)" \
+                               --capability walls --scenario "壁のみの走行データ" --parent base-tof-0.1.1
 ```
 
 Use a version (`0.2.0` and so on) that is not yet installed on the car.
+
+`--description` (what the version is), `--capability` (what it handles: `walls`, `traffic_light`, `vehicle`, `intersection`; repeatable), `--scenario` (the recorded scenarios it was built from; repeatable) and `--parent` (the version it was derived from) are optional, but with them the drive manager shows 判断データ / 対応機能 / 学習元 and the version list says what each pack is, so you always know which logic and data the car is driving on. `python car/tools/make_manifest.py show <folder>` prints them.
 
 ### 6.3 Send it to the car and switch
 
@@ -123,6 +131,10 @@ Use a version (`0.2.0` and so on) that is not yet installed on the car.
 3. If it drives badly, **「データを戻す」** returns to the previous pack. Versions you no longer need can be selected and deleted with 「削除」 (the active and the previous version cannot be deleted).
 
 A rebuilt driving logic (the `tof_drive` `.so`) is sent the same way (`make_manifest.py logic …`, spec section 4).
+
+### 6.4 A video from a recording
+
+「動画を作る…」 in the drive manager takes a session folder and writes `video.avi` from its `frames/` (Motion JPEG: the received JPEGs are stored as they are, so nothing is re-encoded; 20 fps on a real-time timeline from the image timestamps; where frames are missing the previous frame is held for up to 1 s and longer pauses are cut). VLC, Windows Media Player and ffmpeg play it. From the Claude desktop app, `python car/tools/session_video.py <session folder>` does the same (Python 3 only). For an MP4: `ffmpeg -i video.avi -c:v libx264 -pix_fmt yuv420p video.mp4`.
 
 ## 7. Logging in to the car (SSH)
 
@@ -134,7 +146,7 @@ rumicar-activate show                  # active / previous versions and the last
 sudo nano /etc/rumicar/core.json       # settings (then sudo systemctl restart rumicar-core)
 ```
 
-Main settings in `/etc/rumicar/core.json` (spec 3.3): `car_name`, `max_drive_permille` (drive limit, 1000 = 100 %), `camera.enabled`, `camera.fps`, `network.heartbeat_timeout_ms`.
+Main settings in `/etc/rumicar/core.json` (spec 3.3): `car_name`, `startup_mode` (`record_only`, the default, or `auto` to drive at power-on), `max_drive_permille` (drive limit, 1000 = 100 %), `camera.enabled`, `camera.on_demand` (run the camera only while a PC is connected or in auto mode; default true), `camera.fps`, `network.heartbeat_timeout_ms`, `network.ap_start` (`core`, the default: the core brings the access point up in sequence; `boot`: NetworkManager does it), `network.wifi_txpower_dbm` (transmit power limit; 0 = driver default; try 10–14 when batteries sag), `power.throttled_path` (under-voltage / throttling monitor; empty disables it).
 
 ## 8. Updating
 
@@ -169,7 +181,9 @@ sudo nmcli device wifi connect "<home SSID>" password "<password>"
 | `RumiCar` does not appear in the Wi-Fi list | Wait 1–2 minutes after boot. Over SSH: `nmcli connection show` lists `RumiCar-AP`? `sudo journalctl -u NetworkManager -b` shows errors? `iw reg get` says `JP`? |
 | The app cannot connect | Is the PC on `RumiCar` with a `10.42.0.x` address (`ipconfig`)? Firewall allowed? On the car: `systemctl status rumicar-core` |
 | No image | On the car: `sudo journalctl -u rumicar-core -b \| grep -i camera`. Camera ribbon orientation. `rpicam-hello --list-cameras` shows the camera? |
-| The car does not drive | Does `sudo journalctl -u rumicar-core -b` start with `hardware bring-up failed`? (The I2C/PWM settings are appended to `/boot/firmware/config.txt`.) Is the e-stop latched (「非常停止解除」 in the app)? ToF readings of `--` mean SENSOR_FAULT, which stops the car |
+| The car does not drive | After boot it waits in record-only mode (press 「自動」 in the app; set `startup_mode` to `auto` to drive without a PC). Does `sudo journalctl -u rumicar-core -b` start with `hardware bring-up failed`? (The I2C/PWM settings are appended to `/boot/firmware/config.txt`.) Is the e-stop latched (「非常停止解除」 in the app)? ToF readings of `--` mean SENSOR_FAULT, which stops the car |
+| Power drops or the car reboots during start-up (dry cells) | Since v0.1.3 the core starts sensors → Wi-Fi → camera in sequence and keeps the motors stopped until 「自動」 is pressed, so the power-hungry parts never start together. If it still drops out: fresh or rechargeable (NiMH) cells; lower the radio's transmit power with `network.wifi_txpower_dbm` (about 10); watch the 電源 field in the app for 「低電圧」 (on boards that report it). Drops while driving: lower `max_drive_permille` to limit the current at acceleration |
+| Wi-Fi disappeared | The access point is brought up by `rumicar-core`; if the core stops, `rumicar-ap.timer` re-activates it from 90 s after boot and then every 60 s. Check `systemctl status rumicar-ap.timer` and `nmcli connection show --active` |
 | `hardware bring-up failed: open /dev/i2c-1` | The v0.1.1 image did not load the `i2c-dev` kernel module, so `/dev/i2c-1` was missing. `sudo raspi-config` → Interface Options → I2C → Yes fixes it (persists across reboots). Not needed with the v0.1.2 image and package |
 | A switch fails | The reason in the app's log (manifest mismatch, missing keys, wrong logic name…). `rumicar-activate show` on the car |
 | SSH password rejected | The first-boot setup may not have finished yet. Reboot and wait a few minutes |
@@ -209,8 +223,8 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 ## Scope of this version (0.1.x)
 
-- Car: ToF driving logic, control loop and safety behaviour, drive modes (auto / manual / record_only) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps) with JPEG telemetry, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager) and `set_wifi`, hot-swapping of logic / packs (from the PC or over ssh) verified by manifests, systemd service, Debian package
-- PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving, recording, version management)
+- Car: ToF driving logic, control loop and safety behaviour, drive modes (auto / manual / record_only; record_only at start-up) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps, run only when needed) with JPEG telemetry, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager, brought up in sequence by the core) and `set_wifi`, under-voltage / throttling monitor, hot-swapping of logic / packs (from the PC or over ssh) verified by manifests that also carry a description, capabilities and source scenarios, systemd service, Debian package
+- PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving, recording with scenario names, version management, videos from recordings)
 - Distribution: standard SD-card image, GitHub Releases from tags
 - Not yet: driving logic that uses the camera images
 
