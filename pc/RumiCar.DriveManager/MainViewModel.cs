@@ -62,10 +62,35 @@ public static class Capability
         "traffic_light_red" => "赤信号",
         "traffic_light_green" => "青信号",
         "vehicle" => "車両",
+        "intersection" => "交差点",
         "intersection_left" => "交差点(左)",
         "intersection_right" => "交差点(右)",
         "" => "?",
         _ => name,
+    };
+
+    /// <summary>State names of the shipped logics (tof_drive, cam_drive), shown in Japanese next to the name.</summary>
+    public static string DescribeState(string name) => name switch
+    {
+        "CRUISE" => "巡航",
+        "TURN_LEFT" => "左へ",
+        "TURN_RIGHT" => "右へ",
+        "EMERGENCY_BRAKE" => "非常ブレーキ",
+        "RECOVER_REVERSE" => "後退して立て直し",
+        "SENSOR_FAULT" => "センサー異常",
+        "SIGNAL_APPROACH" => "赤信号に接近",
+        "SIGNAL_STOP" => "赤信号で停止",
+        "SIGNAL_RESUME" => "信号から発進",
+        "FOLLOW" => "前の車両に追従",
+        "FOLLOW_WAIT" => "駐車車両の後ろで待機",
+        "OVERTAKE_OUT" => "追い越し：はみ出す",
+        "OVERTAKE_PASS" => "追い越し：横を通る",
+        "OVERTAKE_IN" => "追い越し：戻る",
+        "INTERSECTION_APPROACH" => "交差点に接近",
+        "INTERSECTION_STOP" => "交差点で停止",
+        "INTERSECTION_CROSS" => "交差点を直進",
+        "INTERSECTION_TURN" => "交差点で曲がる",
+        _ => "",
     };
 }
 

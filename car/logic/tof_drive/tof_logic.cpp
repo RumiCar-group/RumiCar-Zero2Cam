@@ -121,12 +121,17 @@ void TofDriveLogic::condition(int idx, int32_t raw, uint64_t t_us) {
 // Steering
 // ---------------------------------------------------------------------------
 void TofDriveLogic::decide_steer(int L, int C, int R, uint64_t t_us) {
-    // Hysteresis on the "turning" condition.
-    if (C < p_.d_turn_enter_mm) turning_ = true;
+    // Hysteresis on the "turning" condition (not while a logic on top holds
+    // the lane or forces the steering: an obstacle ahead is then handled by
+    // speed, the emergency brake and the recovery, not by turning).
+    if (steer_mode_ != SteerMode::Auto) turning_ = false;
+    else if (C < p_.d_turn_enter_mm) turning_ = true;
     else if (C > p_.d_turn_exit_mm) turning_ = false;
 
     int8_t desired;
-    if (turning_) {
+    if (steer_mode_ == SteerMode::Force) {
+        desired = forced_steer_;
+    } else if (turning_) {
         if (L > R + p_.side_deadband_mm)      desired = RUMI_STEER_LEFT;
         else if (R > L + p_.side_deadband_mm) desired = RUMI_STEER_RIGHT;
         else                                  desired = last_turn_dir_;
@@ -146,12 +151,12 @@ void TofDriveLogic::decide_steer(int L, int C, int R, uint64_t t_us) {
 
     if (desired != steer_) {
         const uint64_t held = t_us - steer_since_us_;
-        if (held >= ms_to_us(p_.steer_hold_ms)) {
+        if (held >= ms_to_us(p_.steer_hold_ms) || steer_mode_ == SteerMode::Force) {
             steer_ = desired;
             steer_since_us_ = t_us;
         }
     }
-    if (steer_ != RUMI_STEER_CENTER) last_turn_dir_ = steer_;
+    if (steer_ != RUMI_STEER_CENTER && steer_mode_ == SteerMode::Auto) last_turn_dir_ = steer_;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +228,7 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
         closing = static_cast<double>(prev_c_filt_ - C) / dt;
     }
     prev_c_filt_ = C;
+    closing_ = closing;
 
     uint32_t flags = 0;
     int target = 0;
@@ -257,7 +263,8 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
         target = speed_target(C, closing, turning_);
 
         // Stuck detection: commanding forward drive but the centre distance does not change.
-        const bool trackable = (drive_ >= p_.stuck_min_drive) && (C < OPEN_MM);
+        // Not while a logic on top steers (it decides what to do about a standstill).
+        const bool trackable = (drive_ >= p_.stuck_min_drive) && (C < OPEN_MM) && steer_mode_ == SteerMode::Auto;
         if (!trackable) {
             stuck_tracking_ = false;
         } else if (!stuck_tracking_ || std::abs(C - stuck_ref_c_) > p_.stuck_delta_mm) {

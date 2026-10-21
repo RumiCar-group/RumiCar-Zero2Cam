@@ -40,6 +40,8 @@ public partial class MainWindow : Window
     private uint _lastThrottled;
     private JsonElement? _lastStatus;
     private List<string> _auxNames = new();
+    // Detectors (by aux slot) that have reported cells: they say where (Local); the others judge the whole view (Global).
+    private readonly HashSet<int> _localDetectors = new();
 
     private static readonly string AppVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "?";
 
@@ -225,7 +227,9 @@ public partial class MainWindow : Window
             ApplyThrottled(throttled);
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("aux_names", out _))
         {
-            _auxNames = GetStringList(data, "aux_names");
+            var names = GetStringList(data, "aux_names");
+            if (!names.SequenceEqual(_auxNames)) _localDetectors.Clear();   // another logic or pack: learn the kinds afresh
+            _auxNames = names;
             if (_auxNames.Count == 0) { _vm.Detections = "（このロジックは検出結果を出しません）"; Overlay.Children.Clear(); }
         }
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("battery_mv", out var mv) && mv.TryGetInt32(out var millivolts))
@@ -233,7 +237,7 @@ public partial class MainWindow : Window
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("estop", out var es) && (es.ValueKind == JsonValueKind.True || es.ValueKind == JsonValueKind.False))
             _vm.EStop = FormatEStop(es.ValueKind == JsonValueKind.True, CarConnection.GetString(data, "estop_reason") ?? "");
         var stateName = CarConnection.GetString(data, "state_name");
-        if (stateName is not null) _vm.LogicState = stateName;
+        if (stateName is not null) _vm.LogicState = FormatState(stateName);
     }
 
     private static List<string> GetStringList(JsonElement data, string key)
@@ -353,7 +357,7 @@ public partial class MainWindow : Window
         _vm.Images = Volatile.Read(ref _imagesReceived).ToString();
         var h = frame.Header;
         _vm.Tof = $"{FormatTof(h.TofMm[0])} / {FormatTof(h.TofMm[1])} / {FormatTof(h.TofMm[2])}";
-        _vm.LogicState = h.StateName.Length > 0 ? h.StateName : h.State.ToString();
+        _vm.LogicState = h.StateName.Length > 0 ? FormatState(h.StateName) : h.State.ToString();
         _vm.Command = DescribeCommand(h.Steer, h.DrivePermille, h.Brake);
         _vm.LogicCommand = DescribeCommand(h.LogicSteer, h.LogicDrivePermille, (h.Flags & 0x3) != 0);   // BRAKE or FAULT flag
         if (h.Mode.Length > 0 && h.Mode != _vm.Mode) SetMode(h.Mode);
@@ -396,39 +400,58 @@ public partial class MainWindow : Window
     private string DescribeDetections(AuxFormat1.Decoded? aux)
     {
         if (aux is null) return _auxNames.Count == 0 ? "-" : "（このコマには検出結果がありません）";
+        NoteDetectorKinds(aux);
         var parts = new List<string>();
         foreach (var d in aux.Detections)
         {
             var name = d.Index < _auxNames.Count ? Capability.DescribeDetector(_auxNames[d.Index]) : $"#{d.Index}";
-            parts.Add($"{name} {d.Score:F2} ({d.CellX},{d.CellY}) ×{d.Cells}{(d.Active ? " ●" : d.Present ? " ○" : "")}");
+            var mark = d.Active ? " ●" : d.Present ? " ○" : "";
+            parts.Add(_localDetectors.Contains(d.Index) ? $"{name} {d.Score:F2} ({d.CellX},{d.CellY}) ×{d.Cells}{mark}" : $"{name} {d.Score:F2}{mark}");
         }
         return string.Join("　", parts);
     }
 
-    /// <summary>Boxes for the detectors' best cells in image pixels (the Viewbox scales them with the image).</summary>
+    /// <summary>A detector that reports cells says where it looks (Local); a present Local detector always has at
+    /// least one cell, so by the time a detector is drawn its kind is known. Global ones never report cells.</summary>
+    private void NoteDetectorKinds(AuxFormat1.Decoded aux)
+    {
+        foreach (var d in aux.Detections)
+            if (d.Cells > 0) _localDetectors.Add(d.Index);
+    }
+
+    /// <summary>Boxes for the detectors' best cells in image pixels (the Viewbox scales them with the
+    /// image); a detector of the whole view (no cells) frames the whole image instead.</summary>
     private void DrawOverlay(AuxFormat1.Decoded? aux, int imageWidth, int imageHeight)
     {
         Overlay.Children.Clear();
         if (aux is null || !_vm.ShowOverlay || imageWidth <= 0 || imageHeight <= 0) return;
+        NoteDetectorKinds(aux);
         var cellW = imageWidth / (double)aux.GridX;
         var cellH = imageHeight / (double)aux.GridY;
+        var frames = 0;   // whole-view detectors drawn so far (their labels are stacked)
         foreach (var d in aux.Detections)
         {
             if (!d.Present && !d.Active) continue;
             var name = d.Index < _auxNames.Count ? _auxNames[d.Index] : "";
             var brush = name.Contains("red", StringComparison.Ordinal) ? System.Windows.Media.Brushes.Red
                       : name.Contains("green", StringComparison.Ordinal) ? System.Windows.Media.Brushes.Lime
+                      : name.Contains("vehicle", StringComparison.Ordinal) ? System.Windows.Media.Brushes.DeepSkyBlue
+                      : name.Contains("intersection", StringComparison.Ordinal) ? System.Windows.Media.Brushes.Orange
                       : System.Windows.Media.Brushes.Yellow;
+            var whole = !_localDetectors.Contains(d.Index);
+            var inset = whole ? 2 + 4 * frames : 0;
             var rect = new System.Windows.Shapes.Rectangle
             {
-                Width = cellW,
-                Height = cellH,
+                Width = whole ? imageWidth - 2 * inset : cellW,
+                Height = whole ? imageHeight - 2 * inset : cellH,
                 Stroke = brush,
                 StrokeThickness = d.Active ? 3 : 1,
                 Opacity = 0.9,
             };
-            System.Windows.Controls.Canvas.SetLeft(rect, d.CellX * cellW);
-            System.Windows.Controls.Canvas.SetTop(rect, d.CellY * cellH);
+            var left = whole ? inset : d.CellX * cellW;
+            var top = whole ? inset : d.CellY * cellH;
+            System.Windows.Controls.Canvas.SetLeft(rect, left);
+            System.Windows.Controls.Canvas.SetTop(rect, top);
             Overlay.Children.Add(rect);
             var label = new System.Windows.Controls.TextBlock
             {
@@ -439,13 +462,21 @@ public partial class MainWindow : Window
                 Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(160, 0, 0, 0)),
                 Padding = new Thickness(2, 0, 2, 0),
             };
-            System.Windows.Controls.Canvas.SetLeft(label, d.CellX * cellW);
-            System.Windows.Controls.Canvas.SetTop(label, Math.Max(0, d.CellY * cellH - 13));
+            System.Windows.Controls.Canvas.SetLeft(label, whole ? inset + 2 : d.CellX * cellW);
+            System.Windows.Controls.Canvas.SetTop(label, whole ? inset + 2 + 13 * frames : Math.Max(0, d.CellY * cellH - 13));
             Overlay.Children.Add(label);
+            if (whole) frames++;
         }
     }
 
     private static string FormatTof(int mm) => mm < 0 ? "--" : mm >= 8190 ? "open" : mm.ToString();
+
+    /// <summary>"SIGNAL_STOP（赤信号で停止）" for the states of the shipped logics, the bare name for others.</summary>
+    private static string FormatState(string name)
+    {
+        var text = Capability.DescribeState(name);
+        return text.Length > 0 ? $"{name}（{text}）" : name;
+    }
 
     private static string FormatBattery(int millivolts) => $"{millivolts / 1000.0:F2} V";
 

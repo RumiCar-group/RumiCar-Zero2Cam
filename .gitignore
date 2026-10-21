@@ -3,6 +3,10 @@ build/
 build-*/
 car/build/
 
+# Python (car/tools, tests)
+__pycache__/
+*.pyc
+
 # .NET (pc)
 bin/
 obj/
