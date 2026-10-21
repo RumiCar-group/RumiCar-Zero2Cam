@@ -35,7 +35,7 @@ option(RUMICAR_BUILD_TESTS "Build unit tests" ON)
 add_compile_options(-Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion)
 
 set(TOF_DRIVE_VERSION "0.2.0")   # version of the shipped driving logic (logic/tof_drive); 0.2.0 = ABI 2
-set(CAM_DRIVE_VERSION "0.1.0")   # version of the shipped camera driving logic (logic/cam_drive)
+set(CAM_DRIVE_VERSION "0.2.0")   # version of the shipped camera driving logic (logic/cam_drive); 0.2.0 = vehicles and intersections
 
 find_package(nlohmann_json 3.11 REQUIRED)
 

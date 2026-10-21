@@ -137,13 +137,21 @@ A rebuilt driving logic (the `tof_drive` `.so`) is sent the same way (`make_mani
 
 「動画を作る…」 in the drive manager takes a session folder and writes `video.avi` from its `frames/` (Motion JPEG: the received JPEGs are stored as they are, so nothing is re-encoded; 20 fps on a real-time timeline from the image timestamps; where frames are missing the previous frame is held for up to 1 s and longer pauses are cut). VLC, Windows Media Player and ffmpeg play it. From the Claude desktop app, `python car/tools/session_video.py <session folder>` does the same (Python 3 only). For an MP4: `ffmpeg -i video.avi -c:v libx264 -pix_fmt yuv420p video.mp4`.
 
-## 7. Learning from images (stop at a red light, go on green)
+## 7. Learning from images (traffic lights, a vehicle ahead, intersections)
 
 ### 7.1 How it works
 
-The car keeps driving on the ToF (distance) sensors; on top of that, every camera image is turned into a small grid of features (320×240 reduced 5× and split into 8×6 cells; per cell the share of each colour, the brightness and the amount of edges — 576 integers), and **detectors learned from your recordings** (red light, green light) are applied to it. A red light seen for a few frames in a row makes the car slow down, then stop when the light is close; a green light (or the red light gone for a while) lets it drive on. The ToF logic's emergency brake and reversing always take precedence.
+The car keeps driving on the ToF (distance) sensors; on top of that, every camera image is turned into a small grid of features (320×240 reduced 5× and split into 8×6 cells; per cell the share of each colour, the brightness and the amount of edges — 576 integers), and **detectors learned from your recordings** are applied to it. A detector either says *where* something is (local: red light, green light, vehicle — it looks at a 3×3 window of cells) or judges the *whole view* (global: an intersection ahead). Three behaviours turn the detections into a speed cap and a steering mode for the ToF driving:
 
-What is learned is a pack: `params.json` (ToF and traffic-light behaviour settings, human-readable), `vision.bin` (the detectors' weights, a binary the car reads quickly) and `manifest.json` (description, capabilities, source scenarios). It is sent to the car exactly as in section 6. The driving logic `cam_drive` ships with the car next to `tof_drive`.
+| Behaviour | Detectors | What it does |
+|---|---|---|
+| `signal` | red / green light (local) | Red seen for a few frames: slow down; close: stop; green (or red gone for a while): drive on |
+| `vehicle` | vehicle (local) | A vehicle in our lane (the centre columns of the grid): hold the lane and follow at a distance. If it stays stopped it is parked, so pass it on the side the ToF shows clear (out → alongside → in) |
+| `intersection` | intersection with a road to the left / right (global) | Slow down when one is in view, stop where a side wall ends (a side ToF opens up), then go straight, turn left or right as configured |
+
+The three are independent; where they meet the **lowest speed cap wins**, and a passing or turning manoeuvre is cut short by a red light. The ToF logic's emergency brake, reversing recovery and sensor fault always take precedence (the camera only adds to the ToF driving; it never overrides its safe moves).
+
+What is learned is a pack: `params.json` (ToF and behaviour settings, human-readable), `vision.bin` (the detectors' weights, a binary the car reads quickly) and `manifest.json` (description, capabilities, source scenarios). It is sent to the car exactly as in section 6. The driving logic `cam_drive` ships with the car next to `tof_drive`. A behaviour whose detectors the pack does not have is simply off, so you can grow a pack step by step: lights first, vehicles next.
 
 ### 7.2 What you need
 
@@ -154,15 +162,16 @@ What is learned is a pack: `params.json` (ToF and traffic-light behaviour settin
 ### 7.3 Steps
 
 1. **Record**: drive a course with a traffic light (or push the car by hand in record-only mode to show it red and green) with a scenario name such as "信号機ありケース1". Recordings of a course without lights ("壁のみの走行データ") are used automatically as "no light here" examples, so make some of those too. Record at least twice, once for learning and once for checking.
-2. **Label**: `python car/tools/train_pack.py propose <session> --detector traffic_light_red` writes candidate red blobs (frame index and box) to `proposals_traffic_light_red.jsonl`. Show the folder to Claude, have it look at the candidate frames in `frames/` and write the confirmed ones into `labels.jsonl`; the same for `--detector traffic_light_green`. One JSON object per line; boxes are pixel coordinates [x0, y0, x1, y1] with x1/y1 exclusive:
+2. **Label**: `python car/tools/train_pack.py propose <session> --detector traffic_light_red` writes candidate red blobs (frame index and box) to `proposals_traffic_light_red.jsonl`. Show the folder to Claude, have it look at the candidate frames in `frames/` and write the confirmed ones into `labels.jsonl`; the same for `--detector traffic_light_green`. The candidate lines already have the `labels.jsonl` shape (extra keys such as `image` or `pixels`, which say why the line is there, are ignored), so delete the wrong lines and append the rest. One JSON object per line; boxes are pixel coordinates [x0, y0, x1, y1] with x1/y1 exclusive:
 
 ```
-{"index": 123, "objects": [{"name": "traffic_light_red", "box": [160, 60, 200, 110]}]}
-{"index": 200, "negative": true}                        <- nothing of interest here
-{"from": 300, "to": 380, "scene": ["intersection_left"]}  <- a scene label (for intersections later)
+{"index": 123, "objects": [{"name": "traffic_light_red", "box": [160, 60, 200, 110]}]}   <- a box (local)
+{"index": 456, "objects": [{"name": "vehicle", "box": [120, 140, 200, 220]}]}            <- the vehicle ahead (its body)
+{"from": 300, "to": 380, "scene": ["intersection_left"]}                                 <- a scene (whole view): frames 300..380 show an intersection ahead with a road to the left
+{"index": 200, "negative": true}                                                         <- nothing of interest here
 ```
 
-   Unlabelled frames are not used for learning. Looking at about one frame in twenty is enough.
+   `--detector vehicle` proposes the frames in which the centre ToF saw something close (the box only marks our lane; move it onto the vehicle's body). `--detector intersection_left` (or `_right`) proposes scenes from the ToF: the moment a side reading goes from "wall" to "open" is the moment the car passes an opening, so the 2 s before it (`--before-ms`) are proposed as "an intersection was ahead"; look at the first and last frame and trim. Unlabelled frames are not used for learning. Looking at about one frame in twenty is enough. A labelled frame is a negative example for every detector not named on it — that is how the red tail lights of a vehicle are taught not to be a red light.
 
 3. **Learn**:
 
@@ -175,11 +184,22 @@ python car/tools/train_pack.py train cam-signal-0.1.0 \
     --id cam-signal --version 0.1.0 --description "traffic light, case 1"
 ```
 
-   `cam-base-0.1.0` is also in the repository at `car/packs/cam-base`. The result `cam-signal-0.1.0/` holds `params.json`, `vision.bin`, `training.json` (what was learned, with precision and recall on the validation recordings) and `manifest.json`. Low recall: label more frames; false detections: add more negative (walls-only) recordings.
+   `cam-base-0.1.0` is also in the repository at `car/packs/cam-base`. The result `cam-signal-0.1.0/` holds `params.json`, `vision.bin`, `training.json` (what was learned, with precision and recall on the validation recordings) and `manifest.json`. Low recall: label more frames; false detections: add more negative (walls-only) recordings. To add vehicles and intersections, learn all the detectors in one go (`:global` marks a whole-view detector):
 
-4. **Check before sending**: `python car/tools/train_pack.py show cam-signal-0.1.0`, `replay cam-signal-0.1.0 <session>` (per-frame detections) and `rumicar-replay <cam_drive folder> cam-signal-0.1.0 <session>` (the real logic; a sequence CRUISE → SIGNAL_APPROACH → SIGNAL_STOP → SIGNAL_RESUME means it stopped and went on).
-5. **Send to the car**: in the drive manager's 版の管理 select `cam_drive-0.1.0` (shipped) and 有効化, then 送る… `cam-signal-0.1.0` and 有効化. The status card shows the pack's description, "壁 / 信号機" and the scenarios it was learned from. Tick 「判断を重ねる」 to draw the detections over the image (red box = red light, green = green light, thick = confirmed) with their scores.
-6. **Improve**: record more and learn again with `--parent cam-signal-0.1.0 --version 0.2.0`; `--keep-parent-detectors` carries over detectors you do not retrain (the lineage is kept in the manifest's `parent`).
+```
+python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
+    --sessions <light recordings> <vehicle and intersection recordings>... --validate <check recordings>... \
+    --negatives-from-scenario "壁のみの走行データ" \
+    --detector traffic_light_red --detector traffic_light_green \
+    --detector vehicle --detector intersection_left:global --detector intersection_right:global \
+    --intersection turn=left --id cam-town --version 0.1.0 --description "lights and intersections"
+```
+
+   A behaviour goes into `params.json` only when the pack has its detectors (`behaviours on: signal, vehicle, intersection` is printed). With only one side of intersections learned, the other detector name stays empty (no such side).
+
+4. **Check before sending**: `python car/tools/train_pack.py show cam-signal-0.1.0` (contents and the behaviours that are on), `replay cam-signal-0.1.0 <session>` (per-frame detections) and `rumicar-replay <cam_drive folder> cam-signal-0.1.0 <session>` (the real logic; a sequence CRUISE → SIGNAL_APPROACH → SIGNAL_STOP → SIGNAL_RESUME means it stopped and went on; for a vehicle FOLLOW → OVERTAKE_OUT → OVERTAKE_PASS → OVERTAKE_IN, for an intersection INTERSECTION_APPROACH → INTERSECTION_STOP → (INTERSECTION_CROSS →) INTERSECTION_TURN). A replay feeds the recorded ToF readings as they were, so where the car's own movement would change them (passing), it only goes as far as the recording did: slowing down, stopping and steering out can be checked.
+5. **Send to the car**: in the drive manager's 版の管理 select `cam_drive-0.2.0` (shipped) and 有効化, then 送る… `cam-signal-0.1.0` and 有効化. The status card shows the pack's description, "壁 / 信号機" and the scenarios it was learned from. Tick 「判断を重ねる」 to draw the detections over the image (red box = red light, green = green light, sky blue = vehicle, orange frame around the whole image = intersection; thick = confirmed) with their scores. The 判断状態 field shows the state with its meaning, e.g. `FOLLOW（前の車両に追従）`.
+6. **Improve**: record more and learn again with `--parent cam-signal-0.1.0 --version 0.2.0`. When you add recordings of new scenes (vehicles, intersections), **learn every detector again**, the old ones included: the new scenes are negatives for them (a vehicle's tail lights are not a red light). `--keep-parent-detectors` is for fixing some detectors while the scenes stay the same (the lineage is kept in the manifest's `parent`).
 
 ### 7.4 Traffic-light behaviour (the `signal` part of params.json)
 
@@ -194,15 +214,69 @@ python car/tools/train_pack.py train cam-signal-0.1.0 \
 
 Override at learning time with `--signal key=value` (e.g. `--signal stop_min_cells=3`).
 
-### 7.5 When it does not work
+### 7.5 Vehicle behaviour (the `vehicle` part of params.json)
+
+Absent: the behaviour is off. Present: every key is required (`train` adds it to packs that have the `vehicle` detector; override with `--vehicle key=value`).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `detector` | `vehicle` | Name of the local detector |
+| `lane_cols` | 4 | The detected vehicle counts as "in our lane" only when its best cell lies in the centre this many columns of the grid (columns 2–5 of 8) |
+| `follow_gap_mm` | 150 | Minimum gap (centre ToF) to the vehicle ahead: speed cap 0 at or below it. Must be above `tof.d_emergency_mm` and below `tof.conf_max_mm` |
+| `follow_band_mm` | 80 | The cap rises from 0 to `follow_v` as the gap grows by this much |
+| `follow_v` | 700 | Speed cap while following (also while the vehicle is seen by the camera only, not yet by the ToF) |
+| `parked_confirm_ms` | 2000 | Stopped behind the vehicle with the gap not growing for this long: it is parked |
+| `still_delta_mm` | 20 | The gap growing by more than this during that wait means it is moving off (wait restarts) |
+| `overtake_side` | `open` | Which side to pass on: `left`, `right` or `open` (the side with more ToF room; equal → right) |
+| `side_clear_mm` | 120 | That side's ToF must read at least this (or nothing) to pass; otherwise `FOLLOW_WAIT` |
+| `overtake_v` | 500 | Speed cap during the manoeuvre |
+| `out_ms` | 500 | Steer out (full lock towards the passing side) this long |
+| `pass_min_ms` / `pass_max_ms` | 800 / 3000 | Shortest / longest time alongside (wheels straight) |
+| `pass_clear_mm` / `pass_clear_ms` | 150 / 300 | The inner side ToF, having read below this once (the vehicle beside us), then reads at least this for this long: passed |
+| `in_ms` | 500 | Steer back in (full lock the other way) this long |
+| `ignore_ms` | 1500 | Ignore the vehicle detector this long after passing. Also: following with the camera not seeing the vehicle for this long ends the following and hands back to the ToF logic (too close to be recognised: the ToF logic turns around it as an obstacle) |
+
+Passing is an open-loop manoeuvre timed in steps, because the steering has only three positions (left, centre, right); tune the out/in times to your course and speed.
+
+### 7.6 Intersection behaviour (the `intersection` part of params.json)
+
+Absent: off. Present: every key is required (`train` adds it to packs that have `intersection_left` or `intersection_right`; override with `--intersection key=value`).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `left_detector` / `right_detector` | `intersection_left` / `intersection_right` | Global detectors for an intersection with a road to the left / right; one may be `""` (not both) |
+| `approach_v` | 500 | Speed cap from seeing the intersection until stopping |
+| `stop_trigger` | `side_open` | When to stop: `side_open` = a side ToF reads `open_mm` or more (a wall ended); `detector` = as soon as the detector is confirmed (courses without walls, with only close intersections labelled) |
+| `open_mm` | 200 | A side reading at or above this (or nothing) is an opening |
+| `stop_ms` | 1000 | Stop this long (and never move off into a red light) |
+| `turn` | `straight` | Then: `straight`, `left`, `right`, or `detector` (towards the side whose detector saw it; both → straight) |
+| `turn_v` | 500 | Speed cap while crossing and turning |
+| `cross_max_ms` | 2000 | Drive straight at most this long waiting for the turn side to open (then go on straight) |
+| `turn_ms` | 900 | Full lock towards the turn side this long |
+| `ignore_ms` | 3000 | Ignore the intersection detectors this long afterwards |
+
+### 7.7 How the behaviours combine
+
+- The speed cap is the minimum over the behaviours: a red light while following gives `SIGNAL_STOP`, reaching an intersection `INTERSECTION_STOP`.
+- The "parked" wait does not run while a red light or an intersection is being handled (no passing a car waiting at a light). A red light or an intersection during a pass cuts it short; following resumes afterwards.
+- The intersection stop does not move off into a red light, and a red light during crossing or turning cuts it short.
+- The reported state is the one deciding speed and steering: a red light (`SIGNAL_APPROACH` / `SIGNAL_STOP`) first, then intersection, then vehicle, then `SIGNAL_RESUME`; the ToF logic's emergency brake, reversing and sensor fault show as themselves.
+
+### 7.8 When it does not work
 
 | Symptom | What to do |
 |---|---|
 | Stops for things that are not red lights | Add walls-only recordings, or recordings with that object, as negatives; look at the precision in `training.json`; raise `--thr-on` |
 | Stops too far from / too close to the light | Raise / lower `stop_min_cells`; check the camera is mounted at the same angle as when recording |
 | Stays stopped | Is the green detector seeing green (検出 field)? Without one, set `resume_without_green_ms` |
+| Turns around the vehicle instead of stopping behind it | With 判断を重ねる on, is the vehicle's box in the centre columns (`lane_cols`)? If the detection drops as the vehicle fills the view, label close-up frames too. Raise `follow_gap_mm` |
+| Passing hits or swings wide | Tune `out_ms`, `in_ms`, `overtake_v`; with a wall close on the passing side raise `side_clear_mm` (it then waits) |
+| Does not pass the parked vehicle | `FOLLOW_WAIT` means neither side reads `side_clear_mm`; `FOLLOW` means the detection dropped (row above) or a light / intersection is being handled |
+| Does not stop at the intersection | Does `replay` show `intersection_*` confirmed? With walls, is `open_mm` below the wall distance? Without walls use `stop_trigger` = `detector` |
+| Does not turn | The turn side did not open (`open_mm`) within `cross_max_ms`; with `turn=detector` both sides seen means straight |
 | The sent version shows 検証失敗 | `make_manifest.py verify`; if the vision.bin self-test fails, the camera size (320×240) differs from the recordings; check the tool and car versions match (ABI 2) |
 | `rumicar-replay` and the car disagree | Recordings are JPEG, the car sees raw frames, so small differences are normal; large ones usually mean different lighting — record under that lighting too |
+| A detection stays confirmed and never clears | In `show`, is the second threshold (release) above the score of "nothing"? `train` keeps it above the negatives' top 1 % of scores; a smaller `--hysteresis` raises it |
 
 ## 8. Logging in to the car (SSH)
 
@@ -276,7 +350,7 @@ To install on a car, use the Debian package (the CI artifact `rumicar-zero2cam-d
 
 Without libcamera, build with `-DRUMICAR_WITH_CAMERA=OFF` (that core does not start a camera and drives on the ToF sensors only).
 
-The driving logics live in `car/logic/`: `tof_drive` (ToF driving) and `cam_drive` (the camera's judgement on top of it: `vision_features` features, `vision_pack` for `vision.bin`, `vision_eval` detector evaluation with temporal confirmation, `cam_logic` the traffic-light behaviour). The contract between the core and the logics is `car/include/rumicar/logic_api.h` (ABI 2: the `aux` output and `aux_name`). The Python implementation of the features and `vision.bin` is `car/tools/rumicar_vision.py`; `test_vision` checks it against the C++ bit for bit through the golden data in `car/tests/data/vision` (made by `make_golden.py`). `car/tests/tools_smoke.py <build dir>` learns from synthetic recordings and checks with `rumicar-replay` that the car stops and goes (CI runs it too).
+The driving logics live in `car/logic/`: `tof_drive` (ToF driving) and `cam_drive` (the camera's judgement on top of it: `vision_features` features, `vision_pack` for `vision.bin`, `vision_eval` detector evaluation with temporal confirmation, `cam_logic` the traffic-light, vehicle and intersection behaviours and their precedence). The contract between the core and the logics is `car/include/rumicar/logic_api.h` (ABI 2: the `aux` output and `aux_name`). The Python implementation of the features and `vision.bin` is `car/tools/rumicar_vision.py`; `test_vision` checks it against the C++ bit for bit through the golden data in `car/tests/data/vision` (made by `make_golden.py`). `car/tests/tools_smoke.py <build dir>` learns from synthetic recordings and checks with `rumicar-replay` that the car stops and goes, follows and passes, and stops at an intersection (CI runs it too).
 
 ## Building the PC side (Windows / .NET 10 SDK)
 
@@ -295,9 +369,9 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 - Car: ToF driving logic, control loop and safety behaviour, drive modes (auto / manual / record_only; record_only at start-up) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps, run only when needed) with JPEG telemetry, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager, brought up in sequence by the core) and `set_wifi`, under-voltage / throttling monitor, hot-swapping of logic / packs (from the PC or over ssh) verified by manifests that also carry a description, capabilities and source scenarios, systemd service, Debian package
 - PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving, recording with scenario names, version management, videos from recordings)
-- Car: the image logic `cam_drive` (stop at red, go on green), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic ABI 2
+- Car: the image logic `cam_drive` (stop at red and go on green; follow a vehicle ahead and pass a parked one; stop at intersections and go straight or turn), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic ABI 2
 - Distribution: standard SD-card image, GitHub Releases from tags
-- Not yet: leading vs parked vehicles (follow / overtake) and intersections (added as further detectors and behaviour in the same framework)
+- Next: recordings and tuning on real cars (passing and turning times, how intersections look), choosing the turn by the situation (now fixed per pack, or towards the side seen)
 
 ## License
 

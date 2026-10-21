@@ -135,13 +135,21 @@ base-tof-0.2.0/            フォルダ名は <id>-<version>
 
 走行管理アプリの「動画を作る…」で収録フォルダを選ぶと、`frames/` の画像から `video.avi` を作ります（Motion JPEG：受信した JPEG をそのまま並べるので画質は落ちません。20 コマ/秒、画像の時刻に沿った実時間。コマが届かなかった区間は直前のコマを最大 1 秒保持し、それより長い空白は詰めます）。VLC、Windows のメディア プレーヤー、ffmpeg で再生できます。Claude のデスクトップアプリから作るときは同じ処理の `python car/tools/session_video.py <収録フォルダ>` が使えます（Python 3 だけで動きます）。MP4 にしたいときは `ffmpeg -i video.avi -c:v libx264 -pix_fmt yuv420p video.mp4`。
 
-## 7. 画像で学習する（信号機で止まって、進む）
+## 7. 画像で学習する（信号機・前の車両・交差点）
 
 ### 7.1 しくみ
 
-車は ToF（距離センサー）の走行を土台にしたまま、カメラの画像を「小さな格子の特徴量」（320×240 を 5 倍に縮めて 8×6 のセルに分け、セルごとに色の割合・明るさ・輪郭の量を数えた 576 個の整数）に変え、**収録データから学習した検出器**（赤信号・青信号）を当てはめます。赤信号を何コマか続けて見つけると減速し、近づいたら止まり、青信号を見つける（または赤が消えてしばらく経つ）と走り出します。障害物の非常ブレーキや後退は ToF の判断がそのまま優先します。
+車は ToF（距離センサー）の走行を土台にしたまま、カメラの画像を「小さな格子の特徴量」（320×240 を 5 倍に縮めて 8×6 のセルに分け、セルごとに色の割合・明るさ・輪郭の量を数えた 576 個の整数）に変え、**収録データから学習した検出器**を当てはめます。検出器には、画像の「どこに」何があるかを答える**位置つき**（赤信号・青信号・車両。3×3 セルの窓で見る）と、画像全体の様子を答える**全体**（交差点が前にある、など）の 2 種類があります。検出したものから、3 つの振る舞いが ToF の走行に「速度の上限」と「操舵のしかた」を与えます。
 
-学習したものは「判断データ（パック）」です。中身は `params.json`（ToF と信号機の振る舞いの設定、人が読める）と `vision.bin`（検出器の重みなど。車が速く読める二進形式）と `manifest.json`（説明・対応機能・学習元）で、6 章と同じ手順で車に送って切り替えます。走行ロジック `cam_drive` は車に同梱されています（`tof_drive` と並んで入っています）。
+| 振る舞い | 使う検出器 | すること |
+|---|---|---|
+| 信号機 `signal` | 赤信号・青信号（位置つき） | 赤を何コマか続けて見つけると減速、近づいたら止まり、青を見つける（または赤が消えてしばらく経つ）と走り出す |
+| 車両 `vehicle` | 車両（位置つき） | 自分の車線（画像の中央の列）に車両が見えたら、曲がらずに車間距離を保って追従。止まったまま動かなければ「駐車車両」として、左右の ToF が空いている側から追い越す（はみ出す → 横を通る → 戻る） |
+| 交差点 `intersection` | 交差点（全体。左に道がある／右に道がある） | 交差点が見えたら減速し、横の壁が切れた（横の ToF が開いた）ところで止まり、設定に従って直進・左折・右折する |
+
+3 つは独立に動き、重なったときは**いちばん低い速度の上限**が効きます。追い越しや右左折の途中で赤信号が出れば操作を打ち切って止まります。障害物の非常ブレーキ・後退・センサー異常は ToF の判断がつねに優先します（画像の判断は ToF の上に重ねるだけで、ToF の安全側の動きを止めることはありません）。
+
+学習したものは「判断データ（パック）」です。中身は `params.json`（ToF と各振る舞いの設定、人が読める）と `vision.bin`（検出器の重みなど。車が速く読める二進形式）と `manifest.json`（説明・対応機能・学習元）で、6 章と同じ手順で車に送って切り替えます。走行ロジック `cam_drive` は車に同梱されています（`tof_drive` と並んで入っています）。使う検出器が無い振る舞いは自動的にオフになるので、最初は信号機だけ、次に車両、と段階的に育てられます。
 
 ### 7.2 必要なもの
 
@@ -152,15 +160,16 @@ base-tof-0.2.0/            フォルダ名は <id>-<version>
 ### 7.3 手順
 
 1. **収録する**：信号機を置いたコースを走らせ（走り出す前に赤・青を見せるなら「収録のみ」で手で押しても構いません）、シナリオ名を「信号機ありケース1」のように付けて収録します。信号機の無いコースの収録（「壁のみの走行データ」）は「信号機が写っていない例」として自動的に使われるので、そちらも用意します。学習用と確認用に、別々の収録を 2 回以上取ります。
-2. **ラベルを付ける**：`python car/tools/train_pack.py propose <収録フォルダ> --detector traffic_light_red` が、赤い塊の位置（コマ番号と矩形）を候補として `proposals_traffic_light_red.jsonl` に出します。Claude にそのフォルダを見せて、候補のコマ（`frames/` の画像）を確認させ、正しいものを `labels.jsonl` に書かせます。青信号も同様（`--detector traffic_light_green`）。形式は次のとおりです（1 行 1 つ、矩形は画素座標 [x0, y0, x1, y1]、x1/y1 は含まない）。
+2. **ラベルを付ける**：`python car/tools/train_pack.py propose <収録フォルダ> --detector traffic_light_red` が、赤い塊の位置（コマ番号と矩形）を候補として `proposals_traffic_light_red.jsonl` に出します。Claude にそのフォルダを見せて、候補のコマ（`frames/` の画像）を確認させ、正しいものを `labels.jsonl` に書かせます。青信号も同様（`--detector traffic_light_green`）。候補の行はそのまま `labels.jsonl` の行の形で、余分なキー（`image`、`pixels` など、なぜ候補かの情報）は無視されるので、要らない行を消して貼り付ければ済みます。形式は次のとおりです（1 行 1 つ、矩形は画素座標 [x0, y0, x1, y1]、x1/y1 は含まない）。
 
 ```
-{"index": 123, "objects": [{"name": "traffic_light_red", "box": [160, 60, 200, 110]}]}
-{"index": 200, "negative": true}                       ← 何も写っていないと明示
-{"from": 300, "to": 380, "scene": ["intersection_left"]} ← 場面のラベル（将来の交差点用）
+{"index": 123, "objects": [{"name": "traffic_light_red", "box": [160, 60, 200, 110]}]}   ← 位置つき（矩形）
+{"index": 456, "objects": [{"name": "vehicle", "box": [120, 140, 200, 220]}]}            ← 前の車両（車体を囲む）
+{"from": 300, "to": 380, "scene": ["intersection_left"]}                                 ← 場面（画像全体）：300〜380 コマは左に道がある交差点が前にある
+{"index": 200, "negative": true}                                                         ← 何も写っていないと明示
 ```
 
-   ラベルの無いコマは学習に使いません。20 コマに 1 枚程度を見れば十分です（特徴が似ている間のコマは `propose` の候補で埋まります）。
+   車両の候補は `--detector vehicle` で出ます（ToF の中央が近かったコマ。矩形は車線の位置を示すだけなので、車体に合わせて直します）。交差点の候補は `--detector intersection_left`（または `_right`）で出ます。横の ToF が「壁」から「開いた」に変わった瞬間＝交差点を通過した瞬間から逆算して、その前 2 秒（`--before-ms`）を「交差点が前に見えていた区間」として提案します。最初と最後のコマを見て、区間を詰めます。ラベルの無いコマは学習に使いません。20 コマに 1 枚程度を見れば十分です（特徴が似ている間のコマは `propose` の候補で埋まります）。ラベルを付けたコマは、そこに書かれていない検出器にとっては「写っていない例」になります（車両の赤いテールランプは赤信号ではない、と教えるのはこの仕組みです）。
 
 3. **学習する**：
 
@@ -173,11 +182,22 @@ python car/tools/train_pack.py train cam-signal-0.1.0 \
     --id cam-signal --version 0.1.0 --description "信号機ありケース1"
 ```
 
-   `cam-base-0.1.0` はリポジトリの `car/packs/cam-base` にもあります。終わると `cam-signal-0.1.0/` に `params.json`・`vision.bin`・`training.json`（学習の記録）・`manifest.json` ができ、確認用の収録に対する検出の適合率・再現率が表示されます。再現率が低ければラベルを足し、誤検出が多ければ負例（壁のみ）を足します。
+   `cam-base-0.1.0` はリポジトリの `car/packs/cam-base` にもあります。終わると `cam-signal-0.1.0/` に `params.json`・`vision.bin`・`training.json`（学習の記録）・`manifest.json` ができ、確認用の収録に対する検出の適合率・再現率が表示されます。再現率が低ければラベルを足し、誤検出が多ければ負例（壁のみ）を足します。車両と交差点を足すときは、検出器を並べて一度に学習します（`:global` は全体の検出器）。
 
-4. **送る前に確かめる**：`python car/tools/train_pack.py show cam-signal-0.1.0`（中身）、`replay cam-signal-0.1.0 <収録>`（コマごとの検出）、`rumicar-replay <cam_drive のフォルダ> cam-signal-0.1.0 <収録>`（本物のロジックで再生。CRUISE → SIGNAL_APPROACH → SIGNAL_STOP → SIGNAL_RESUME と並べば止まって進んでいます）。
-5. **車に送る**：走行管理アプリの「版の管理」で `cam_drive-0.1.0`（同梱）を選んで「有効化」し、「送る…」で `cam-signal-0.1.0` を送って「有効化」します。状態欄の「判断データ」「対応機能」「学習元」に、送った版の説明・「壁 / 信号機」・学習に使った収録のシナリオが出ます。「判断を重ねる」をオンにすると、画像の上に検出した枠（赤信号 = 赤、青信号 = 緑、確定すると太枠）と確からしさが描かれます。
-6. **改良する**：収録を足して `--parent cam-signal-0.1.0 --version 0.2.0` で学習し直します。`--keep-parent-detectors` を付けると、学習し直さない検出器を前の版から引き継げます（manifest の `parent` に系譜が残ります）。
+```
+python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
+    --sessions <信号機の収録> <車両と交差点の収録>... --validate <確認用>... \
+    --negatives-from-scenario "壁のみの走行データ" \
+    --detector traffic_light_red --detector traffic_light_green \
+    --detector vehicle --detector intersection_left:global --detector intersection_right:global \
+    --intersection turn=left --id cam-town --version 0.1.0 --description "信号機と交差点ロジックあり"
+```
+
+   振る舞いは、その検出器がパックにあるときだけ `params.json` に入ります（`behaviours on: signal, vehicle, intersection` と表示されます）。片側の交差点しか学習していなければ、もう片側は空のまま（その側は無い扱い）になります。
+
+4. **送る前に確かめる**：`python car/tools/train_pack.py show cam-signal-0.1.0`（中身と、オンになっている振る舞い）、`replay cam-signal-0.1.0 <収録>`（コマごとの検出）、`rumicar-replay <cam_drive のフォルダ> cam-signal-0.1.0 <収録>`（本物のロジックで再生。CRUISE → SIGNAL_APPROACH → SIGNAL_STOP → SIGNAL_RESUME と並べば止まって進んでいます。車両なら FOLLOW → OVERTAKE_OUT → OVERTAKE_PASS → OVERTAKE_IN、交差点なら INTERSECTION_APPROACH → INTERSECTION_STOP → (INTERSECTION_CROSS →) INTERSECTION_TURN）。再生は収録した ToF の値をそのまま使うので、追い越しのように「動いた結果 ToF が変わる」場面は、収録のとおりにしか進みません（止まる・減速する・はみ出すところまでが確かめられます）。
+5. **車に送る**：走行管理アプリの「版の管理」で `cam_drive-0.2.0`（同梱）を選んで「有効化」し、「送る…」で `cam-signal-0.1.0` を送って「有効化」します。状態欄の「判断データ」「対応機能」「学習元」に、送った版の説明・「壁 / 信号機」・学習に使った収録のシナリオが出ます。「判断を重ねる」をオンにすると、画像の上に検出した枠（赤信号 = 赤、青信号 = 緑、車両 = 水色、交差点 = 橙で画像全体を囲む。確定すると太枠）と確からしさが描かれます。「判断状態」には `FOLLOW（前の車両に追従）` のように状態の意味も出ます。
+6. **改良する**：収録を足して `--parent cam-signal-0.1.0 --version 0.2.0` で学習し直します。新しい場面（車両、交差点）の収録を足したときは、古い検出器も含めて**全部を学習し直す**のが基本です（新しい場面が古い検出器の負例になるため。たとえば車両のテールランプを赤信号と間違えない）。`--keep-parent-detectors` は、場面が増えないまま一部の検出器だけ直すときのものです（manifest の `parent` に系譜が残ります）。
 
 ### 7.4 信号機の振る舞いの設定（params.json の signal）
 
@@ -192,15 +212,69 @@ python car/tools/train_pack.py train cam-signal-0.1.0 \
 
 `train` の `--signal キー=値` で書き換えられます（例 `--signal stop_min_cells=3`）。
 
-### 7.5 うまくいかないとき
+### 7.5 前の車両の振る舞いの設定（params.json の vehicle）
+
+この節（`vehicle`）が `params.json` に無ければ振る舞いはオフです。あるときは全部のキーが必要です（`train` が検出器 `vehicle` のあるパックに自動で入れます。`--vehicle キー=値` で書き換え）。
+
+| キー | 既定 | 意味 |
+|---|---|---|
+| `detector` | `vehicle` | 使う位置つき検出器の名前 |
+| `lane_cols` | 4 | 検出した車両の「いちばん確からしいセル」が、格子の中央のこの列数（8 列なら 2〜5 列目）にあるときだけ「自分の車線」とみなす |
+| `follow_gap_mm` | 150 | 前の車両との最低車間（ToF 中央）。これ以下で速度上限 0（止まる）。`tof.d_emergency_mm` より大きく、`tof.conf_max_mm` より小さいこと |
+| `follow_band_mm` | 80 | 車間が `follow_gap_mm` からこの幅だけ広がる間に、上限を 0 から `follow_v` まで上げる |
+| `follow_v` | 700 | 追従中の速度上限（千分率）。車両がカメラにだけ見えて ToF にはまだ見えない間もこの上限 |
+| `parked_confirm_ms` | 2000 | 車両の後ろで止まったまま、車間が広がらずにこの時間が経ったら「駐車車両」 |
+| `still_delta_mm` | 20 | 待つ間に車間がこれより広がったら「動き出した」として待ち直す |
+| `overtake_side` | `open` | 追い越す側。`left`／`right`／`open`（左右の ToF の広い側。同じなら右） |
+| `side_clear_mm` | 120 | その側の ToF がこれ以上（または何も無い）なら追い越せる。無ければ `FOLLOW_WAIT` で待つ |
+| `overtake_v` | 500 | 追い越し中の速度上限 |
+| `out_ms` | 500 | はみ出す（追い越す側へ全切り）時間 |
+| `pass_min_ms` / `pass_max_ms` | 800 / 3000 | 横を通る（舵を戻して直進）時間の最短／最長 |
+| `pass_clear_mm` / `pass_clear_ms` | 150 / 300 | 内側（車両のある側）の ToF が一度これ未満（車両を横に見た）になってから、これ以上がこの時間続いたら「通り過ぎた」 |
+| `in_ms` | 500 | 戻る（反対側へ全切り）時間 |
+| `ignore_ms` | 1500 | 追い越した後、車両の検出をこの時間無視する。また、追従中にカメラが車両を見失ったままこの時間が経つと追従をやめ、ToF の判断に戻す（近すぎて車両に見えないときは、ToF が障害物として回り込む） |
+
+追い越しは時間で区切った開ループの操作です（操舵は左／中央／右の 3 段しか無いため）。はみ出す・戻る時間はコースと車の速さに合わせて調整してください。
+
+### 7.6 交差点の振る舞いの設定（params.json の intersection）
+
+この節（`intersection`）が無ければオフ。あるときは全部のキーが必要です（`train` が検出器 `intersection_left`／`intersection_right` のどちらかがあるパックに自動で入れます。`--intersection キー=値` で書き換え）。
+
+| キー | 既定 | 意味 |
+|---|---|---|
+| `left_detector` / `right_detector` | `intersection_left` / `intersection_right` | 左に道がある交差点／右に道がある交差点の検出器（全体）。片方は `""` でもよい（両方は不可） |
+| `approach_v` | 500 | 交差点が見えてから止まるまでの速度上限 |
+| `stop_trigger` | `side_open` | 止まる合図。`side_open` = 左右どちらかの ToF が `open_mm` 以上に開いた（壁が切れた）とき。`detector` = 検出器が確定した時点ですぐ（壁の無いコースで、近い交差点だけを学習させたとき） |
+| `open_mm` | 200 | 横の ToF がこれ以上（または何も無い）なら「開いている」 |
+| `stop_ms` | 1000 | 止まる時間（赤信号が出ていれば、青になるまで発進しない） |
+| `turn` | `straight` | 止まった後。`straight` 直進／`left`／`right`／`detector`（見つけた側へ曲がる。両方見えたら直進） |
+| `turn_v` | 500 | 直進して待つ間と曲がる間の速度上限 |
+| `cross_max_ms` | 2000 | 曲がる側の ToF が開くまで直進して待つ最長時間（開かなければ直進して終わる） |
+| `turn_ms` | 900 | 曲がる側へ全切りする時間 |
+| `ignore_ms` | 3000 | 終わった後、交差点の検出をこの時間無視する |
+
+### 7.7 振る舞いの組み合わせ
+
+- 速度の上限は 3 つの振る舞いの最小値です。追従中に赤信号が出れば `SIGNAL_STOP`、交差点に着けば `INTERSECTION_STOP` で止まります。
+- 「駐車車両」の判定は、赤信号や交差点の処理中には進みません（信号待ちの車を追い越さない）。追い越しの途中で赤信号や交差点が出れば操作を打ち切って止まり、その後また追従からやり直します。
+- 交差点の「止まる」は赤信号が消える（青）まで発進せず、直進・右左折の途中で赤信号が出れば打ち切ります。
+- 「判断状態」に出る名前は、速度と操舵を決めているものです：赤信号（`SIGNAL_APPROACH`／`SIGNAL_STOP`）→ 交差点 → 車両 → 発進中（`SIGNAL_RESUME`）の順。ToF の非常ブレーキ・後退・センサー異常のときはそれが出ます。
+
+### 7.8 うまくいかないとき
 
 | 症状 | 対応 |
 |---|---|
 | 赤以外のもので止まる | 「壁のみ」の収録や、その物が写った収録を負例として足す。`training.json` の精度を見る。`--thr-on` を上げる |
 | 止まる位置が遠い／近い | `stop_min_cells` を増やす／減らす。カメラの取り付け角度が収録時と同じか確認 |
 | 止まったまま動かない | 青信号の検出器が青を見つけているか（「検出」欄）。無ければ `resume_without_green_ms` を設定 |
+| 車両の後ろで止まらず回り込む | 「判断を重ねる」で車両の枠が中央の列（`lane_cols`）に出ているか。近づくと車体が大きく写って検出が外れるなら、近い収録のラベルを足す。`follow_gap_mm` を上げる |
+| 追い越しがぶつかる／大回り | `out_ms`・`in_ms`・`overtake_v` を調整。はみ出す側の壁が近いなら `side_clear_mm` を上げる（その側では待つ） |
+| 駐車車両を追い越さない | 「判断状態」が `FOLLOW_WAIT` なら両側とも `side_clear_mm` 未満。`FOLLOW` のままなら車両の検出が切れている（上の行）か、赤信号・交差点の処理中 |
+| 交差点で止まらない | `replay` で `intersection_*` が確定しているか。確定していて壁のあるコースなら `open_mm` が壁の距離より小さいか確認。壁の無いコースは `stop_trigger` を `detector` に |
+| 交差点で曲がらない | `cross_max_ms` 以内に曲がる側の ToF が開いていない（`open_mm`）。`turn=detector` で両側が見えると直進になる |
 | 送った版が「検証失敗」になる | `make_manifest.py verify`。`vision.bin` の自己診断が合わないときはカメラの設定（320×240）が学習時と違う。学習ツールと車の版が合っているか（ABI 2） |
 | `rumicar-replay` と車で結果が違う | 収録は JPEG、車は生画像なので小さな差はあります。大きく違うときは照明が変わっている可能性があるので、その照明で収録を足す |
+| 検出が確定したまま消えない | `show` で `thr` の 2 つ目（解除のしきい値）が「何も無いときのスコア」より高いか。`train` は負例のスコアの上位 1% より上に置きますが、`--hysteresis` を小さくして学習し直すと上がります |
 
 ## 8. 車に直接入る（SSH）
 
@@ -274,7 +348,7 @@ sudo cmake --install build --prefix /usr/local   # 手動インストール
 
 libcamera 無しの環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF だけで走ります）。
 
-走行ロジックは `car/logic/` にあります：`tof_drive`（ToF 走行）と `cam_drive`（その上にカメラの判断を足したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間確定、`cam_logic` 信号機の振る舞い）。本体とロジックの契約は `car/include/rumicar/logic_api.h`（ABI 2：補助出力 `aux` と `aux_name`）です。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ と完全一致することを `test_vision` が確かめます。`car/tests/tools_smoke.py <build dir>` は合成収録から学習して `rumicar-replay` で止まる・進むまでを通しで確かめます（CI でも実行）。
+走行ロジックは `car/logic/` にあります：`tof_drive`（ToF 走行）と `cam_drive`（その上にカメラの判断を足したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間確定、`cam_logic` 信号機・車両・交差点の振る舞いと優先順位）。本体とロジックの契約は `car/include/rumicar/logic_api.h`（ABI 2：補助出力 `aux` と `aux_name`）です。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ と完全一致することを `test_vision` が確かめます。`car/tests/tools_smoke.py <build dir>` は合成収録から学習して `rumicar-replay` で止まる・進む、追従して追い越す、交差点で止まるまでを通しで確かめます（CI でも実行）。
 
 ## PC 側のビルド（Windows / .NET 10 SDK）
 
@@ -293,9 +367,9 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 - 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときだけ動かす）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序立てて起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中差し替え（PC または ssh から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、モード、非常停止、手動操作、シナリオ付き収録、版の管理、収録からの動画作成）
-- 車：画像ロジック `cam_drive`（信号機で停止・発進）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジック契約 ABI 2
+- 車：画像ロジック `cam_drive`（信号機で停止・発進、前の車両への追従と駐車車両の追い越し、交差点での停止・直進・右左折）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジック契約 ABI 2
 - 配布：標準 SD カードイメージ、タグで GitHub Release
-- 未実装（次の版）：先行車と駐停車車両の判別（追従／追い越し）、交差点の処理（検出器と行動を同じ仕組みで足す）
+- これから：実車での収録と調整（追い越し・右左折の時間、交差点の見え方の学習）、場面に応じた右左折の選び方（今は版ごとに固定か、見つけた側へ）
 
 ## ライセンス
 

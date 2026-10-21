@@ -4,9 +4,13 @@
 Subcommands (run from the repository root or anywhere with car/tools on the path):
 
   features <session>...                    compute and cache the image features of sessions
-  propose  <session> --detector NAME        candidate boxes (red / green blobs) to label from
+  propose  <session> --detector NAME        candidates to label from: red / green blobs (traffic lights),
+                                            frames with something close ahead (vehicle), the seconds before
+                                            a side opened up (intersection_left / intersection_right)
   train    <out-dir> --parent PACK --sessions S... [--validate S...] --detector NAME[:local|global]...
-                                            learn detectors from labels.jsonl and write the pack
+                                            learn detectors from labels.jsonl and write the pack; the
+                                            behaviours (signal, vehicle, intersection) are switched on
+                                            for the detectors the pack has
   eval     <pack-dir> --sessions S...       precision / recall of a pack's detectors on labelled sessions
   replay   <pack-dir> <session> [--out F]   per-frame detector outputs on a session (perception only;
                                             rumicar-replay runs the real .so for the whole behaviour)
@@ -14,11 +18,15 @@ Subcommands (run from the repository root or anywhere with car/tools on the path
 
 Labels live in <session>/labels.jsonl, one JSON object per line:
   {"index": 123, "objects": [{"name": "traffic_light_red", "box": [x0, y0, x1, y1]}]}   pixel box, x1/y1 exclusive
+  {"index": 456, "objects": [{"name": "vehicle", "box": [x0, y0, x1, y1]}]}              a vehicle ahead (its body)
   {"from": 300, "to": 380, "scene": ["intersection_left"]}                                frames 300..380 (inclusive)
   {"index": 200, "negative": true}                                                        nothing of interest here
-A frame with no label line is not used for training.  Sessions given with
---negatives SESSION (or whose scenario matches --negatives-from-scenario) are
-negatives for every detector in all their frames.
+Boxes train Local detectors (where in the image), scenes train Global ones
+(the whole view: NAME:global).  Other keys on a line are ignored, so the lines
+`propose` writes can be copied as they are.  A frame with no label line is not
+used for training.  Sessions given with --negatives SESSION (or whose scenario
+matches --negatives-from-scenario) are negatives for every detector in all
+their frames.
 
 Needs numpy and Pillow.  Standard library otherwise.
 """
@@ -37,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_manifest  # noqa: E402
 import rumicar_vision as rv  # noqa: E402
 
-TOOL_VERSION = "1"
+TOOL_VERSION = "2"
 
 
 # --- sessions ----------------------------------------------------------------------------------------
@@ -249,17 +257,31 @@ def fit_logistic(x: np.ndarray, y: np.ndarray, weight: np.ndarray, l2: float, it
 
 
 def choose_threshold(scores: np.ndarray, y: np.ndarray):
-    """thr_on maximising F1 on the given scores/targets (candidates 0.3..0.9); returns (thr, precision, recall, f1)."""
-    best = (0.5, 0.0, 0.0, 0.0)
+    """thr_on maximising F1 on the given scores/targets (candidates 0.3..0.9).  When several
+    thresholds tie (well separated classes) the middle one is taken, so the margin to both
+    sides is largest.  Returns (thr, precision, recall, f1)."""
+    results = []
     for thr in np.arange(0.30, 0.91, 0.05):
         pred = scores >= thr
         tp = int((pred & (y == 1)).sum()); fp = int((pred & (y == 0)).sum()); fn = int((~pred & (y == 1)).sum())
         prec = tp / (tp + fp) if tp + fp else 0.0
         rec = tp / (tp + fn) if tp + fn else 0.0
         f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
-        if f1 > best[3] + 1e-9:
-            best = (float(round(thr, 2)), prec, rec, f1)
-    return best
+        results.append((float(round(thr, 2)), prec, rec, f1))
+    best_f1 = max(r[3] for r in results)
+    tied = [r for r in results if r[3] >= best_f1 - 1e-9]
+    return tied[len(tied) // 2]
+
+
+def choose_release(thr_on: float, hysteresis: float, neg_scores: np.ndarray) -> float:
+    """thr_off: thr_on - hysteresis, but never down among the negatives' scores (a detector
+    that never releases is worse than one that flickers): at least halfway from the
+    negatives' 99th percentile up to thr_on, and always below thr_on."""
+    thr_off = thr_on - hysteresis
+    if neg_scores.size:
+        q = float(np.quantile(neg_scores, 0.99))
+        thr_off = max(thr_off, (q + thr_on) / 2.0)
+    return float(round(min(max(thr_off, 0.05), thr_on - 0.02), 2))
 
 
 def frame_metrics(pack: rv.VisionPack, d: rv.Detector, feats: np.ndarray, targets: np.ndarray):
@@ -296,13 +318,32 @@ def cmd_features(a) -> int:
 
 
 def cmd_propose(a) -> int:
-    """Colour-blob candidates on the small image, as boxes to confirm."""
+    """Candidates to label, written as labels.jsonl lines (with extra keys that say why)."""
     s = Session(a.session)
+    out_path = a.out or os.path.join(s.path, f"proposals_{a.detector}.jsonl")
+    if a.detector.startswith("vehicle"):
+        count = propose_near_frames(s, a, out_path)
+        print(f"{count} frames with something close ahead (centre ToF below {a.near_mm} mm) -> {out_path}")
+        print("The box marks our lane; move/resize it onto the vehicle's body in the frames where one is, delete the other lines, "
+              "and append the rest to labels.jsonl.")
+    elif a.detector.startswith("intersection"):
+        count = propose_side_openings(s, a, out_path)
+        print(f"{count} stretches before a side opened up -> {out_path}")
+        print("Look at the first and last frame of each stretch: keep the ones that show the intersection ahead, "
+              "trim from/to, and append them to labels.jsonl.")
+    else:
+        count = propose_blobs(s, a, out_path)
+        print(f"{count} candidate boxes -> {out_path}")
+        print("Confirm them (look at the frames), delete the wrong lines and append the rest to labels.jsonl.")
+    return 0
+
+
+def propose_blobs(s: Session, a, out_path: str) -> int:
+    """Colour blobs on the small image (traffic lights), one line per blob."""
     cfg = rv.FeatureConfig(a.downscale, a.grid_x, a.grid_y, a.s_min, a.v_min, a.v_white)
     want = {"traffic_light_red": 0, "traffic_light_green": 2}.get(a.detector)
     if want is None:
         want = int(a.color_class)
-    out_path = a.out or os.path.join(s.path, f"proposals_{a.detector}.jsonl")
     count = 0
     with open(out_path, "w", encoding="utf-8") as out:
         for n, line in enumerate(s.image_lines):
@@ -316,12 +357,69 @@ def cmd_propose(a) -> int:
             mask = cls == want
             for (x0, y0, x1, y1, px) in blobs(mask, a.min_pixels):
                 box = [x0 * cfg.downscale, y0 * cfg.downscale, x1 * cfg.downscale, y1 * cfg.downscale]
-                out.write(json.dumps({"index": int(line["index"]), "image": line["image"], "name": a.detector, "box": box,
-                                      "pixels": int(px)}, ensure_ascii=False) + "\n")
+                out.write(json.dumps({"index": int(line["index"]), "objects": [{"name": a.detector, "box": box}],
+                                      "image": line["image"], "pixels": int(px)}, ensure_ascii=False) + "\n")
                 count += 1
-    print(f"{count} candidate boxes -> {out_path}")
-    print("Confirm them (look at the frames) and copy the good ones into labels.jsonl as objects.")
-    return 0
+    return count
+
+
+def tof_mm(line, i: int):
+    """Raw ToF reading i of a meta line: an int, or None when invalid / no target."""
+    v = line["header"].get("tof_mm")
+    if not isinstance(v, list) or len(v) <= i or not isinstance(v[i], (int, float)):
+        return None
+    v = int(v[i])
+    return v if 0 <= v < NO_TARGET_MM else None
+
+
+NO_TARGET_MM = 8190
+
+
+def propose_near_frames(s: Session, a, out_path: str) -> int:
+    """Frames where the centre ToF saw something close: a vehicle ahead is one of the things that
+    look like that.  The box is our lane (centre half, lower half of the image)."""
+    w, h = s.image_size()
+    box = [w // 4, h // 2, w - w // 4, h]
+    count = 0
+    with open(out_path, "w", encoding="utf-8") as out:
+        for n, line in enumerate(s.image_lines):
+            if a.every > 1 and n % a.every:
+                continue
+            c = tof_mm(line, 1)
+            if c is None or c >= a.near_mm:
+                continue
+            out.write(json.dumps({"index": int(line["index"]), "objects": [{"name": a.detector, "box": box}],
+                                  "image": line["image"], "tof_mm": c}, ensure_ascii=False) + "\n")
+            count += 1
+    return count
+
+
+def propose_side_openings(s: Session, a, out_path: str) -> int:
+    """The moments a side ToF went from a wall (below --near-mm) to open: the car was passing an
+    opening on that side, so the --before-ms before it show the intersection ahead."""
+    side = 0 if a.detector.endswith("left") else 2 if a.detector.endswith("right") else None
+    if side is None:
+        raise SystemExit("error: --detector must be intersection_left or intersection_right (which side opens)")
+    lines = s.image_lines
+    count = 0
+    walled = False
+    with open(out_path, "w", encoding="utf-8") as out:
+        for n, line in enumerate(lines):
+            v = tof_mm(line, side)
+            if v is not None and v < a.near_mm:
+                walled = True
+                continue
+            if not walled:
+                continue
+            walled = False   # a wall just ended here
+            t_open = int(line["header"].get("t_us", 0))
+            first = n
+            while first > 0 and t_open - int(lines[first - 1]["header"].get("t_us", 0)) <= a.before_ms * 1000:
+                first -= 1
+            out.write(json.dumps({"from": int(lines[first]["index"]), "to": int(line["index"]), "scene": [a.detector],
+                                  "images": [lines[first]["image"], line["image"]]}, ensure_ascii=False) + "\n")
+            count += 1
+    return count
 
 
 def blobs(mask: np.ndarray, min_pixels: int):
@@ -368,8 +466,57 @@ def load_parent(parent_dir: str):
     return params, pack, manifest
 
 
+# The behaviour parameters and their defaults, as in car/logic/cam_drive/cam_params.hpp (docs 3.11).
 DEFAULT_SIGNAL = {"red_detector": "traffic_light_red", "green_detector": "traffic_light_green", "stop_min_cells": 2,
                   "approach_v": 500, "min_stop_ms": 1000, "resume_without_green_ms": 3000, "resume_ignore_ms": 1500}
+DEFAULT_VEHICLE = {"detector": "vehicle", "lane_cols": 4, "follow_gap_mm": 150, "follow_band_mm": 80, "follow_v": 700,
+                   "parked_confirm_ms": 2000, "still_delta_mm": 20, "overtake_side": "open", "side_clear_mm": 120,
+                   "overtake_v": 500, "out_ms": 500, "pass_min_ms": 800, "pass_max_ms": 3000, "pass_clear_mm": 150,
+                   "pass_clear_ms": 300, "in_ms": 500, "ignore_ms": 1500}
+DEFAULT_INTERSECTION = {"left_detector": "intersection_left", "right_detector": "intersection_right", "approach_v": 500,
+                        "stop_trigger": "side_open", "open_mm": 200, "stop_ms": 1000, "turn": "straight", "turn_v": 500,
+                        "cross_max_ms": 2000, "turn_ms": 900, "ignore_ms": 3000}
+BEHAVIOUR_DEFAULTS = {"signal": DEFAULT_SIGNAL, "vehicle": DEFAULT_VEHICLE, "intersection": DEFAULT_INTERSECTION}
+DETECTOR_KEYS = {"signal": ("red_detector", "green_detector"), "vehicle": ("detector",),
+                 "intersection": ("left_detector", "right_detector")}
+
+
+def behaviour_section(section: str, parent_params: dict, overrides, pack: rv.VisionPack):
+    """The params.json section of one behaviour for a new pack: the parent's values (or the defaults)
+    with the --<section> key=value overrides, switched on only for detectors the pack has.
+    Returns the dict, or None when the section is to be left out (the behaviour off)."""
+    defaults = BEHAVIOUR_DEFAULTS[section]
+    values = dict(parent_params.get(section) or defaults)
+    for k in defaults:
+        values.setdefault(k, defaults[k])
+    explicit = set()
+    for kv in overrides or []:
+        k, _, v = kv.partition("=")
+        if k not in defaults:
+            raise SystemExit(f"error: unknown {section} parameter {k}")
+        values[k] = v if isinstance(defaults[k], str) else int(v)
+        explicit.add(k)
+    keys = DETECTOR_KEYS[section]
+    inherited = section in parent_params   # the parent had this behaviour: say so when it goes off
+    for key in keys:
+        name = values[key]
+        if name and pack.find(name) < 0:
+            if key in explicit:
+                raise SystemExit(f"error: {section}.{key} = {name!r} but the pack has no such detector")
+            values[key] = ""
+            if inherited:
+                print(f"note: {section}.{key} {name!r} is not in this pack: left empty")
+    if section == "signal":
+        if not values["red_detector"] and values["green_detector"]:
+            values["green_detector"] = ""
+        return values   # always present ("" = off)
+    if not any(values[k] for k in keys):
+        if explicit:
+            raise SystemExit(f"error: --{section} given but the pack has none of its detectors")
+        if inherited:
+            print(f"note: no {section} detector in this pack: the {section} behaviour is off")
+        return None
+    return values
 
 
 def cmd_train(a) -> int:
@@ -445,7 +592,7 @@ def cmd_train(a) -> int:
         scores = 1.0 / (1.0 + np.exp(-(x.astype(np.float64) @ wv.astype(np.float64) + bias)))
         thr, prec, rec, f1 = choose_threshold(scores.astype(np.float32), y)
         thr_on = a.thr_on if a.thr_on is not None else thr
-        thr_off = max(0.05, round(thr_on - a.hysteresis, 2))
+        thr_off = choose_release(thr_on, a.hysteresis, scores[y == 0])
         det = rv.Detector(name, kind, wv, bias, thr_on, thr_off, a.confirm_frames, a.release_frames, a.min_cells,
                           a.row_min, min(a.row_max, cfg.grid_y - 1) if a.row_max is not None else cfg.grid_y - 1)
         pack.detectors.append(det)
@@ -490,17 +637,16 @@ def cmd_train(a) -> int:
         pack.selftest = rv.make_selftest(pack, rv.load_rgb(st_line[0].frame_path(st_line[1])))
         report["selftest_frame"] = f"{st_line[0].name}/{st_line[1]['image']}"
 
-    # Signal parameters: the parent's, with overrides.
-    signal = dict(params["signal"])
-    for kv in a.signal or []:
-        k, _, v = kv.partition("=")
-        if k not in DEFAULT_SIGNAL:
-            raise SystemExit(f"error: unknown signal parameter {k}")
-        signal[k] = v if isinstance(DEFAULT_SIGNAL[k], str) else int(v)
-    for key in ("red_detector", "green_detector"):
-        if signal[key] and pack.find(signal[key]) < 0:
-            raise SystemExit(f"error: signal.{key} = {signal[key]!r} but the pack has no such detector (train it or set --signal {key}=)")
-    params = {"tof": params["tof"], "signal": signal}
+    # Behaviour parameters: the parent's (or the defaults), with overrides, for the detectors the pack has.
+    new_params = {"tof": params["tof"], "signal": behaviour_section("signal", params, a.signal, pack)}
+    for section, overrides in (("vehicle", a.vehicle), ("intersection", a.intersection)):
+        values = behaviour_section(section, params, overrides, pack)
+        if values is not None:
+            new_params[section] = values
+    params = new_params
+    behaviours = ["signal"] if params["signal"]["red_detector"] else []
+    behaviours += [k for k in ("vehicle", "intersection") if k in params]
+    print(f"behaviours on: {', '.join(behaviours) or '- (ToF only)'}")
 
     # Write the pack directory.
     os.makedirs(a.out_dir, exist_ok=True)
@@ -528,7 +674,8 @@ def cmd_train(a) -> int:
                             description=a.description or f"{', '.join(d.name for d in pack.detectors)} learned from {', '.join(s.name for s in train)}",
                             capability=capabilities, scenario=scenarios, parent=parent_name)
     make_manifest.cmd_pack(ns)
-    print(f"pack {a.id}-{a.version} written to {a.out_dir}: {len(pack.detectors)} detectors, capabilities {capabilities}")
+    print(f"pack {a.id}-{a.version} written to {a.out_dir}: {len(pack.detectors)} detectors, capabilities {capabilities}, "
+          f"behaviours {', '.join(behaviours) or '-'}")
     print("next: rumicar-replay or `train_pack.py replay` on a session you did not train on, then send it with the drive manager")
     return 0
 
@@ -585,6 +732,23 @@ def cmd_replay(a) -> int:
 
 def cmd_show(a) -> int:
     make_manifest.cmd_show(argparse.Namespace(dir=a.pack_dir))
+    pj = os.path.join(a.pack_dir, "params.json")
+    if os.path.isfile(pj):
+        with open(pj, encoding="utf-8") as f:
+            params = json.load(f)
+        if isinstance(params, dict) and "signal" in params:
+            on = []
+            sig = params.get("signal") or {}
+            if sig.get("red_detector"):
+                on.append(f"signal (red {sig['red_detector']}, green {sig.get('green_detector') or '-'})")
+            if "vehicle" in params:
+                v = params["vehicle"]
+                on.append(f"vehicle ({v.get('detector')}, gap {v.get('follow_gap_mm')} mm, pass on the {v.get('overtake_side')})")
+            if "intersection" in params:
+                i = params["intersection"]
+                on.append(f"intersection ({i.get('left_detector') or '-'} / {i.get('right_detector') or '-'}, "
+                          f"stop on {i.get('stop_trigger')}, then {i.get('turn')})")
+            print(f"  behaviours:   {'; '.join(on) or '- (ToF only)'}")
     vb = os.path.join(a.pack_dir, "vision.bin")
     if not os.path.isfile(vb):
         print("  vision.bin:   none (ToF only)")
@@ -630,6 +794,8 @@ def main() -> int:
     pr.add_argument("--detector", default="traffic_light_red")
     pr.add_argument("--color-class", default=0, help="pixel class to look for when --detector is not a known name (0 red .. 5 magenta)")
     pr.add_argument("--min-pixels", type=int, default=3, help="smallest blob in small-image pixels")
+    pr.add_argument("--near-mm", type=int, default=250, help="vehicle: centre ToF below this is 'close'; intersection: a side below this is a wall")
+    pr.add_argument("--before-ms", type=int, default=2000, help="intersection: how long before the side opened the stretch starts")
     pr.add_argument("--every", type=int, default=1, help="look at every n-th frame")
     pr.add_argument("--out")
     add_feature_args(pr)
@@ -648,13 +814,15 @@ def main() -> int:
     t.add_argument("--version", required=True)
     t.add_argument("--description")
     t.add_argument("--signal", action="append", help="signal parameter override key=value, e.g. stop_min_cells=3")
+    t.add_argument("--vehicle", action="append", help="vehicle parameter override key=value, e.g. overtake_side=right")
+    t.add_argument("--intersection", action="append", help="intersection parameter override key=value, e.g. turn=left")
     t.add_argument("--cell-overlap", type=float, default=0.25, help="box must cover this fraction of a cell for a positive")
     t.add_argument("--cell-ignore", type=float, default=0.05, help="cells covered less than --cell-overlap but at least this are ignored")
     t.add_argument("--l2", type=float, default=1e-3)
     t.add_argument("--iterations", type=int, default=600)
     t.add_argument("--learning-rate", type=float, default=0.05)
     t.add_argument("--thr-on", type=float, help="fixed threshold instead of the F1-optimal one")
-    t.add_argument("--hysteresis", type=float, default=0.2, help="thr_off = thr_on - this")
+    t.add_argument("--hysteresis", type=float, default=0.2, help="thr_off = thr_on - this (raised when the negatives' scores reach that high)")
     t.add_argument("--confirm-frames", type=int, default=3)
     t.add_argument("--release-frames", type=int, default=5)
     t.add_argument("--min-cells", type=int, default=1)

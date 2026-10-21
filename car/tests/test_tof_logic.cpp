@@ -107,6 +107,54 @@ void test_speed_cap_stops_and_resumes_smoothly() {
     CHECK(r.last.aux_len == 0 && r.last.aux_format == 0);
 }
 
+void test_steer_modes_for_logics_on_top() {
+    // HoldLane: no turning in front of an obstacle (speed still follows the
+    // distance), but a near side wall is still avoided.  Force: the given
+    // steer at once, hold time and all; last_turn_dir is untouched.  Neither
+    // mode touches the emergency brake, and stuck detection is off meanwhile.
+    Params p;
+    Run r(p);
+    for (int i = 0; i < 60; ++i) r.step(OPEN, OPEN, OPEN);
+    r.logic.set_steer_mode(TofDriveLogic::SteerMode::HoldLane);
+    for (int i = 0; i < 20; ++i) r.step(OPEN, 180, OPEN);   // an obstacle ahead, more room on the left
+    CHECK(r.last.steer == RUMI_STEER_CENTER && r.last.state == static_cast<uint8_t>(State::Cruise));
+    CHECK(r.last.drive_permille < p.v_max && r.last.drive_permille >= p.v_min);   // the speed curve still applies
+    for (int i = 0; i < 10; ++i) r.step(40, 180, OPEN);     // a wall close on the left: move away from it
+    CHECK(r.last.steer == RUMI_STEER_RIGHT);
+    for (int i = 0; i < 10; ++i) r.step(OPEN, 180, OPEN);
+    CHECK(r.last.steer == RUMI_STEER_CENTER);
+    // No stuck recovery while held: the distance has not changed for far longer than stuck_time_ms.
+    for (int i = 0; i < 60; ++i) r.step(OPEN, 180, OPEN);   // 3 s
+    CHECK(r.last.state == static_cast<uint8_t>(State::Cruise) && r.last.drive_permille > 0);
+    // Force: left at once, even though the steering just changed.
+    r.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_LEFT);
+    r.step(OPEN, 180, OPEN);
+    CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.state == static_cast<uint8_t>(State::TurnLeft));
+    r.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_RIGHT);
+    r.step(OPEN, 180, OPEN);
+    CHECK(r.last.steer == RUMI_STEER_RIGHT && r.last.state == static_cast<uint8_t>(State::TurnRight));
+    CHECK(r.logic.steer_mode() == TofDriveLogic::SteerMode::Force);
+    // Back to Auto: the obstacle ahead now makes the logic turn by itself (towards the open side).
+    r.logic.set_steer_mode(TofDriveLogic::SteerMode::Auto);
+    for (int i = 0; i < 10; ++i) r.step(OPEN, 180, 100);
+    CHECK(r.last.steer == RUMI_STEER_LEFT);
+    // Emergency braking is never affected by a steering mode.
+    r.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_RIGHT);
+    for (int i = 0; i < 3; ++i) r.step(OPEN, 50, OPEN);
+    CHECK(r.last.state == static_cast<uint8_t>(State::EmergencyBrake) && r.last.drive_permille == 0);
+    CHECK((r.last.flags & RUMI_CMD_FLAG_BRAKE) != 0);
+    // closing_mm_s and drive are exposed for the logic on top.
+    Run q(p);
+    for (int i = 0; i < 60; ++i) q.step(OPEN, OPEN, OPEN);
+    CHECK(q.logic.drive() == p.v_max);
+    q.step(OPEN, 240, OPEN);
+    q.step(OPEN, 240, OPEN);
+    q.step(OPEN, 240, OPEN);
+    q.step(OPEN, 200, OPEN);   // median still 240
+    q.step(OPEN, 200, OPEN);   // median 200 -> filtered 200 (a closer reading is taken at once): 40 mm in 50 ms
+    CHECK(q.logic.closing_mm_s() > 700.0 && q.logic.closing_mm_s() < 900.0);
+}
+
 void test_speed_follows_distance() {
     Params p;
     Run r(p);
@@ -347,6 +395,7 @@ void test_malformed_frame_rejected() {
 int main() {
     test_ramp_and_accel_limit();
     test_speed_cap_stops_and_resumes_smoothly();
+    test_steer_modes_for_logics_on_top();
     test_speed_follows_distance();
     test_stuck_requires_constant_distance();
     test_emergency_brake_then_recover();

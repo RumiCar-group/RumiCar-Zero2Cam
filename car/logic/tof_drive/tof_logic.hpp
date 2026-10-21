@@ -81,6 +81,20 @@ public:
     void set_speed_cap(int permille) { speed_cap_ = permille; }
     int speed_cap() const { return speed_cap_; }
 
+    // Steering hooks for logics built on top (cam_drive): Auto is this logic's
+    // own steering; HoldLane keeps the wheels straight except to move away
+    // from a near side wall (no turning in front of an obstacle, e.g. while
+    // following a vehicle); Force applies the given steer.  Emergency braking
+    // and the reversing recovery are never affected (safety first).
+    enum class SteerMode : uint8_t { Auto = 0, HoldLane = 1, Force = 2 };
+    void set_steer_mode(SteerMode mode, int8_t forced = RUMI_STEER_CENTER) { steer_mode_ = mode; forced_steer_ = forced; }
+    SteerMode steer_mode() const { return steer_mode_; }
+
+    // Closing speed of the centre distance (mm/s, positive = approaching) and
+    // the current rate-limited drive command, for behaviours built on top.
+    double closing_mm_s() const { return closing_; }
+    double drive() const { return drive_; }
+
     // Filtered distances after conditioning (for telemetry/tests).  OPEN_MM when open.
     static constexpr int OPEN_MM = 9999;
     const std::array<int, RUMI_TOF_COUNT>& filtered() const { return filt_; }
@@ -120,6 +134,9 @@ private:
 
     double   drive_ = 0.0;           // current drive command (per mille), rate limited
     int      speed_cap_ = RUMI_DRIVE_MAX;
+    SteerMode steer_mode_ = SteerMode::Auto;
+    int8_t   forced_steer_ = RUMI_STEER_CENTER;
+    double   closing_ = 0.0;
     int      prev_c_filt_ = OPEN_MM; // for closing-speed estimate
 
     // stuck detection
