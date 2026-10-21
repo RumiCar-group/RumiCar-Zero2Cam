@@ -35,6 +35,12 @@ public partial class MainWindow : Window
     private int _manualDrive;
     private bool _manualMode;
     private bool _pushing;
+    private bool _makingVideo;
+    private string? _lastSessionDirectory;
+    private uint _lastThrottled;
+    private JsonElement? _lastStatus;
+
+    private static readonly string AppVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "?";
 
     public MainWindow()
     {
@@ -42,6 +48,14 @@ public partial class MainWindow : Window
         DataContext = _vm;
         PreviewKeyDown += OnKey;
         PreviewKeyUp += OnKey;
+        LoadScenarioHistory();
+    }
+
+    /// <summary>Offers the scenario names used before (from &lt;data root&gt;/scenarios.json).</summary>
+    private void LoadScenarioHistory()
+    {
+        _vm.ScenarioHistory.Clear();
+        foreach (var e in ScenarioHistory.Load(_vm.DataRoot.Trim())) _vm.ScenarioHistory.Add(e.Name);
     }
 
     // --- connection ----------------------------------------------------------
@@ -72,12 +86,19 @@ public partial class MainWindow : Window
             _vm.Connected = true;
             _vm.ConnectionState = "接続";
             ConnectButton.Content = "切断";
+            _lastStatus = null;
+            _lastThrottled = 0;
             if (_vm.AutoRecord) StartRecording();   // default: every connection is recorded
             var carName = CarConnection.GetString(car.HelloResult, "car");
             var coreVersion = CarConnection.GetString(car.HelloResult, "core_version");
             if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}");
             var status = await car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None);
-            if (status.Ok && status.Result is JsonElement result) ApplyStatus(result);
+            if (status.Ok && status.Result is JsonElement result)
+            {
+                ApplyStatus(result);
+                // The session started before the status was known: complete its description now.
+                lock (_sessionLock) _session?.UpdateInfo(BuildSessionInfo());
+            }
             else if (!status.Ok) _vm.AddLog("状態取得: 拒否 (" + status.Error + ")");
             await RefreshVersionsAsync();
         }
@@ -106,7 +127,18 @@ public partial class MainWindow : Window
         ConnectButton.Content = "接続";
         _vm.InstalledVersions.Clear();
         _vm.PushStatus = "-";
+        _lastStatus = null;
         if (car is not null) await car.DisposeAsync();
+    }
+
+    /// <summary>What the next (or current) recording is about: the chosen scenario and the car's logic/pack from the last status.</summary>
+    private SessionInfo BuildSessionInfo()
+    {
+        var car = _car;
+        return SessionInfo.FromStatus(_lastStatus, _vm.Scenario, _vm.Note,
+            CarConnection.GetString(car?.HelloResult, "car") ?? "",
+            CarConnection.GetString(car?.HelloResult, "core_version") ?? "",
+            "RumiCarDriveManager " + AppVersion);
     }
 
     private void OnDisconnected(CarConnection source, Exception? ex)
@@ -169,17 +201,64 @@ public partial class MainWindow : Window
 
     private void ApplyStatus(JsonElement data)
     {
+        if (data.ValueKind == JsonValueKind.Object) _lastStatus = data;
         var mode = CarConnection.GetString(data, "mode");
         if (mode is not null) SetMode(mode);
+        var startup = CarConnection.GetString(data, "startup_mode");
+        if (startup is not null) _vm.StartupMode = DescribeMode(startup);
         var lv = CarConnection.GetString(data, "logic_version");
         var pv = CarConnection.GetString(data, "pack_version");
         if (lv is not null || pv is not null) _vm.Versions = $"{lv ?? "?"} / {pv ?? "?"}";
+        var packId = CarConnection.GetString(data, "pack_id");
+        if (packId is not null)
+        {
+            var description = CarConnection.GetString(data, "pack_description") ?? "";
+            _vm.PackInfo = $"{packId} {pv ?? ""}" + (description.Length > 0 ? " — " + description : "");
+            var capabilities = GetStringList(data, "pack_capabilities");
+            _vm.PackCapabilities = capabilities.Count > 0 ? Capability.Describe(capabilities) : "（記載なし）";
+            var scenarios = GetStringList(data, "pack_scenarios");
+            var parent = CarConnection.GetString(data, "pack_parent") ?? "";
+            _vm.PackScenarios = (scenarios.Count > 0 ? string.Join(", ", scenarios) : "（記載なし）") + (parent.Length > 0 ? "　元の版: " + parent : "");
+        }
+        if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("throttled", out var th) && th.TryGetUInt32(out var throttled))
+            ApplyThrottled(throttled);
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("battery_mv", out var mv) && mv.TryGetInt32(out var millivolts))
             _vm.Battery = FormatBattery(millivolts);
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("estop", out var es) && (es.ValueKind == JsonValueKind.True || es.ValueKind == JsonValueKind.False))
             _vm.EStop = FormatEStop(es.ValueKind == JsonValueKind.True, CarConnection.GetString(data, "estop_reason") ?? "");
         var stateName = CarConnection.GetString(data, "state_name");
         if (stateName is not null) _vm.LogicState = stateName;
+    }
+
+    private static List<string> GetStringList(JsonElement data, string key)
+    {
+        var list = new List<string>();
+        if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array) return list;
+        foreach (var item in arr.EnumerateArray())
+            if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } s) list.Add(s);
+        return list;
+    }
+
+    private static string DescribeMode(string mode) => mode switch
+    {
+        DriveMode.Auto => "自動",
+        DriveMode.Manual => "手動",
+        DriveMode.RecordOnly => "収録のみ",
+        _ => mode,
+    };
+
+    /// <summary>Shows the firmware's power flags and logs under-voltage edges (docs 3.9).</summary>
+    private void ApplyThrottled(uint throttled)
+    {
+        var text = PowerFlags.Describe(throttled);
+        if (_vm.Power != text) _vm.Power = text;
+        var nowUv = (throttled & PowerFlags.UnderVoltageNow) != 0;
+        var wasUv = (_lastThrottled & PowerFlags.UnderVoltageNow) != 0;
+        if (nowUv && !wasUv) _vm.AddLog("電源: 車のファームウェアが低電圧を検出しました（" + text + "）");
+        else if (!nowUv && wasUv) _vm.AddLog("電源: 低電圧が解消しました（" + text + "）");
+        else if ((throttled & PowerFlags.UnderVoltageSinceBoot) != 0 && (_lastThrottled & PowerFlags.UnderVoltageSinceBoot) == 0 && _lastThrottled != 0)
+            _vm.AddLog("電源: 起動後に低電圧がありました（" + text + "）");
+        _lastThrottled = throttled;
     }
 
     private static string FormatEStop(bool active, string reason) => active ? "作動中（" + DescribeEStopReason(reason) + "）" : "なし";
@@ -276,6 +355,10 @@ public partial class MainWindow : Window
         if (!_vm.EStop.StartsWith(estopText, StringComparison.Ordinal)) _vm.EStop = estopText;
         if (h.LogicVersion.Length > 0 || h.PackVersion.Length > 0) _vm.Versions = $"{h.LogicVersion} / {h.PackVersion}";
         if (h.BatteryMillivolts > 0) _vm.Battery = FormatBattery(h.BatteryMillivolts);
+        if (h.Throttled != _lastThrottled || _vm.Power == "-") ApplyThrottled(h.Throttled);
+        // A pack switch shows up in telemetry first; the status event that follows brings its description.
+        if (h.PackId.Length > 0 && !_vm.PackInfo.StartsWith(h.PackId + " " + h.PackVersion, StringComparison.Ordinal))
+            _vm.PackInfo = $"{h.PackId} {h.PackVersion}";
 
         if (frame.Jpeg.Length == 0 || !_vm.ShowImage) return;   // hidden: no decoding either
         try
@@ -498,12 +581,26 @@ public partial class MainWindow : Window
         if (_session is not null) return;
         try
         {
-            var session = new SessionWriter(_vm.DataRoot.Trim(), _vm.CarName.Trim(), DateTimeOffset.Now);
+            var dataRoot = _vm.DataRoot.Trim();
+            var started = DateTimeOffset.Now;
+            var info = BuildSessionInfo();
+            var session = new SessionWriter(dataRoot, _vm.CarName.Trim(), started, info);
             lock (_sessionLock) _session = session;
+            _lastSessionDirectory = session.Directory;
             _vm.Recording = true;
-            _vm.RecordingStatus = "収録中: " + session.Directory;
+            _vm.RecordingStatus = "収録中: " + session.Directory + (info.Scenario.Length > 0 ? "　シナリオ: " + info.Scenario : "");
             RecordButton.Content = "収録停止";
-            _vm.AddLog("収録開始: " + session.Directory);
+            _vm.AddLog("収録開始: " + session.Directory + (info.Scenario.Length > 0 ? "（シナリオ: " + info.Scenario + "）" : "（シナリオ未設定）"));
+            try
+            {
+                ScenarioHistory.RecordUse(dataRoot, info.Scenario, started);
+                LoadScenarioHistory();
+                _vm.Scenario = info.Scenario;   // the list reload clears the editable text
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _vm.AddLog("シナリオ一覧（scenarios.json）を更新できません: " + ex.Message);
+            }
         }
         catch (Exception ex)
         {
@@ -530,8 +627,51 @@ public partial class MainWindow : Window
             _vm.AddLog("収録の終了処理に失敗: " + ex.Message);
         }
         _vm.Recording = false;
-        _vm.RecordingStatus = $"停止（直前の収録: {s.FramesWritten} コマ）";
+        _vm.RecordingStatus = $"停止（直前の収録: {s.FramesWritten} コマ、画像 {s.ImagesWritten} 枚）";
         RecordButton.Content = "収録開始";
-        _vm.AddLog($"収録停止: {s.FramesWritten} コマ, 欠け {s.SequenceGaps} 回");
+        _vm.AddLog($"収録停止: {s.FramesWritten} コマ（画像 {s.ImagesWritten} 枚）, 欠け {s.SequenceGaps} 回");
+    }
+
+    // --- video from a recorded session (docs 6.4) ------------------------------
+
+    private async void OnVideoClick(object sender, RoutedEventArgs e)
+    {
+        if (_makingVideo) return;
+        var sessionsRoot = Path.Combine(_vm.DataRoot.Trim(), "sessions");
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "動画にする収録フォルダ（meta.jsonl と frames を含む）",
+            InitialDirectory = _lastSessionDirectory is not null && Directory.Exists(_lastSessionDirectory) ? _lastSessionDirectory
+                             : Directory.Exists(sessionsRoot) ? sessionsRoot : _vm.DataRoot.Trim(),
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        var directory = dialog.FolderName;
+        if (directory == _session?.Directory)
+        {
+            _vm.AddLog("動画: 収録中のフォルダは選べません。収録を止めてから作ってください");
+            return;
+        }
+        _makingVideo = true;
+        VideoButton.IsEnabled = false;
+        _vm.VideoStatus = "作成中… " + directory;
+        var progress = new Progress<int>(p => _vm.VideoStatus = $"作成中… {p}%");
+        try
+        {
+            var result = await Task.Run(() => SessionVideo.Build(directory, new SessionVideo.Options(), progress));
+            var files = string.Join(", ", result.Files.Select(Path.GetFileName));
+            _vm.VideoStatus = $"作成完了: {files}（{result.DurationSeconds:F1} 秒、{result.FramesUsed} コマ使用、{result.FramesRepeated} コマ保持、{result.FramesSkipped} コマ省略）";
+            _vm.AddLog($"動画作成: {result.Files[0]}" + (result.Files.Count > 1 ? $" ほか {result.Files.Count - 1} 本" : "") +
+                       $"（{result.Width}x{result.Height}、{result.DurationSeconds:F1} 秒、使用 {result.FramesUsed}、保持 {result.FramesRepeated}、省略 {result.FramesSkipped}、ファイル欠け {result.FramesMissingFile}）");
+        }
+        catch (Exception ex)
+        {
+            _vm.VideoStatus = "作成できません: " + ex.Message;
+            _vm.AddLog("動画を作成できません: " + ex.Message);
+        }
+        finally
+        {
+            _makingVideo = false;
+            VideoButton.IsEnabled = true;
+        }
     }
 }

@@ -6,6 +6,7 @@ case "$1" in
     purge)
         rm -rf /var/lib/rumicar
         rm -f /etc/systemd/system/multi-user.target.wants/rumicar-core.service
+        rm -f /etc/systemd/system/timers.target.wants/rumicar-ap.timer
         ;;
 esac
 if [ -d /run/systemd/system ]; then

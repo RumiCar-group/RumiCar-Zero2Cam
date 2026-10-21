@@ -99,12 +99,16 @@ public:
             manager_->stop();
             manager_.reset();
         }
+        std::lock_guard<std::mutex> lock(latest_m_);
+        latest_.reset();
     }
 
     std::shared_ptr<const Image> latest() const override {
         std::lock_guard<std::mutex> lock(latest_m_);
         return latest_;
     }
+
+    void set_jpeg_enabled(bool enabled) override { jpeg_enabled_.store(enabled); }
 
     uint64_t captured() const override { return captured_.load(); }
 
@@ -146,7 +150,7 @@ private:
         for (uint32_t y = 0; y < height_; ++y) {
             std::memcpy(img->rgb.data() + static_cast<size_t>(y) * img->stride, m.data + static_cast<size_t>(y) * stride_, img->stride);
         }
-        img->jpeg = encoder_.encode(img->rgb.data(), width_, height_, img->stride, cfg_.jpeg_quality);
+        if (jpeg_enabled_.load()) img->jpeg = encoder_.encode(img->rgb.data(), width_, height_, img->stride, cfg_.jpeg_quality);
         if (const auto ts = metadata.get(controls::SensorTimestamp)) img->sensor_t_us = static_cast<uint64_t>(*ts / 1000);
         img->sequence = static_cast<uint32_t>(captured_.fetch_add(1) + 1);
         std::lock_guard<std::mutex> lock(latest_m_);
@@ -165,6 +169,7 @@ private:
     uint32_t width_ = 0, height_ = 0, stride_ = 0;
     bool running_ = false;
     JpegEncoder encoder_;
+    std::atomic<bool> jpeg_enabled_{true};
     std::atomic<uint64_t> captured_{0};
     uint64_t encode_failures_ = 0;
     mutable std::mutex latest_m_;

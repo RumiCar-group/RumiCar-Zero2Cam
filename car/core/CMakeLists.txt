@@ -23,6 +23,7 @@ add_library(rumicar_core_lib STATIC
   src/car_state.cpp
   src/request_handler.cpp
   src/wifi.cpp
+  src/power.cpp
   src/upload.cpp
   src/util/process.cpp
   src/net/socket.cpp
@@ -45,9 +46,9 @@ target_include_directories(rumicar_hw PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rumicar_hw PUBLIC PkgConfig::GPIOD)
 
 # Camera layer: JPEG encoding (always) and the image source compiled in.
-add_library(rumicar_camera STATIC src/camera/jpeg.cpp)
+add_library(rumicar_camera STATIC src/camera/jpeg.cpp src/camera/camera_control.cpp)
 target_include_directories(rumicar_camera PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(rumicar_camera PUBLIC PkgConfig::TURBOJPEG)
+target_link_libraries(rumicar_camera PUBLIC PkgConfig::TURBOJPEG Threads::Threads)
 if(RUMICAR_WITH_CAMERA)
   target_sources(rumicar_camera PRIVATE src/camera/libcamera_source.cpp)
   target_link_libraries(rumicar_camera PUBLIC PkgConfig::LIBCAMERA)
@@ -60,9 +61,13 @@ target_compile_definitions(rumicar-core PRIVATE RUMICAR_CORE_VERSION="${RUMICAR_
 target_link_libraries(rumicar-core PRIVATE rumicar_core_lib rumicar_hw rumicar_camera Threads::Threads)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-core.service.in ${CMAKE_CURRENT_BINARY_DIR}/rumicar-core.service @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-ap.service.in ${CMAKE_CURRENT_BINARY_DIR}/rumicar-ap.service @ONLY)
 install(TARGETS rumicar-core RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-activate DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/rumicar-core.service DESTINATION lib/systemd/system)
+install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-ap-ensure DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/rumicar-ap.service ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-ap.timer
+        DESTINATION lib/systemd/system)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/core.json DESTINATION /etc/rumicar)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../deploy/RumiCar-AP.nmconnection DESTINATION /etc/NetworkManager/system-connections
         PERMISSIONS OWNER_READ OWNER_WRITE)

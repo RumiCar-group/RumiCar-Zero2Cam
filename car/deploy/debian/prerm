@@ -5,8 +5,10 @@ case "$1" in
     remove|deconfigure)
         if [ -d /run/systemd/system ]; then
             systemctl disable --now rumicar-core.service || true
+            systemctl disable --now rumicar-ap.timer || true
         else
             systemctl disable rumicar-core.service 2>/dev/null || true
+            systemctl disable rumicar-ap.timer 2>/dev/null || true
         fi
         ;;
 esac

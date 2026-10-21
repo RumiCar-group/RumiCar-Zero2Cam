@@ -35,6 +35,36 @@ uint32_t need_uint(const json& j, const char* key) {
     return v.get<uint32_t>();
 }
 
+// Optional string: absent -> empty; present -> must be a string within the limit.
+std::string optional_text(const json& j, const char* key, size_t max_bytes) {
+    const auto it = j.find(key);
+    if (it == j.end() || it->is_null()) return {};
+    if (!it->is_string()) throw std::runtime_error(std::string("manifest: '") + key + "' must be a string");
+    const auto v = it->get<std::string>();
+    if (v.size() > max_bytes)
+        throw std::runtime_error(std::string("manifest: '") + key + "' is longer than " + std::to_string(max_bytes) + " bytes");
+    return v;
+}
+
+// Optional list of non-empty strings: absent -> empty.
+std::vector<std::string> optional_list(const json& j, const char* key) {
+    std::vector<std::string> out;
+    const auto it = j.find(key);
+    if (it == j.end() || it->is_null()) return out;
+    if (!it->is_array()) throw std::runtime_error(std::string("manifest: '") + key + "' must be an array of strings");
+    if (it->size() > kManifestMaxListEntries)
+        throw std::runtime_error(std::string("manifest: '") + key + "' has more than " + std::to_string(kManifestMaxListEntries) + " entries");
+    for (const json& e : *it) {
+        if (!e.is_string() || e.get<std::string>().empty())
+            throw std::runtime_error(std::string("manifest: '") + key + "' entries must be non-empty strings");
+        const auto v = e.get<std::string>();
+        if (v.size() > kManifestMaxListEntry)
+            throw std::runtime_error(std::string("manifest: '") + key + "' entry is longer than " + std::to_string(kManifestMaxListEntry) + " bytes");
+        out.push_back(v);
+    }
+    return out;
+}
+
 bool is_hex64(const std::string& s) {
     if (s.size() != 64) return false;
     for (char c : s) {
@@ -89,6 +119,10 @@ Manifest parse_manifest(const std::string& json_text) {
         throw std::runtime_error("manifest: unknown kind '" + kind + "'");
     }
     if (auto it = j.find("created"); it != j.end() && it->is_string()) m.created = it->get<std::string>();
+    m.description = optional_text(j, "description", kManifestMaxDescription);
+    m.parent = optional_text(j, "parent", kManifestMaxListEntry);
+    m.capabilities = optional_list(j, "capabilities");
+    m.scenarios = optional_list(j, "scenarios");
 
     const json& files = need(j, "files");
     if (!files.is_array() || files.empty()) throw std::runtime_error("manifest: 'files' must be a non-empty array");
@@ -155,6 +189,10 @@ std::string manifest_to_json(const Manifest& m) {
         j["entry"] = m.entry;
     }
     if (!m.created.empty()) j["created"] = m.created;
+    if (!m.description.empty()) j["description"] = m.description;
+    if (!m.capabilities.empty()) j["capabilities"] = m.capabilities;
+    if (!m.scenarios.empty()) j["scenarios"] = m.scenarios;
+    if (!m.parent.empty()) j["parent"] = m.parent;
     j["files"] = json::array();
     for (const auto& f : m.files) j["files"].push_back({{"path", f.path}, {"sha256", f.sha256}, {"bytes", f.bytes}});
     return j.dump(2) + "\n";

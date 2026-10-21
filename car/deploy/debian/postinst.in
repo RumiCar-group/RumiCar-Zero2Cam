@@ -40,6 +40,7 @@ case "$1" in
             modprobe i2c-dev 2>/dev/null || true
             systemctl daemon-reload || true
             systemctl enable rumicar-core.service || true
+            systemctl enable --now rumicar-ap.timer || true
             # A running core is restarted so the new binary takes over (it brakes on stop).
             if systemctl is-active --quiet rumicar-core.service; then
                 systemctl restart rumicar-core.service || true
@@ -50,8 +51,9 @@ case "$1" in
                 nmcli connection reload || true
             fi
         else
-            # Inside an image build (chroot): enable only; the first boot starts it.
+            # Inside an image build (chroot): enable only; the first boot starts them.
             systemctl enable rumicar-core.service 2>/dev/null || true
+            systemctl enable rumicar-ap.timer 2>/dev/null || true
         fi
         ;;
 esac

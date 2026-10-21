@@ -38,8 +38,13 @@ public:
     virtual void start() = 0;
     virtual void stop() = 0;
 
-    // Newest captured image, or nullptr before the first one.  Never blocks.
+    // Newest captured image, or nullptr before the first one (and after
+    // stop()).  Never blocks.
     virtual std::shared_ptr<const Image> latest() const = 0;
+
+    // Whether captured images are also JPEG-encoded (needed only while a PC
+    // receives telemetry).  Takes effect from the next captured image.
+    virtual void set_jpeg_enabled(bool enabled) = 0;
 
     virtual uint64_t captured() const = 0;
     virtual std::string description() const = 0;

@@ -20,7 +20,8 @@ bool parse_drive_mode(const std::string& s, DriveMode& out) {
     return false;
 }
 
-CarState::CarState(int heartbeat_timeout_ms) : heartbeat_timeout_(heartbeat_timeout_ms) {}
+CarState::CarState(int heartbeat_timeout_ms, DriveMode initial_mode)
+    : heartbeat_timeout_(heartbeat_timeout_ms), mode_(initial_mode), startup_mode_(initial_mode) {}
 
 void CarState::set_event_sink(EventSink sink) {
     std::lock_guard<std::mutex> lock(m_);
@@ -122,18 +123,37 @@ RunningStatus CarState::running() const {
     return running_;
 }
 
+bool CarState::update_throttled(uint32_t flags) {
+    std::lock_guard<std::mutex> lock(m_);
+    if (throttled_ == flags) return false;
+    throttled_ = flags;
+    return true;
+}
+
+uint32_t CarState::throttled() const {
+    std::lock_guard<std::mutex> lock(m_);
+    return throttled_;
+}
+
 json CarState::status_json() const {
     std::lock_guard<std::mutex> lock(m_);
     return json{
         {"mode", drive_mode_name(mode_)},
+        {"startup_mode", drive_mode_name(startup_mode_)},
         {"estop", estop_},
         {"estop_reason", estop_reason_},
         {"logic_name", running_.logic_name},
         {"logic_version", running_.logic_version},
+        {"logic_description", running_.logic_description},
         {"pack_id", running_.pack_id},
         {"pack_version", running_.pack_version},
+        {"pack_description", running_.pack_description},
+        {"pack_capabilities", running_.pack_capabilities},
+        {"pack_scenarios", running_.pack_scenarios},
+        {"pack_parent", running_.pack_parent},
         {"state_name", running_.state_name},
         {"battery_mv", 0},
+        {"throttled", throttled_},
     };
 }
 

@@ -46,6 +46,46 @@ void test_committed_base_pack_is_consistent(const fs::path& pack_dir) {
     CHECK(m.logic_name == "tof_drive");
     CHECK(m.logic_min_abi == RUMI_LOGIC_ABI_VERSION);
     CHECK(m.files.size() == 1 && m.files[0].path == "params.json");
+    // The shipped pack says what it is (shown by the PC, docs 4.1).
+    CHECK(!m.description.empty());
+    CHECK(m.capabilities.size() == 1 && m.capabilities[0] == "walls");
+    CHECK(m.scenarios.empty() && m.parent.empty());
+}
+
+void test_manifest_metadata() {
+    // Optional metadata round-trips and is validated.
+    Manifest m;
+    m.kind = Manifest::Kind::Pack;
+    m.id = "cam-signal";
+    m.version = "0.2.0";
+    m.logic_name = "cam_drive";
+    m.logic_min_abi = 1;
+    m.description = "信号機ありケース1：壁のみ 0.1.1 に赤・青の信号の検出を追加";
+    m.capabilities = {"walls", "traffic_light"};
+    m.scenarios = {"壁のみの走行データ", "信号機ありケース1"};
+    m.parent = "base-tof-0.1.1";
+    m.files.push_back({"vision.bin", std::string(64, 'a'), 10});
+    const std::string text = manifest_to_json(m);
+    Manifest back = parse_manifest(text);
+    CHECK(back.description == m.description);
+    CHECK(back.capabilities == m.capabilities);
+    CHECK(back.scenarios == m.scenarios);
+    CHECK(back.parent == "base-tof-0.1.1");
+
+    // Absent metadata is simply empty (older manifests stay valid).
+    Manifest plain = parse_manifest("{\"schema\":1,\"kind\":\"pack\",\"id\":\"x\",\"version\":\"1\",\"logic\":{\"name\":\"l\",\"min_abi\":1},"
+                                    "\"files\":[{\"path\":\"p\",\"sha256\":\"" + std::string(64, 'b') + "\",\"bytes\":1}]}");
+    CHECK(plain.description.empty() && plain.capabilities.empty() && plain.scenarios.empty() && plain.parent.empty());
+
+    const std::string head = "{\"schema\":1,\"kind\":\"pack\",\"id\":\"x\",\"version\":\"1\",\"logic\":{\"name\":\"l\",\"min_abi\":1},"
+                             "\"files\":[{\"path\":\"p\",\"sha256\":\"" + std::string(64, 'b') + "\",\"bytes\":1}],";
+    CHECK_MSG(throws([&] { parse_manifest(head + "\"description\":\"" + std::string(kManifestMaxDescription + 1, 'd') + "\"}"); }),
+              "over-long description must be rejected");
+    CHECK_MSG(throws([&] { parse_manifest(head + "\"description\":5}"); }), "non-string description must be rejected");
+    CHECK_MSG(throws([&] { parse_manifest(head + "\"capabilities\":\"walls\"}"); }), "capabilities must be an array");
+    CHECK_MSG(throws([&] { parse_manifest(head + "\"capabilities\":[\"\"]}"); }), "empty capability must be rejected");
+    CHECK_MSG(throws([&] { parse_manifest(head + "\"scenarios\":[1]}"); }), "non-string scenario must be rejected");
+    CHECK(!throws([&] { parse_manifest(head + "\"description\":null,\"capabilities\":[]}"); }));
 }
 
 void test_manifest_rejections(const fs::path& tmp) {
@@ -154,6 +194,19 @@ void test_core_config() {
     CHECK(throws([] { parse_core_config("{\"i2c\": {\"tof_addresses\": [41, 45, 47]}}"); })); // 0x29 reserved
     CHECK(throws([] { parse_core_config("{\"loop_period_ms\": 5}"); }));
     CHECK(throws([] { parse_core_config("{\"watchdog_ms\": 60}"); })); // < 2x period
+
+    // Start-up mode, camera on demand, access-point start and power keys (docs 3.9).
+    CHECK(c.startup_mode == "record_only" && c.camera_on_demand && c.ap_start == "core" && c.wifi_txpower_dbm == 0);
+    CHECK(c.throttled_path == "/sys/devices/platform/soc/soc:firmware/get_throttled" && c.power_poll_ms == 1000);
+    c = parse_core_config("{\"startup_mode\": \"auto\", \"camera\": {\"on_demand\": false},"
+                          " \"network\": {\"ap_start\": \"boot\", \"wifi_txpower_dbm\": 12, \"wifi_device\": \"wlan1\"},"
+                          " \"power\": {\"throttled_path\": \"\", \"poll_ms\": 500}}");
+    CHECK(c.startup_mode == "auto" && !c.camera_on_demand && c.ap_start == "boot" && c.wifi_txpower_dbm == 12);
+    CHECK(c.wifi_device == "wlan1" && c.throttled_path.empty() && c.power_poll_ms == 500);
+    CHECK(throws([] { parse_core_config("{\"startup_mode\": \"manual\"}"); }));   // manual needs the PC
+    CHECK(throws([] { parse_core_config("{\"network\": {\"ap_start\": \"later\"}}"); }));
+    CHECK(throws([] { parse_core_config("{\"network\": {\"wifi_txpower_dbm\": 31}}"); }));
+    CHECK(throws([] { parse_core_config("{\"power\": {\"unknown\": 1}}"); }));
 }
 
 } // namespace
@@ -171,6 +224,7 @@ int main(int argc, char** argv) {
     test_sha256_known_vector();
     test_committed_base_pack_is_consistent(pack_dir);
     test_manifest_rejections(tmp);
+    test_manifest_metadata();
     test_logic_library_loads(tmp, so, pack_dir);
     test_core_config();
     return check::summary("test_pack");

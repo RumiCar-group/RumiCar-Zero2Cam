@@ -13,6 +13,10 @@ struct CoreConfig {
     // Identity reported in hello / telemetry
     std::string car_name = "RumiCar";
 
+    // Driving mode at start-up: "record_only" (motors braked until the PC
+    // selects auto) or "auto" (drives as soon as the logic is running).
+    std::string startup_mode = "record_only";
+
     // Control loop
     int loop_period_ms = 50;         // target frame period
     int watchdog_ms = 200;           // motors are braked if the loop stalls longer than this
@@ -42,7 +46,10 @@ struct CoreConfig {
     int tof_read_timeout_ms = 100;   // per sensor, per frame
 
     // Camera (docs 3.8).  enabled=false runs the car on the ToF sensors only.
+    // on_demand=true keeps the camera off while nothing needs images (no PC
+    // connected and not in auto mode) to save power; false runs it always.
     bool camera_enabled = true;
+    bool camera_on_demand = true;
     unsigned camera_width = 320;
     unsigned camera_height = 240;
     int camera_fps = 20;
@@ -56,6 +63,20 @@ struct CoreConfig {
     int telemetry_queue_frames = 16;  // per client; older frames are dropped beyond this
     std::string ap_connection = "RumiCar-AP";   // NetworkManager connection id of the access point ("" = no set_wifi)
     std::string nmcli_path = "/usr/bin/nmcli";
+    // Who activates the access point: "core" (this program, after the hardware
+    // is up and before the camera starts, so the power-hungry parts come up one
+    // at a time) or "boot" (NetworkManager's autoconnect; the core does nothing).
+    std::string ap_start = "core";
+    // Transmit power limit applied after the AP is up (`iw dev <wifi_device>
+    // set txpower fixed`); 0 = leave the driver default.
+    int wifi_txpower_dbm = 0;
+    std::string wifi_device = "wlan0";
+    std::string iw_path = "/usr/sbin/iw";
+
+    // Power (docs 3.9): under-voltage / throttling flags from the firmware.
+    // Empty path disables the monitor.
+    std::string throttled_path = "/sys/devices/platform/soc/soc:firmware/get_throttled";
+    int power_poll_ms = 1000;
 };
 
 // Parse core.json text.  Every key is optional (defaults above) but unknown

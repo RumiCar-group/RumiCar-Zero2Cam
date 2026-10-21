@@ -17,8 +17,65 @@ public sealed class VersionRow
     public string Error { get; init; } = "";
     public bool IsCurrent { get; init; }
     public bool IsPrevious { get; init; }
+    public string Description { get; init; } = "";
+    public IReadOnlyList<string> Capabilities { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> Scenarios { get; init; } = Array.Empty<string>();
+    public string Parent { get; init; } = "";
     public string Display =>
-        $"{(Kind == "logic" ? "ロジック" : "データ")}  {Name}  {(IsCurrent ? "[使用中]" : IsPrevious ? "[直前]" : "")}{(Verified ? "" : "  !検証失敗: " + Error)}";
+        $"{(Kind == "logic" ? "ロジック" : "データ")}  {Name}  {(IsCurrent ? "[使用中]" : IsPrevious ? "[直前]" : "")}"
+        + (Verified ? "" : "  !検証失敗: " + Error)
+        + (Capabilities.Count > 0 ? "  [" + Capability.Describe(Capabilities) + "]" : "")
+        + (Description.Length > 0 ? "  " + Description : "");
+    /// <summary>Everything known about the version, for the detail line under the list.</summary>
+    public string Details
+    {
+        get
+        {
+            var parts = new List<string> { $"{(Kind == "logic" ? "ロジック" : "データ")} {Name}" };
+            if (Description.Length > 0) parts.Add(Description);
+            if (Capabilities.Count > 0) parts.Add("対応: " + Capability.Describe(Capabilities));
+            if (Scenarios.Count > 0) parts.Add("学習元: " + string.Join(", ", Scenarios));
+            if (Parent.Length > 0) parts.Add("元の版: " + Parent);
+            if (!Verified) parts.Add("検証失敗: " + Error);
+            return string.Join("\n", parts);
+        }
+    }
+}
+
+/// <summary>Capability names carried in pack manifests (docs 4.1), shown in Japanese.</summary>
+public static class Capability
+{
+    public static string Describe(IEnumerable<string> names) => string.Join(" / ", names.Select(Describe));
+
+    public static string Describe(string name) => name switch
+    {
+        "walls" => "壁",
+        "traffic_light" => "信号機",
+        "vehicle" => "車両",
+        "intersection" => "交差点",
+        _ => name,
+    };
+}
+
+/// <summary>Firmware throttling flags (telemetry "throttled"), shown in Japanese (docs 3.9).</summary>
+public static class PowerFlags
+{
+    public const uint UnderVoltageNow = 0x1;
+    public const uint UnderVoltageSinceBoot = 0x10000;
+    public const uint ThrottledNow = 0x4;
+    public const uint SoftTemperatureLimit = 0x8;
+
+    public static string Describe(uint flags)
+    {
+        if (flags == 0) return "正常（低電圧なし）";
+        var parts = new List<string>();
+        if ((flags & UnderVoltageNow) != 0) parts.Add("低電圧（現在）");
+        else if ((flags & UnderVoltageSinceBoot) != 0) parts.Add("低電圧あり（起動後）");
+        if ((flags & ThrottledNow) != 0) parts.Add("処理速度制限中");
+        if ((flags & SoftTemperatureLimit) != 0) parts.Add("温度制限中");
+        if (parts.Count == 0) parts.Add($"フラグ 0x{flags:X}");
+        return string.Join("、", parts);
+    }
 }
 
 /// <summary>State shown by the main window.  Updated on the UI thread only.</summary>
@@ -39,6 +96,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _logicCommand = "-";
     private string _estop = "-";
     private string _versions = "-";
+    private string _packInfo = "-";
+    private string _packCapabilities = "-";
+    private string _packScenarios = "-";
+    private string _power = "-";
+    private string _startupMode = "-";
+    private string _scenario = "";
+    private string _note = "";
+    private string _videoStatus = "-";
     private string _battery = "-";
     private string _frames = "0";
     private string _images = "0";
@@ -63,6 +128,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string LogicCommand { get => _logicCommand; set => Set(ref _logicCommand, value); }
     public string EStop { get => _estop; set => Set(ref _estop, value); }
     public string Versions { get => _versions; set => Set(ref _versions, value); }
+    /// <summary>Active pack: id, version and its description from the manifest.</summary>
+    public string PackInfo { get => _packInfo; set => Set(ref _packInfo, value); }
+    public string PackCapabilities { get => _packCapabilities; set => Set(ref _packCapabilities, value); }
+    public string PackScenarios { get => _packScenarios; set => Set(ref _packScenarios, value); }
+    /// <summary>Under-voltage / throttling state reported by the car's firmware.</summary>
+    public string Power { get => _power; set => Set(ref _power, value); }
+    public string StartupMode { get => _startupMode; set => Set(ref _startupMode, value); }
+    /// <summary>Scenario name written into the next recording's session.json.</summary>
+    public string Scenario { get => _scenario; set => Set(ref _scenario, value); }
+    public string Note { get => _note; set => Set(ref _note, value); }
+    public string VideoStatus { get => _videoStatus; set => Set(ref _videoStatus, value); }
+    public ObservableCollection<string> ScenarioHistory { get; } = new();
     public string Battery { get => _battery; set => Set(ref _battery, value); }
     public string Frames { get => _frames; set => Set(ref _frames, value); }
     /// <summary>Frames that carried a camera image.</summary>

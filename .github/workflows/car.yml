@@ -113,7 +113,13 @@ jobs:
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/logic/tof_drive-*
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/base-tof-*
           test "$(stat -c %a /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection)" = "600"
-          test -x /usr/bin/rumicar-core && test -x /usr/bin/rumicar-activate
+          test -x /usr/bin/rumicar-core && test -x /usr/bin/rumicar-activate && test -x /usr/bin/rumicar-ap-ensure
+          test -f /usr/lib/systemd/system/rumicar-ap.timer
+          grep -q "^ExecStart=/usr/bin/rumicar-ap-ensure" /usr/lib/systemd/system/rumicar-ap.service
+          grep -q "^autoconnect=false" /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection
+          grep -q "^dtoverlay=disable-bt" /usr/share/rumicar/config.txt.d/rumicar.txt
+          grep -q '"startup_mode": "record_only"' /etc/rumicar/core.json
+          python3 car/tools/make_manifest.py show /var/lib/rumicar/packs/base-tof-* | grep -q "capabilities: walls"
           grep -qx "i2c-dev" /usr/lib/modules-load.d/rumicar.conf
           ldd /usr/bin/rumicar-core | grep -E "libcamera|libgpiod|libturbojpeg|libcrypto"
           rumicar-activate show

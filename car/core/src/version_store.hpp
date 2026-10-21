@@ -33,6 +33,11 @@ struct InstalledVersion {
     std::string version;    // empty when unreadable
     bool verified = false;  // manifest present and every file matches
     std::string error;      // why verification failed
+    // Optional manifest metadata (empty when absent or unreadable).
+    std::string description;
+    std::vector<std::string> capabilities;
+    std::vector<std::string> scenarios;
+    std::string parent;
 };
 
 class VersionStore {

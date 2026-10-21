@@ -131,6 +131,9 @@ log "config.txt: appending the RumiCar settings"
 if ! grep -q "RumiCar Zero2Cam" "$BOOTFS/config.txt"; then
     { echo; cat "$MNT/usr/share/rumicar/config.txt.d/rumicar.txt"; } >> "$BOOTFS/config.txt"
 fi
+# Bluetooth is disabled in config.txt (dtoverlay=disable-bt); its UART helper
+# service would otherwise fail at every boot.
+in_chroot systemctl disable hciuart 2>/dev/null || true
 
 log "wireless country $COUNTRY (regulatory domain, needed for the access point)"
 # The same edits raspi-config's do_wifi_country makes, done directly so that

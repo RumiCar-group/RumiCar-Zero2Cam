@@ -5,6 +5,9 @@
 #include "check.hpp"
 #include "util/process.hpp"
 #include "wifi.hpp"
+#include "power.hpp"
+#include <filesystem>
+#include <fstream>
 
 using namespace rumicar;
 
@@ -63,10 +66,65 @@ void test_wifi_validation() {
     CHECK(threw);
 }
 
+void test_wifi_activation_and_tx_power() {
+    // No profile: nothing to activate.
+    WifiAp none("/usr/bin/nmcli", "");
+    CHECK(!none.activate(1000));
+    CHECK(!none.is_active());
+    // nmcli that cannot run: reported as not active / not activated, no exception.
+    WifiAp broken("/nonexistent/nmcli", "RumiCar-AP");
+    CHECK(!broken.is_active());
+    CHECK(!broken.activate(1000));
+    // Argument checks happen before anything is executed.
+    CHECK(!set_wifi_tx_power("/nonexistent/iw", "wlan0", 0));
+    CHECK(!set_wifi_tx_power("/nonexistent/iw", "wlan0", 31));
+    CHECK(!set_wifi_tx_power("/nonexistent/iw", "wl an0", 10));
+    CHECK(!set_wifi_tx_power("/nonexistent/iw", "", 10));
+    // A missing iw is a logged failure, not an exception.
+    CHECK(!set_wifi_tx_power("/nonexistent/iw", "wlan0", 10));
+}
+
+void test_throttled_parsing() {
+    using namespace rumicar::power;
+    CHECK(parse_throttled("0\n") == 0u);
+    CHECK(parse_throttled("50000\n") == 0x50000u);
+    CHECK(parse_throttled("0x50005") == 0x50005u);
+    CHECK(parse_throttled("  1  ") == 1u);
+    CHECK(!parse_throttled(""));
+    CHECK(!parse_throttled("zz"));
+    CHECK(!parse_throttled("0x"));
+    CHECK(!parse_throttled("123456789"));   // more than 32 bits
+    CHECK(!parse_throttled("5 x"));
+    CHECK(describe_throttled(0) == "ok");
+    CHECK(describe_throttled(kUnderVoltageNow) == "under-voltage now");
+    CHECK(describe_throttled(kUnderVoltageNow | kUnderVoltageOccurred) == "under-voltage now, under-voltage since boot");
+    CHECK(describe_throttled(0x100000u) == "unknown bits");
+
+    ThrottledMonitor off("");
+    CHECK(!off.available() && !off.read());
+    ThrottledMonitor missing("/nonexistent/get_throttled");
+    CHECK(!missing.available() && missing.reason().find("cannot open") != std::string::npos);
+
+    const auto dir = std::filesystem::temp_directory_path() / "rumicar-test-util";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "get_throttled";
+    { std::ofstream out(file); out << "50000\n"; }
+    ThrottledMonitor mon(file.string());
+    CHECK(mon.available());
+    CHECK(mon.read() == 0x50000u);
+    { std::ofstream out(file); out << "1\n"; }
+    CHECK(mon.read() == 1u);
+    { std::ofstream out(file); out << "garbage\n"; }
+    ThrottledMonitor bad(file.string());
+    CHECK(!bad.available());
+}
+
 } // namespace
 
 int main() {
     test_run_process();
     test_wifi_validation();
+    test_wifi_activation_and_tx_power();
+    test_throttled_parsing();
     return check::summary("test_util");
 }

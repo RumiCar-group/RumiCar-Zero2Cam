@@ -180,6 +180,10 @@ std::vector<InstalledVersion> VersionStore::list(const std::string& kind) const 
             const bool kind_matches = (kind == "logic") == (m.kind == Manifest::Kind::Logic);
             v.id = m.id;
             v.version = m.version;
+            v.description = m.description;
+            v.capabilities = m.capabilities;
+            v.scenarios = m.scenarios;
+            v.parent = m.parent;
             if (!kind_matches) {
                 v.error = "manifest kind does not match the directory";
             } else if (m.dir_name() != v.dir_name) {

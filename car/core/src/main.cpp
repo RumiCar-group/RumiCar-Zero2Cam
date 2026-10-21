@@ -9,6 +9,12 @@
 // (auto / manual / record_only), emergency stop, braking on any stall
 // (watchdog) or error, telemetry, and clean shutdown.  The car drives without
 // any network: the servers are optional for the control loop.
+//
+// Start-up order (docs 3.9): the power-hungry parts are brought up one after
+// another, each only once the previous one is settled, and the motors stay
+// braked in record_only until the PC asks for auto (startup_mode):
+//   motors braked -> ToF sensors -> logic/pack -> Wi-Fi access point
+//   -> servers -> control loop; the camera only when images are needed.
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -23,6 +29,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "camera/camera_control.hpp"
 #include "camera/image_source.hpp"
 #include "car_state.hpp"
 #include "config.hpp"
@@ -35,6 +42,7 @@
 #include "net/control_server.hpp"
 #include "net/telemetry_frame.hpp"
 #include "net/telemetry_server.hpp"
+#include "power.hpp"
 #include "request_handler.hpp"
 #include "rumicar/logic_api.h"
 #include "version_store.hpp"
@@ -73,10 +81,17 @@ Active load_active(const rumicar::VersionStore& store, const rumicar::ActiveSele
 
 void publish_running(rumicar::CarState& state, const Active& active, uint8_t logic_state, uint32_t flags) {
     rumicar::RunningStatus s;
-    s.logic_name = active.lib->manifest().id;
-    s.logic_version = active.lib->manifest().version;
-    s.pack_id = active.instance->pack_manifest().id;
-    s.pack_version = active.instance->pack_manifest().version;
+    const rumicar::Manifest& lm = active.lib->manifest();
+    const rumicar::Manifest& pm = active.instance->pack_manifest();
+    s.logic_name = lm.id;
+    s.logic_version = lm.version;
+    s.logic_description = lm.description;
+    s.pack_id = pm.id;
+    s.pack_version = pm.version;
+    s.pack_description = pm.description;
+    s.pack_capabilities = pm.capabilities;
+    s.pack_scenarios = pm.scenarios;
+    s.pack_parent = pm.parent;
     s.state = logic_state;
     s.state_name = active.instance->state_name(logic_state);
     s.flags = flags;
@@ -168,7 +183,11 @@ int main(int argc, char** argv) {
 
     // --- logic + pack --------------------------------------------------------
     VersionStore store(cfg.state_dir);
-    CarState state(cfg.heartbeat_timeout_ms);
+    DriveMode startup_mode = DriveMode::RecordOnly;
+    parse_drive_mode(cfg.startup_mode, startup_mode);   // validated by the config parser
+    CarState state(cfg.heartbeat_timeout_ms, startup_mode);
+    log::info(std::string("start-up mode ") + drive_mode_name(startup_mode) +
+              (startup_mode == DriveMode::RecordOnly ? " (motors braked until the PC selects auto)" : " (drives as soon as the logic runs)"));
     Active active;
     try {
         std::string reason;
@@ -200,22 +219,47 @@ int main(int argc, char** argv) {
     }
     publish_running(state, active, 0, 0);
 
-    // --- camera (optional: the car drives on the ToF sensors without it) -------
-    std::unique_ptr<cam::ImageSource> camera;
-    if (cfg.camera_enabled) {
-        camera = cam::make_image_source(cam::CameraConfig{cfg.camera_width, cfg.camera_height, cfg.camera_fps, cfg.camera_jpeg_quality});
-        try {
-            camera->start();
-        } catch (const std::exception& e) {
-            log::error(std::string("camera not started, driving without images: ") + e.what());
-            camera.reset();
+    // --- Wi-Fi access point (docs 3.9): brought up here, after the sensors and
+    // with the motors braked, so its start-up current does not coincide with
+    // anything else.  Failure is logged; rumicar-ap.timer retries on its own.
+    WifiAp wifi(cfg.nmcli_path, cfg.ap_connection);
+    if (cfg.ap_start == "core") {
+        if (!wifi.available()) {
+            log::info("wifi: no access point profile configured (network.ap_connection is empty)");
+        } else {
+            log::info("wifi: activating the access point " + cfg.ap_connection);
+            const bool up = wifi.activate(20000);
+            if (up && cfg.wifi_txpower_dbm > 0) set_wifi_tx_power(cfg.iw_path, cfg.wifi_device, cfg.wifi_txpower_dbm);
         }
+    } else {
+        log::info("wifi: access point left to NetworkManager (network.ap_start = boot)");
+    }
+
+    // --- camera (optional: the car drives on the ToF sensors without it) -------
+    // The controller starts/stops the camera on a worker thread; with
+    // camera.on_demand the camera runs only while a PC is connected or the
+    // mode is auto, otherwise it runs all the time.
+    std::unique_ptr<cam::CameraController> camera;
+    if (cfg.camera_enabled) {
+        camera = std::make_unique<cam::CameraController>(
+            cam::make_image_source(cam::CameraConfig{cfg.camera_width, cfg.camera_height, cfg.camera_fps, cfg.camera_jpeg_quality}),
+            30s);
+        if (!cfg.camera_on_demand) camera->set_wanted(true);
+        log::info(std::string("camera ") + (cfg.camera_on_demand ? "on demand (PC connected or auto mode)" : "always on"));
     } else {
         log::info("camera disabled in the configuration");
     }
 
+    // --- power monitor (docs 3.9) ------------------------------------------------
+    power::ThrottledMonitor throttled(cfg.throttled_path);
+    if (throttled.available()) {
+        log::info("power: monitoring " + cfg.throttled_path + " every " + std::to_string(cfg.power_poll_ms) + " ms");
+    } else {
+        log::info("power: throttling monitor off: " + throttled.reason());
+    }
+    auto next_power_poll = Clock::now();
+
     // --- network (optional: the car drives without it) -------------------------
-    WifiAp wifi(cfg.nmcli_path, cfg.ap_connection);
     RequestHandler handler(state, store, wifi, cfg.car_name, RUMICAR_CORE_VERSION);
     net::TelemetryServer telemetry(cfg.bind_address, static_cast<uint16_t>(cfg.telemetry_port),
                                    static_cast<size_t>(cfg.telemetry_queue_frames));
@@ -291,6 +335,14 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Camera on demand: images are needed while a PC is connected (to see
+        // and record them) or in auto mode (for the logic).  JPEG encoding is
+        // needed only while a telemetry client is receiving frames.
+        const size_t telemetry_clients = network_up ? telemetry.client_count() : 0;
+        const bool pc_connected = telemetry_clients > 0 || state.client_is_connected();
+        if (camera && cfg.camera_on_demand) camera->set_wanted(pc_connected || state.mode() == DriveMode::Auto);
+        if (camera) camera->set_jpeg(telemetry_clients > 0);
+
         // Newest camera image, attached only once (the camera may be slower than the loop).
         std::shared_ptr<const cam::Image> image = camera ? camera->latest() : nullptr;
         if (image && image->sequence != last_image_seq) {
@@ -343,6 +395,22 @@ int main(int argc, char** argv) {
         }
         last_tick_ns.store(Clock::now().time_since_epoch().count());
 
+        // --- power ------------------------------------------------------------
+        if (throttled.available() && t0 >= next_power_poll) {
+            next_power_poll = t0 + std::chrono::milliseconds(cfg.power_poll_ms);
+            if (const auto v = throttled.read()) {
+                const uint32_t before = state.throttled();
+                if (state.update_throttled(*v)) {
+                    const bool uv_now = (*v & power::kUnderVoltageNow) != 0;
+                    const bool uv_before = (before & power::kUnderVoltageNow) != 0;
+                    if (uv_now && !uv_before) log::warn("power: under-voltage detected (" + power::describe_throttled(*v) + ")");
+                    else if (!uv_now && uv_before) log::info("power: under-voltage cleared (" + power::describe_throttled(*v) + ")");
+                    else log::info("power: " + power::describe_throttled(*v));
+                    state.emit_status();
+                }
+            }
+        }
+
         // --- status + telemetry -------------------------------------------------
         publish_running(state, active, rc == 0 ? cmd.state : last_state, rc == 0 ? cmd.flags : 0u);
         if (network_up) {
@@ -361,9 +429,12 @@ int main(int argc, char** argv) {
                     {"estop", in.estop},
                     {"logic_steer", rc == 0 ? cmd.steer : 0},
                     {"logic_drive_permille", rc == 0 ? cmd.drive_permille : 0},
+                    {"logic_name", active.lib->manifest().id},
                     {"logic_version", active.lib->manifest().version},
+                    {"pack_id", active.instance->pack_manifest().id},
                     {"pack_version", active.instance->pack_manifest().version},
                     {"battery_mv", 0},
+                    {"throttled", state.throttled()},
                     {"image_w", image ? image->width : 0u},
                     {"image_h", image ? image->height : 0u},
                     {"image_seq", image ? image->sequence : 0u},
@@ -428,7 +499,7 @@ int main(int argc, char** argv) {
     control.stop();
     telemetry.stop();
     if (camera) {
-        try { camera->stop(); } catch (const std::exception& e) { log::error(std::string("camera stop: ") + e.what()); }
+        camera->shutdown();
         camera.reset();
     }
     state.set_event_sink(nullptr);

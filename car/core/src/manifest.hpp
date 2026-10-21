@@ -24,6 +24,11 @@ struct Manifest {
     std::string id;        // pack: "id"; logic: "name"
     std::string version;
     std::string created;   // ISO-8601, informational
+    // Optional metadata (docs 4.1), shown by the PC and recorded with sessions.
+    std::string description;                 // what this version is, in one or two sentences
+    std::vector<std::string> capabilities;   // pack: what it handles (walls, traffic_light, vehicle, intersection, ...)
+    std::vector<std::string> scenarios;      // pack: recorded scenarios it was built from
+    std::string parent;                      // pack: directory name of the version it was derived from
     // pack only
     std::string logic_name;
     uint32_t    logic_min_abi = 0;
@@ -46,6 +51,11 @@ Manifest parse_manifest(const std::string& json_text);
 // Load <dir>/manifest.json and verify every listed file (existence, size, digest).
 // Throws std::runtime_error naming the first problem found.
 Manifest load_and_verify_manifest(const std::string& dir);
+
+// Limits on the optional metadata (kept small: they travel in status replies).
+constexpr size_t kManifestMaxDescription = 500;   // bytes
+constexpr size_t kManifestMaxListEntries = 32;
+constexpr size_t kManifestMaxListEntry = 64;      // bytes per entry
 
 // Serialise a manifest (used by tooling and tests).
 std::string manifest_to_json(const Manifest& m);

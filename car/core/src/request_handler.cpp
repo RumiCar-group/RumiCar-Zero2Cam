@@ -38,7 +38,9 @@ std::string require_kind(const json& params) {
 json versions_json(const std::vector<InstalledVersion>& list) {
     json arr = json::array();
     for (const auto& v : list) {
-        arr.push_back({{"name", v.dir_name}, {"id", v.id}, {"version", v.version}, {"verified", v.verified}, {"error", v.error}});
+        arr.push_back({{"name", v.dir_name}, {"id", v.id}, {"version", v.version}, {"verified", v.verified}, {"error", v.error},
+                       {"description", v.description}, {"capabilities", v.capabilities}, {"scenarios", v.scenarios},
+                       {"parent", v.parent}});
     }
     return arr;
 }

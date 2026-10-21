@@ -45,4 +45,54 @@ void WifiAp::set(const std::string& ssid, int channel) {
     }).detach();
 }
 
+bool WifiAp::activate(int timeout_ms) const {
+    if (!available()) return false;
+    if (is_active()) {
+        log::info("wifi: access point " + connection_ + " is already active");
+        return true;
+    }
+    const auto r = util::run_process({nmcli_, "connection", "up", connection_}, timeout_ms);
+    if (r.timed_out) {
+        log::error("wifi: nmcli connection up " + connection_ + " did not finish within " + std::to_string(timeout_ms) + " ms");
+        return false;
+    }
+    if (r.exit_code != 0) {
+        log::error("wifi: nmcli connection up " + connection_ + " failed: " + r.output);
+        return false;
+    }
+    log::info("wifi: access point " + connection_ + " active");
+    return true;
+}
+
+bool WifiAp::is_active() const {
+    if (!available()) return false;
+    const auto r = util::run_process({nmcli_, "-g", "GENERAL.STATE", "connection", "show", connection_}, 5000);
+    if (r.timed_out || r.exit_code != 0) return false;
+    return r.output.find("activated") != std::string::npos;
+}
+
+bool set_wifi_tx_power(const std::string& iw_path, const std::string& device, int dbm) {
+    if (dbm < 1 || dbm > 30) {
+        log::error("wifi: tx power " + std::to_string(dbm) + " dBm is out of range (1..30)");
+        return false;
+    }
+    if (device.empty() || device.find('/') != std::string::npos || device.find(' ') != std::string::npos) {
+        log::error("wifi: invalid device name for tx power");
+        return false;
+    }
+    util::ProcessResult r;
+    try {
+        r = util::run_process({iw_path, "dev", device, "set", "txpower", "fixed", std::to_string(dbm * 100)}, 5000);
+    } catch (const std::exception& e) {
+        log::error(std::string("wifi: cannot run iw: ") + e.what());
+        return false;
+    }
+    if (r.timed_out || r.exit_code != 0) {
+        log::error("wifi: iw set txpower failed: " + (r.timed_out ? std::string("timeout") : r.output));
+        return false;
+    }
+    log::info("wifi: tx power limited to " + std::to_string(dbm) + " dBm on " + device);
+    return true;
+}
+
 } // namespace rumicar

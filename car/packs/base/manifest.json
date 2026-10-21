@@ -2,12 +2,16 @@
   "schema": 1,
   "kind": "pack",
   "id": "base-tof",
-  "version": "0.1.0",
-  "created": "2026-10-18T10:56:06Z",
+  "version": "0.1.1",
+  "created": "2026-10-21T10:33:22Z",
   "logic": {
     "name": "tof_drive",
     "min_abi": 1
   },
+  "description": "壁のみ：ToF センサーで壁と障害物を避けて走る基準データ。信号機・車両・交差点の判断は入っていない",
+  "capabilities": [
+    "walls"
+  ],
   "files": [
     {
       "path": "params.json",

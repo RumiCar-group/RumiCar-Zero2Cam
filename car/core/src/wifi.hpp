@@ -25,9 +25,23 @@ public:
 
     static bool valid_ssid(const std::string& ssid);
 
+    // Activates the access point profile (nmcli connection up) and waits for
+    // it, at most timeout_ms.  Used at start-up when network.ap_start is
+    // "core" (docs 3.9).  Returns false (and logs why) when it did not come up;
+    // the rumicar-ap.timer unit keeps retrying independently of the core.
+    bool activate(int timeout_ms) const;
+
+    // True when NetworkManager reports the profile as activated.
+    bool is_active() const;
+
 private:
     std::string nmcli_;
     std::string connection_;
 };
+
+// Limits the transmit power of a wireless device (`iw dev <device> set
+// txpower fixed <mBm>`), docs 3.9.  dbm 1..30.  Returns false and logs on
+// failure (missing iw, driver refusal); the car keeps running either way.
+bool set_wifi_tx_power(const std::string& iw_path, const std::string& device, int dbm);
 
 } // namespace rumicar
