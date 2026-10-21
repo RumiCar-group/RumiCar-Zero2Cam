@@ -98,9 +98,7 @@ jobs:
           python3 car/tools/make_manifest.py verify car/packs/cam-base
 
       - name: Golden data of the vision layer is reproducible from the Python implementation
-        run: |
-          python3 car/tests/data/vision/make_golden.py
-          git diff --exit-code --stat car/tests/data/vision
+        run: python3 car/tests/data/vision/make_golden.py --check
 
       - name: Learning tools end to end (train_pack.py -> pack -> rumicar-replay with libcam_drive.so)
         run: python3 car/tests/tools_smoke.py build

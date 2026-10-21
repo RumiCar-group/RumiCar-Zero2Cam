@@ -4,7 +4,8 @@ implementation (car/tools/rumicar_vision.py), so the C++ and Python feature
 pipelines are checked against each other:
 
   frame.ppm        a synthetic 320×240 frame (deterministic: gradients, coloured
-                   discs, stripes, noise with a fixed seed)
+                   discs, stripes, hashed integer noise — no random generator,
+                   so every platform and numpy version makes the same bytes)
   features.json    the configuration, the expected features of the frame, a few
                    pixel-level expectations (hue, class), and the expected
                    detector outputs for pack.bin
@@ -12,6 +13,9 @@ pipelines are checked against each other:
                    block made from frame.ppm
 
 Run from the repository root:  python3 car/tests/data/vision/make_golden.py
+With --check it regenerates in memory and compares with the committed files
+(integers exactly, scores within 1e-5, since exp() may differ by an ulp between
+platforms); CI runs that.
 """
 import json
 import os
@@ -27,7 +31,6 @@ W, H = 320, 240
 
 
 def synthetic_frame() -> np.ndarray:
-    rng = np.random.default_rng(20261021)
     y, x = np.mgrid[0:H, 0:W]
     img = np.zeros((H, W, 3), dtype=np.float64)
     img[:, :, 0] = 40 + 120 * x / W            # red ramps left -> right
@@ -47,7 +50,12 @@ def synthetic_frame() -> np.ndarray:
     img[0:30, 120:200] = (12, 12, 12)         # dark band
     img[110:118, :] = (200, 200, 200)         # horizontal stripe (vertical gradient)
     img[:, 300:304] = (20, 20, 20)            # vertical stripe (horizontal gradient)
-    img += rng.normal(0, 6, size=img.shape)   # sensor-like noise
+    # Sensor-like noise from an integer hash of the position and channel: -6..6, deterministic everywhere.
+    c = np.arange(3)[None, None, :]
+    hashed = (x[:, :, None] * 73856093) ^ (y[:, :, None] * 19349663) ^ (c * 83492791)
+    hashed = (hashed.astype(np.int64) * 2654435761) & 0xFFFFFFFF
+    noise = ((hashed >> 16) % 13) - 6
+    img += noise
     return np.clip(np.rint(img), 0, 255).astype(np.uint8)
 
 
@@ -57,9 +65,9 @@ def write_ppm(path: str, rgb: np.ndarray) -> None:
         f.write(np.ascontiguousarray(rgb).tobytes())
 
 
-def main() -> int:
+def generate():
+    """Returns (rgb, features.json document, pack bytes)."""
     rgb = synthetic_frame()
-    write_ppm(os.path.join(HERE, "frame.ppm"), rgb)
     cfg = rv.FeatureConfig()
     assert cfg.validate(W, H) == ""
     small = rv.downscale(rgb, cfg.downscale)
@@ -97,14 +105,12 @@ def main() -> int:
     green.weights[4 * rv.FEATURES_PER_CELL + rv.CLASS_NAMES.index("green")] = 2.5
     green.weights[1 * rv.FEATURES_PER_CELL + rv.CLASS_NAMES.index("green")] = 0.5   # cell above
     bright = rv.Detector("bright_scene", rv.KIND_GLOBAL, np.zeros(cfg.dims, dtype=np.float32), 0.2, 0.5, 0.3, 1, 1, 1, 0, 255)
-    rng = np.random.default_rng(7)
-    bright.weights[:] = rng.normal(0, 0.05, size=cfg.dims).astype(np.float32)
+    k = np.arange(cfg.dims)
+    bright.weights[:] = (((k * 7919) % 101) - 50).astype(np.float32) / 1000.0   # deterministic "random" weights
     bright.weights[rv.CLASS_NAMES.index("bright")::rv.FEATURES_PER_CELL] += 0.3
     pack.detectors = [red, green, bright]
     pack.selftest = rv.make_selftest(pack, rgb)
     data = rv.encode_pack(pack)
-    with open(os.path.join(HERE, "pack.bin"), "wb") as f:
-        f.write(data)
     back = rv.decode_pack(data)
     assert rv.encode_pack(back) == data
 
@@ -123,11 +129,65 @@ def main() -> int:
         "pack_crc32": int.from_bytes(data[-4:], "little"),
         "pack_bytes": len(data),
     }
+    return rgb, doc, data
+
+
+def check() -> int:
+    """Compares a fresh generation with the committed files."""
+    rgb, doc, data = generate()
+    problems = []
+    with open(os.path.join(HERE, "frame.ppm"), "rb") as f:
+        committed_ppm = f.read()
+    fresh_ppm = b"P6\n%d %d\n255\n" % (W, H) + np.ascontiguousarray(rgb).tobytes()
+    if committed_ppm != fresh_ppm:
+        problems.append("frame.ppm differs")
+    with open(os.path.join(HERE, "features.json"), encoding="utf-8") as f:
+        committed = json.load(f)
+    for key in ("config", "image", "small", "dims", "features", "pixels"):
+        if committed.get(key) != doc[key]:
+            problems.append(f"features.json: {key} differs")
+    for key in ("mean", "std"):
+        if np.max(np.abs(np.array(committed[key]) - np.array(doc[key]))) > 1e-6:
+            problems.append(f"features.json: {key} differs")
+    for a, b in zip(committed["detectors"], doc["detectors"]):
+        for key in ("name", "kind", "cx", "cy", "cells", "present"):
+            if a[key] != b[key]:
+                problems.append(f"features.json: detector {a['name']} {key} differs ({a[key]} vs {b[key]})")
+        if abs(a["score"] - b["score"]) > 1e-5:
+            problems.append(f"features.json: detector {a['name']} score differs ({a['score']} vs {b['score']})")
+    with open(os.path.join(HERE, "pack.bin"), "rb") as f:
+        committed_pack = rv.decode_pack(f.read())
+    fresh_pack = rv.decode_pack(data)
+    if committed_pack.config != fresh_pack.config or (committed_pack.image_w, committed_pack.image_h) != (fresh_pack.image_w, fresh_pack.image_h):
+        problems.append("pack.bin: configuration differs")
+    if np.max(np.abs(committed_pack.mean - fresh_pack.mean)) > 1e-6 or np.max(np.abs(committed_pack.std - fresh_pack.std)) > 1e-6:
+        problems.append("pack.bin: standardisation differs")
+    for a, b in zip(committed_pack.detectors, fresh_pack.detectors):
+        if a.name != b.name or a.kind != b.kind or not np.array_equal(a.weights, b.weights) or a.bias != b.bias:
+            problems.append(f"pack.bin: detector {a.name} differs")
+    st_a, st_b = committed_pack.selftest, fresh_pack.selftest
+    if not (np.array_equal(st_a.image, st_b.image) and np.array_equal(st_a.features, st_b.features)):
+        problems.append("pack.bin: self-test image or features differ")
+    if np.max(np.abs(st_a.scores - st_b.scores)) > 1e-5:
+        problems.append("pack.bin: self-test scores differ")
+    for p in problems:
+        print("MISMATCH:", p)
+    print("golden data " + ("matches the Python implementation" if not problems else "does NOT match"))
+    return 0 if not problems else 1
+
+
+def main() -> int:
+    if "--check" in sys.argv[1:]:
+        return check()
+    rgb, doc, data = generate()
+    write_ppm(os.path.join(HERE, "frame.ppm"), rgb)
+    with open(os.path.join(HERE, "pack.bin"), "wb") as f:
+        f.write(data)
     with open(os.path.join(HERE, "features.json"), "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=1)
-    print(f"frame {W}x{H}, small {small.shape[1]}x{small.shape[0]}, {cfg.dims} features, pack {len(data)} bytes")
-    for d, o in zip(pack.detectors, outputs):
-        print(f"  {d.name}: score {o['score']:.4f} cell ({o['cx']},{o['cy']}) cells {o['cells']} present {o['present']}")
+    print(f"frame {W}x{H}, small {doc['small'][0]}x{doc['small'][1]}, {doc['dims']} features, pack {len(data)} bytes")
+    for d in doc["detectors"]:
+        print(f"  {d['name']}: score {d['score']:.4f} cell ({d['cx']},{d['cy']}) cells {d['cells']} present {d['present']}")
     return 0
 
 
