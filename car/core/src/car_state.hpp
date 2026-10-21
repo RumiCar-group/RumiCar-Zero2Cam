@@ -32,6 +32,7 @@ struct RunningStatus {
     std::vector<std::string> pack_capabilities;   // manifest "capabilities", e.g. walls, traffic_light
     std::vector<std::string> pack_scenarios;      // manifest "scenarios": recorded scenarios it was built from
     std::string pack_parent;                // manifest "parent": the pack it was derived from
+    std::vector<std::string> aux_names;     // names of the logic's aux output slots (ABI 2)
     std::string state_name;   // logic state of the last frame
     uint8_t     state = 0;
     uint32_t    flags = 0;    // logic command flags of the last frame

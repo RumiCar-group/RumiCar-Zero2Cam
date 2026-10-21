@@ -7,6 +7,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 
 - 使い方（SD カードの作成から走行・収録・データの更新まで）：この README の [使い方](#使い方) 以下
 - 仕様（設定、通信形式、配布形式、ビルド）：[docs/RumiCar-Zero2Cam 仕様書.docx](docs/RumiCar-Zero2Cam%20仕様書.docx)
+- 設計の記録（調べたこと、比べた案、決めた理由、画像ロジックの設計と実装の経緯。学習の参考に）：[docs/RumiCar-Zero2Cam 設計の記録.docx](docs/RumiCar-Zero2Cam%20設計の記録.docx)
 - 配布物：[Releases](https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases)
 
 ## 構成
@@ -15,7 +16,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 |---|---|
 | `car/` | 車載側。`rumicar-core`（制御ループ・ハードウェア・通信・差し替え機構）、走行ロジック `tof_drive`（共有ライブラリ）、同梱パック `base-tof`、単体テスト、Debian パッケージと SD イメージの作成 |
 | `pc/` | PC 側。`RumiCar.Protocol`（通信形式・manifest・収録）、`RumiCar.Protocol.Tests`、`RumiCar.DriveManager`（WPF の走行管理アプリ） |
-| `docs/` | 仕様書 |
+| `docs/` | 仕様書と設計の記録（どちらも .docx。教育目的で公開） |
 | `.github/workflows/` | 自動ビルド（`car.yml`: Debian 13 arm64/amd64 と SD イメージ、`pc.yml`: Windows、`release.yml`: タグで Release） |
 
 ---
@@ -31,7 +32,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 | Windows PC（64bit、Windows 10/11） | Wi-Fi 付き。走行管理アプリを動かす |
 | SD カードを書くソフト | [Raspberry Pi Imager](https://www.raspberrypi.com/software/) |
 
-車は **電源を入れただけでは走りません**。起動すると「収録のみ」（モーターはブレーキ）で待ち、走行管理アプリで **「自動」** を押すと走り出します（v0.1.3 から。それまでは電源投入で走り出していました）。PC なしで電源投入だけで走らせたいときは `/etc/rumicar/core.json` の `startup_mode` を `auto` にします（7 章）。初回起動や確認のときは、車輪が床に着かないよう台に載せてください。
+車は **電源を入れただけでは走りません**。起動すると「収録のみ」（モーターはブレーキ）で待ち、走行管理アプリで **「自動」** を押すと走り出します（v0.1.3 から。それまでは電源投入で走り出していました）。PC なしで電源投入だけで走らせたいときは `/etc/rumicar/core.json` の `startup_mode` を `auto` にします（8 章）。初回起動や確認のときは、車輪が床に着かないよう台に載せてください。
 
 ## 2. SD カードを作る
 
@@ -48,7 +49,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 
 1. 車を台に載せ、電源を入れます。
 2. 初回はパーティションの拡張のため 1 回自動で再起動します。2〜3 分待ちます。
-3. 起動すると `rumicar-core` が動き始め、センサーの初期化 → Wi-Fi のアクセスポイント → （PC がつながったら）カメラ の順に立ち上がります。乾電池での電圧低下を避けるため、電気を食う部分は同時には起動しません（9 章）。**この時点では走りません**（収録のみ）。走らせるには 4 章の手順で接続して「自動」を押します。
+3. 起動すると `rumicar-core` が動き始め、センサーの初期化 → Wi-Fi のアクセスポイント → （PC がつながったら）カメラ の順に立ち上がります。乾電池での電圧低下を避けるため、電気を食う部分は同時には起動しません（10 章）。**この時点では走りません**（収録のみ）。走らせるには 4 章の手順で接続して「自動」を押します。
 
 イメージに入っている初期設定：
 
@@ -134,7 +135,74 @@ base-tof-0.2.0/            フォルダ名は <id>-<version>
 
 走行管理アプリの「動画を作る…」で収録フォルダを選ぶと、`frames/` の画像から `video.avi` を作ります（Motion JPEG：受信した JPEG をそのまま並べるので画質は落ちません。20 コマ/秒、画像の時刻に沿った実時間。コマが届かなかった区間は直前のコマを最大 1 秒保持し、それより長い空白は詰めます）。VLC、Windows のメディア プレーヤー、ffmpeg で再生できます。Claude のデスクトップアプリから作るときは同じ処理の `python car/tools/session_video.py <収録フォルダ>` が使えます（Python 3 だけで動きます）。MP4 にしたいときは `ffmpeg -i video.avi -c:v libx264 -pix_fmt yuv420p video.mp4`。
 
-## 7. 車に直接入る（SSH）
+## 7. 画像で学習する（信号機で止まって、進む）
+
+### 7.1 しくみ
+
+車は ToF（距離センサー）の走行を土台にしたまま、カメラの画像を「小さな格子の特徴量」（320×240 を 5 倍に縮めて 8×6 のセルに分け、セルごとに色の割合・明るさ・輪郭の量を数えた 576 個の整数）に変え、**収録データから学習した検出器**（赤信号・青信号）を当てはめます。赤信号を何コマか続けて見つけると減速し、近づいたら止まり、青信号を見つける（または赤が消えてしばらく経つ）と走り出します。障害物の非常ブレーキや後退は ToF の判断がそのまま優先します。
+
+学習したものは「判断データ（パック）」です。中身は `params.json`（ToF と信号機の振る舞いの設定、人が読める）と `vision.bin`（検出器の重みなど。車が速く読める二進形式）と `manifest.json`（説明・対応機能・学習元）で、6 章と同じ手順で車に送って切り替えます。走行ロジック `cam_drive` は車に同梱されています（`tof_drive` と並んで入っています）。
+
+### 7.2 必要なもの
+
+- Python 3 と numpy、Pillow（`pip install numpy pillow`）。Claude のデスクトップアプリで作業する場合はその環境に、自分で動かす場合は PC に入れます
+- このリポジトリの `car/tools/`（`train_pack.py`、`rumicar_vision.py`、`make_manifest.py`、`session_video.py`）
+- 任意：`rumicar-replay`（GitHub Actions の成果物 `rumicar-replay-amd64`。収録を本物のロジックで再生して、送る前に止まる・進むを確かめられます）
+
+### 7.3 手順
+
+1. **収録する**：信号機を置いたコースを走らせ（走り出す前に赤・青を見せるなら「収録のみ」で手で押しても構いません）、シナリオ名を「信号機ありケース1」のように付けて収録します。信号機の無いコースの収録（「壁のみの走行データ」）は「信号機が写っていない例」として自動的に使われるので、そちらも用意します。学習用と確認用に、別々の収録を 2 回以上取ります。
+2. **ラベルを付ける**：`python car/tools/train_pack.py propose <収録フォルダ> --detector traffic_light_red` が、赤い塊の位置（コマ番号と矩形）を候補として `proposals_traffic_light_red.jsonl` に出します。Claude にそのフォルダを見せて、候補のコマ（`frames/` の画像）を確認させ、正しいものを `labels.jsonl` に書かせます。青信号も同様（`--detector traffic_light_green`）。形式は次のとおりです（1 行 1 つ、矩形は画素座標 [x0, y0, x1, y1]、x1/y1 は含まない）。
+
+```
+{"index": 123, "objects": [{"name": "traffic_light_red", "box": [160, 60, 200, 110]}]}
+{"index": 200, "negative": true}                       ← 何も写っていないと明示
+{"from": 300, "to": 380, "scene": ["intersection_left"]} ← 場面のラベル（将来の交差点用）
+```
+
+   ラベルの無いコマは学習に使いません。20 コマに 1 枚程度を見れば十分です（特徴が似ている間のコマは `propose` の候補で埋まります）。
+
+3. **学習する**：
+
+```
+python car/tools/train_pack.py train cam-signal-0.1.0 \
+    --parent <車から取った cam-base-0.1.0 のフォルダ、または前の版> \
+    --sessions <学習用の収録>... --validate <確認用の収録>... \
+    --negatives-from-scenario "壁のみの走行データ" \
+    --detector traffic_light_red --detector traffic_light_green \
+    --id cam-signal --version 0.1.0 --description "信号機ありケース1"
+```
+
+   `cam-base-0.1.0` はリポジトリの `car/packs/cam-base` にもあります。終わると `cam-signal-0.1.0/` に `params.json`・`vision.bin`・`training.json`（学習の記録）・`manifest.json` ができ、確認用の収録に対する検出の適合率・再現率が表示されます。再現率が低ければラベルを足し、誤検出が多ければ負例（壁のみ）を足します。
+
+4. **送る前に確かめる**：`python car/tools/train_pack.py show cam-signal-0.1.0`（中身）、`replay cam-signal-0.1.0 <収録>`（コマごとの検出）、`rumicar-replay <cam_drive のフォルダ> cam-signal-0.1.0 <収録>`（本物のロジックで再生。CRUISE → SIGNAL_APPROACH → SIGNAL_STOP → SIGNAL_RESUME と並べば止まって進んでいます）。
+5. **車に送る**：走行管理アプリの「版の管理」で `cam_drive-0.1.0`（同梱）を選んで「有効化」し、「送る…」で `cam-signal-0.1.0` を送って「有効化」します。状態欄の「判断データ」「対応機能」「学習元」に、送った版の説明・「壁 / 信号機」・学習に使った収録のシナリオが出ます。「判断を重ねる」をオンにすると、画像の上に検出した枠（赤信号 = 赤、青信号 = 緑、確定すると太枠）と確からしさが描かれます。
+6. **改良する**：収録を足して `--parent cam-signal-0.1.0 --version 0.2.0` で学習し直します。`--keep-parent-detectors` を付けると、学習し直さない検出器を前の版から引き継げます（manifest の `parent` に系譜が残ります）。
+
+### 7.4 信号機の振る舞いの設定（params.json の signal）
+
+| キー | 既定 | 意味 |
+|---|---|---|
+| `red_detector` / `green_detector` | `traffic_light_red` / `traffic_light_green` | 使う検出器の名前。青が無いコースなら `green_detector` を `""` にし、`resume_without_green_ms` で発進します |
+| `stop_min_cells` | 2 | 赤がこのセル数以上に大きく見えたら「近い」として停止（それまでは減速だけ） |
+| `approach_v` | 500 | 赤が見えてから止まるまでの速度の上限（千分率） |
+| `min_stop_ms` | 1000 | 最低これだけは止まる |
+| `resume_without_green_ms` | 3000 | 赤が見えなくなってからこの時間で発進（0 = 青が出るまで待つ） |
+| `resume_ignore_ms` | 1500 | 発進後、この時間は赤を無視する（通り過ぎる間に止まり直さない） |
+
+`train` の `--signal キー=値` で書き換えられます（例 `--signal stop_min_cells=3`）。
+
+### 7.5 うまくいかないとき
+
+| 症状 | 対応 |
+|---|---|
+| 赤以外のもので止まる | 「壁のみ」の収録や、その物が写った収録を負例として足す。`training.json` の精度を見る。`--thr-on` を上げる |
+| 止まる位置が遠い／近い | `stop_min_cells` を増やす／減らす。カメラの取り付け角度が収録時と同じか確認 |
+| 止まったまま動かない | 青信号の検出器が青を見つけているか（「検出」欄）。無ければ `resume_without_green_ms` を設定 |
+| 送った版が「検証失敗」になる | `make_manifest.py verify`。`vision.bin` の自己診断が合わないときはカメラの設定（320×240）が学習時と違う。学習ツールと車の版が合っているか（ABI 2） |
+| `rumicar-replay` と車で結果が違う | 収録は JPEG、車は生画像なので小さな差はあります。大きく違うときは照明が変わっている可能性があるので、その照明で収録を足す |
+
+## 8. 車に直接入る（SSH）
 
 ```sh
 ssh rumicar@10.42.0.1          # パスワード rumicar
@@ -146,13 +214,13 @@ sudo nano /etc/rumicar/core.json       # 設定（変更後は sudo systemctl re
 
 主な設定（`/etc/rumicar/core.json`、仕様書 3.3）：`car_name`（車の名前）、`startup_mode`（起動時のモード：`record_only` 既定／`auto` 電源投入で走り出す）、`max_drive_permille`（駆動の上限、1000 = 100%）、`camera.enabled`、`camera.on_demand`（PC 接続中か自動モードのときだけカメラを動かす。既定 true）、`camera.fps`、`network.heartbeat_timeout_ms`、`network.ap_start`（アクセスポイントを `core` が立てる（既定）か `boot` で NetworkManager に任せるか）、`network.wifi_txpower_dbm`（無線の送信出力の上限。0 = 既定のまま。電池での電圧低下が気になるときに 10〜14 程度を試す）、`power.throttled_path`（低電圧・処理速度制限の監視。空で無効）。
 
-## 8. 更新する
+## 9. 更新する
 
-### 8.1 イメージごと
+### 9.1 イメージごと
 
 新しい Release のイメージを SD カードに書き直します（2 章）。収録データは PC 側にあるので失われません。
 
-### 8.2 パッケージだけ
+### 9.2 パッケージだけ
 
 Release の `rumicar-zero2cam_<版>_arm64.deb` を車に送って入れます（走行中に入れると切り替えのためモーターは一度止まります）。
 
@@ -164,7 +232,7 @@ sudo apt install ./rumicar-zero2cam_<版>_arm64.deb
 
 必要なライブラリはイメージに入っているので、インターネット接続は不要です。`/etc/rumicar/core.json` やアクセスポイントの設定ファイルを自分で変えていた場合は「置き換えるか」と聞かれます（変えていなければ聞かれずに更新されます）。
 
-### 8.3 車をインターネットにつなぐ必要があるとき
+### 9.3 車をインターネットにつなぐ必要があるとき
 
 車は普段アクセスポイントなので外に出ません。`apt` で何かを入れたいときは、一時的に家庭の Wi-Fi に切り替えます（切り替えると `RumiCar` の AP は止まります。再起動で元に戻ります）。
 
@@ -172,7 +240,7 @@ sudo apt install ./rumicar-zero2cam_<版>_arm64.deb
 sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 ```
 
-## 9. 困ったとき
+## 10. 困ったとき
 
 | 症状 | 確認すること |
 |---|---|
@@ -206,6 +274,8 @@ sudo cmake --install build --prefix /usr/local   # 手動インストール
 
 libcamera 無しの環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF だけで走ります）。
 
+走行ロジックは `car/logic/` にあります：`tof_drive`（ToF 走行）と `cam_drive`（その上にカメラの判断を足したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間確定、`cam_logic` 信号機の振る舞い）。本体とロジックの契約は `car/include/rumicar/logic_api.h`（ABI 2：補助出力 `aux` と `aux_name`）です。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ と完全一致することを `test_vision` が確かめます。`car/tests/tools_smoke.py <build dir>` は合成収録から学習して `rumicar-replay` で止まる・進むまでを通しで確かめます（CI でも実行）。
+
 ## PC 側のビルド（Windows / .NET 10 SDK）
 
 ```sh
@@ -223,8 +293,9 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 - 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときだけ動かす）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序立てて起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中差し替え（PC または ssh から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、モード、非常停止、手動操作、シナリオ付き収録、版の管理、収録からの動画作成）
+- 車：画像ロジック `cam_drive`（信号機で停止・発進）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジック契約 ABI 2
 - 配布：標準 SD カードイメージ、タグで GitHub Release
-- 未実装（次の版）：画像を使う走行ロジック
+- 未実装（次の版）：先行車と駐停車車両の判別（追従／追い越し）、交差点の処理（検出器と行動を同じ仕組みで足す）
 
 ## ライセンス
 

@@ -59,6 +59,54 @@ void test_ramp_and_accel_limit() {
     CHECK(prev == p.v_max);
 }
 
+void test_speed_cap_stops_and_resumes_smoothly() {
+    // An external cap (used by cam_drive to stop at a red light) brings the
+    // drive down at the deceleration rate, holds it at 0, and lifting the cap
+    // ramps back up at the acceleration rate; steering and state are untouched.
+    Params p;
+    Run r(p);
+    for (int i = 0; i < 60; ++i) r.step(OPEN, OPEN, OPEN);
+    CHECK(r.last.drive_permille == p.v_max);
+    r.logic.set_speed_cap(0);
+    int prev = r.last.drive_permille;
+    int frames_to_stop = 0;
+    for (int i = 0; i < 40 && prev > 0; ++i) {
+        const auto& c = r.step(OPEN, OPEN, OPEN);
+        CHECK(c.drive_permille <= prev);
+        CHECK_MSG(prev - c.drive_permille <= 151, "decel 3000/s * 0.05 s = 150 per frame");   // +1 rounding
+        CHECK(c.state == static_cast<uint8_t>(State::Cruise) && c.steer == RUMI_STEER_CENTER);
+        prev = c.drive_permille;
+        ++frames_to_stop;
+    }
+    CHECK(prev == 0);
+    CHECK(frames_to_stop >= 6 && frames_to_stop <= 8);   // 900 / 150 = 6 frames
+    for (int i = 0; i < 10; ++i) CHECK(r.step(OPEN, OPEN, OPEN).drive_permille == 0);
+    CHECK((r.last.flags & RUMI_CMD_FLAG_BRAKE) == 0);     // the cap itself does not brake
+    // A partial cap limits, it does not stop.
+    r.logic.set_speed_cap(300);
+    for (int i = 0; i < 30; ++i) r.step(OPEN, OPEN, OPEN);
+    CHECK(r.last.drive_permille == 300);
+    r.logic.set_speed_cap(RUMI_DRIVE_MAX);
+    prev = r.last.drive_permille;
+    for (int i = 0; i < 40; ++i) {
+        const auto& c = r.step(OPEN, OPEN, OPEN);
+        CHECK(c.drive_permille >= prev);
+        CHECK(c.drive_permille - prev <= 57);
+        prev = c.drive_permille;
+    }
+    CHECK(prev == p.v_max);
+    // The cap never affects reversing: a recovery still reverses at v_reverse.
+    r.logic.set_speed_cap(0);
+    for (int i = 0; i < 3; ++i) r.step(200, 50, 50);          // median accepts the wall -> emergency brake
+    CHECK(r.last.state == static_cast<uint8_t>(State::EmergencyBrake));
+    for (int i = 0; i < 4; ++i) r.step(200, 50, 50);          // brake_ms elapsed -> reverse
+    CHECK(r.last.state == static_cast<uint8_t>(State::RecoverReverse));
+    int min_drive = 0;
+    for (int i = 0; i < 6; ++i) min_drive = std::min<int>(min_drive, r.step(200, 50, 50).drive_permille);
+    CHECK(min_drive == -p.v_reverse);
+    CHECK(r.last.aux_len == 0 && r.last.aux_format == 0);
+}
+
 void test_speed_follows_distance() {
     Params p;
     Run r(p);
@@ -298,6 +346,7 @@ void test_malformed_frame_rejected() {
 
 int main() {
     test_ramp_and_accel_limit();
+    test_speed_cap_stops_and_resumes_smoothly();
     test_speed_follows_distance();
     test_stuck_requires_constant_distance();
     test_emergency_brake_then_recover();

@@ -45,4 +45,26 @@ void jpeg_size(const std::vector<uint8_t>& jpeg, uint32_t& width, uint32_t& heig
     height = static_cast<uint32_t>(hgt);
 }
 
+DecodedImage jpeg_decode(const std::vector<uint8_t>& jpeg) {
+    tjhandle h = tjInitDecompress();
+    if (!h) throw std::runtime_error("tjInitDecompress failed");
+    int w = 0, hgt = 0, subsamp = 0, colorspace = 0;
+    int rc = tjDecompressHeader3(h, jpeg.data(), static_cast<unsigned long>(jpeg.size()), &w, &hgt, &subsamp, &colorspace);
+    if (rc != 0 || w <= 0 || hgt <= 0) {
+        const std::string msg = tjGetErrorStr2(h);
+        tjDestroy(h);
+        throw std::runtime_error("jpeg: " + msg);
+    }
+    DecodedImage img;
+    img.width = static_cast<uint32_t>(w);
+    img.height = static_cast<uint32_t>(hgt);
+    img.rgb.resize(static_cast<size_t>(img.width) * img.height * 3);
+    rc = tjDecompress2(h, jpeg.data(), static_cast<unsigned long>(jpeg.size()), img.rgb.data(), w, static_cast<int>(img.width * 3), hgt,
+                       TJPF_RGB, TJFLAG_ACCURATEDCT);
+    const std::string msg = rc != 0 ? tjGetErrorStr2(h) : "";
+    tjDestroy(h);
+    if (rc != 0) throw std::runtime_error("jpeg: " + msg);
+    return img;
+}
+
 } // namespace rumicar::cam

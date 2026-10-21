@@ -7,6 +7,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 
 - How to use it (from writing the SD card to driving, recording, and updating decision data): the [How to use](#how-to-use) section below
 - Specification (settings, wire formats, distribution formats, builds): [docs/RumiCar-Zero2Cam 仕様書.docx](docs/RumiCar-Zero2Cam%20仕様書.docx) (Japanese)
+- Design record (what was investigated, the options compared, why things were decided, how the image logic was designed and built — for learning): [docs/RumiCar-Zero2Cam 設計の記録.docx](docs/RumiCar-Zero2Cam%20設計の記録.docx) (Japanese)
 - Downloads: [Releases](https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases)
 
 ## Layout
@@ -15,7 +16,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 |---|---|
 | `car/` | Car side: `rumicar-core` (control loop, hardware, network, hot-swap of versions), the driving logic `tof_drive` (shared library), the bundled pack `base-tof`, unit tests, Debian package and SD-card image builds |
 | `pc/` | PC side: `RumiCar.Protocol` (wire formats, manifests, recording), `RumiCar.Protocol.Tests`, `RumiCar.DriveManager` (WPF drive manager) |
-| `docs/` | Specification |
+| `docs/` | The specification and the design record (both .docx, in Japanese; published for learning) |
 | `.github/workflows/` | CI (`car.yml`: Debian 13 arm64/amd64 and the SD-card image, `pc.yml`: Windows, `release.yml`: releases from tags) |
 
 ---
@@ -31,7 +32,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 | Windows PC (64-bit, Windows 10/11) | With Wi-Fi; runs the drive manager |
 | SD-card writer | [Raspberry Pi Imager](https://www.raspberrypi.com/software/) |
 
-The car **does not drive just because it is powered on**: it boots into "record only" (motors braked) and starts driving when you press **「自動」** (auto) in the drive manager (since v0.1.3; earlier versions drove off at power-on). To have it drive at power-on without a PC, set `startup_mode` to `auto` in `/etc/rumicar/core.json` (section 7). Put the car on a stand so the wheels are off the floor for the first boot and while you check things.
+The car **does not drive just because it is powered on**: it boots into "record only" (motors braked) and starts driving when you press **「自動」** (auto) in the drive manager (since v0.1.3; earlier versions drove off at power-on). To have it drive at power-on without a PC, set `startup_mode` to `auto` in `/etc/rumicar/core.json` (section 8). Put the car on a stand so the wheels are off the floor for the first boot and while you check things.
 
 ## 2. Write the SD card
 
@@ -48,7 +49,7 @@ Optional check of the download: the values in the Release's `SHA256SUMS.txt` mus
 
 1. Put the car on a stand and switch it on.
 2. The first boot expands the partition and reboots once by itself. Wait 2–3 minutes.
-3. `rumicar-core` then starts and brings things up one after another: sensors → Wi-Fi access point → camera (once a PC connects). The power-hungry parts are deliberately not started at the same time, to avoid brown-outs on dry-cell batteries (section 9). **The car does not drive yet** (record only); connect as in section 4 and press 「自動」.
+3. `rumicar-core` then starts and brings things up one after another: sensors → Wi-Fi access point → camera (once a PC connects). The power-hungry parts are deliberately not started at the same time, to avoid brown-outs on dry-cell batteries (section 10). **The car does not drive yet** (record only); connect as in section 4 and press 「自動」.
 
 Defaults built into the image:
 
@@ -136,7 +137,74 @@ A rebuilt driving logic (the `tof_drive` `.so`) is sent the same way (`make_mani
 
 「動画を作る…」 in the drive manager takes a session folder and writes `video.avi` from its `frames/` (Motion JPEG: the received JPEGs are stored as they are, so nothing is re-encoded; 20 fps on a real-time timeline from the image timestamps; where frames are missing the previous frame is held for up to 1 s and longer pauses are cut). VLC, Windows Media Player and ffmpeg play it. From the Claude desktop app, `python car/tools/session_video.py <session folder>` does the same (Python 3 only). For an MP4: `ffmpeg -i video.avi -c:v libx264 -pix_fmt yuv420p video.mp4`.
 
-## 7. Logging in to the car (SSH)
+## 7. Learning from images (stop at a red light, go on green)
+
+### 7.1 How it works
+
+The car keeps driving on the ToF (distance) sensors; on top of that, every camera image is turned into a small grid of features (320×240 reduced 5× and split into 8×6 cells; per cell the share of each colour, the brightness and the amount of edges — 576 integers), and **detectors learned from your recordings** (red light, green light) are applied to it. A red light seen for a few frames in a row makes the car slow down, then stop when the light is close; a green light (or the red light gone for a while) lets it drive on. The ToF logic's emergency brake and reversing always take precedence.
+
+What is learned is a pack: `params.json` (ToF and traffic-light behaviour settings, human-readable), `vision.bin` (the detectors' weights, a binary the car reads quickly) and `manifest.json` (description, capabilities, source scenarios). It is sent to the car exactly as in section 6. The driving logic `cam_drive` ships with the car next to `tof_drive`.
+
+### 7.2 What you need
+
+- Python 3 with numpy and Pillow (`pip install numpy pillow`) — in the Claude desktop app's environment or on your PC
+- `car/tools/` from this repository (`train_pack.py`, `rumicar_vision.py`, `make_manifest.py`, `session_video.py`)
+- Optional: `rumicar-replay` (GitHub Actions artifact `rumicar-replay-amd64`), which replays a recording through the real logic so you can see the car stop and go before sending anything
+
+### 7.3 Steps
+
+1. **Record**: drive a course with a traffic light (or push the car by hand in record-only mode to show it red and green) with a scenario name such as "信号機ありケース1". Recordings of a course without lights ("壁のみの走行データ") are used automatically as "no light here" examples, so make some of those too. Record at least twice, once for learning and once for checking.
+2. **Label**: `python car/tools/train_pack.py propose <session> --detector traffic_light_red` writes candidate red blobs (frame index and box) to `proposals_traffic_light_red.jsonl`. Show the folder to Claude, have it look at the candidate frames in `frames/` and write the confirmed ones into `labels.jsonl`; the same for `--detector traffic_light_green`. One JSON object per line; boxes are pixel coordinates [x0, y0, x1, y1] with x1/y1 exclusive:
+
+```
+{"index": 123, "objects": [{"name": "traffic_light_red", "box": [160, 60, 200, 110]}]}
+{"index": 200, "negative": true}                        <- nothing of interest here
+{"from": 300, "to": 380, "scene": ["intersection_left"]}  <- a scene label (for intersections later)
+```
+
+   Unlabelled frames are not used for learning. Looking at about one frame in twenty is enough.
+
+3. **Learn**:
+
+```
+python car/tools/train_pack.py train cam-signal-0.1.0 \
+    --parent <the cam-base-0.1.0 folder from the car, or the previous version> \
+    --sessions <recordings to learn from>... --validate <recordings to check with>... \
+    --negatives-from-scenario "壁のみの走行データ" \
+    --detector traffic_light_red --detector traffic_light_green \
+    --id cam-signal --version 0.1.0 --description "traffic light, case 1"
+```
+
+   `cam-base-0.1.0` is also in the repository at `car/packs/cam-base`. The result `cam-signal-0.1.0/` holds `params.json`, `vision.bin`, `training.json` (what was learned, with precision and recall on the validation recordings) and `manifest.json`. Low recall: label more frames; false detections: add more negative (walls-only) recordings.
+
+4. **Check before sending**: `python car/tools/train_pack.py show cam-signal-0.1.0`, `replay cam-signal-0.1.0 <session>` (per-frame detections) and `rumicar-replay <cam_drive folder> cam-signal-0.1.0 <session>` (the real logic; a sequence CRUISE → SIGNAL_APPROACH → SIGNAL_STOP → SIGNAL_RESUME means it stopped and went on).
+5. **Send to the car**: in the drive manager's 版の管理 select `cam_drive-0.1.0` (shipped) and 有効化, then 送る… `cam-signal-0.1.0` and 有効化. The status card shows the pack's description, "壁 / 信号機" and the scenarios it was learned from. Tick 「判断を重ねる」 to draw the detections over the image (red box = red light, green = green light, thick = confirmed) with their scores.
+6. **Improve**: record more and learn again with `--parent cam-signal-0.1.0 --version 0.2.0`; `--keep-parent-detectors` carries over detectors you do not retrain (the lineage is kept in the manifest's `parent`).
+
+### 7.4 Traffic-light behaviour (the `signal` part of params.json)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `red_detector` / `green_detector` | `traffic_light_red` / `traffic_light_green` | Detector names. With no green light on the course set `green_detector` to `""` and rely on `resume_without_green_ms` |
+| `stop_min_cells` | 2 | The red light is "close" (stop) once it covers this many cells; before that the car only slows down |
+| `approach_v` | 500 | Speed cap (per mille) from seeing red until stopping |
+| `min_stop_ms` | 1000 | Stay stopped at least this long |
+| `resume_without_green_ms` | 3000 | Drive on this long after the red light disappeared (0 = wait for green) |
+| `resume_ignore_ms` | 1500 | Ignore red for this long after moving off (so the light just passed does not stop the car again) |
+
+Override at learning time with `--signal key=value` (e.g. `--signal stop_min_cells=3`).
+
+### 7.5 When it does not work
+
+| Symptom | What to do |
+|---|---|
+| Stops for things that are not red lights | Add walls-only recordings, or recordings with that object, as negatives; look at the precision in `training.json`; raise `--thr-on` |
+| Stops too far from / too close to the light | Raise / lower `stop_min_cells`; check the camera is mounted at the same angle as when recording |
+| Stays stopped | Is the green detector seeing green (検出 field)? Without one, set `resume_without_green_ms` |
+| The sent version shows 検証失敗 | `make_manifest.py verify`; if the vision.bin self-test fails, the camera size (320×240) differs from the recordings; check the tool and car versions match (ABI 2) |
+| `rumicar-replay` and the car disagree | Recordings are JPEG, the car sees raw frames, so small differences are normal; large ones usually mean different lighting — record under that lighting too |
+
+## 8. Logging in to the car (SSH)
 
 ```sh
 ssh rumicar@10.42.0.1          # password rumicar
@@ -148,13 +216,13 @@ sudo nano /etc/rumicar/core.json       # settings (then sudo systemctl restart r
 
 Main settings in `/etc/rumicar/core.json` (spec 3.3): `car_name`, `startup_mode` (`record_only`, the default, or `auto` to drive at power-on), `max_drive_permille` (drive limit, 1000 = 100 %), `camera.enabled`, `camera.on_demand` (run the camera only while a PC is connected or in auto mode; default true), `camera.fps`, `network.heartbeat_timeout_ms`, `network.ap_start` (`core`, the default: the core brings the access point up in sequence; `boot`: NetworkManager does it), `network.wifi_txpower_dbm` (transmit power limit; 0 = driver default; try 10–14 when batteries sag), `power.throttled_path` (under-voltage / throttling monitor; empty disables it).
 
-## 8. Updating
+## 9. Updating
 
-### 8.1 Whole image
+### 9.1 Whole image
 
 Write the image of a newer Release to the SD card (section 2). Recordings live on the PC, so nothing is lost.
 
-### 8.2 Package only
+### 9.2 Package only
 
 Copy `rumicar-zero2cam_<version>_arm64.deb` from the Release to the car and install it (if the car is driving, the motors stop briefly while the service restarts).
 
@@ -166,7 +234,7 @@ sudo apt install ./rumicar-zero2cam_<version>_arm64.deb
 
 The required libraries are already in the image, so no Internet access is needed. If you edited `/etc/rumicar/core.json` or the access-point profile yourself, apt asks whether to replace them (otherwise they are updated silently).
 
-### 8.3 When the car needs the Internet
+### 9.3 When the car needs the Internet
 
 The car is normally an access point and has no route to the Internet. To install something with `apt`, join your home Wi-Fi temporarily (this stops the `RumiCar` access point until the next reboot):
 
@@ -174,7 +242,7 @@ The car is normally an access point and has no route to the Internet. To install
 sudo nmcli device wifi connect "<home SSID>" password "<password>"
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | What to check |
 |---|---|
@@ -208,6 +276,8 @@ To install on a car, use the Debian package (the CI artifact `rumicar-zero2cam-d
 
 Without libcamera, build with `-DRUMICAR_WITH_CAMERA=OFF` (that core does not start a camera and drives on the ToF sensors only).
 
+The driving logics live in `car/logic/`: `tof_drive` (ToF driving) and `cam_drive` (the camera's judgement on top of it: `vision_features` features, `vision_pack` for `vision.bin`, `vision_eval` detector evaluation with temporal confirmation, `cam_logic` the traffic-light behaviour). The contract between the core and the logics is `car/include/rumicar/logic_api.h` (ABI 2: the `aux` output and `aux_name`). The Python implementation of the features and `vision.bin` is `car/tools/rumicar_vision.py`; `test_vision` checks it against the C++ bit for bit through the golden data in `car/tests/data/vision` (made by `make_golden.py`). `car/tests/tools_smoke.py <build dir>` learns from synthetic recordings and checks with `rumicar-replay` that the car stops and goes (CI runs it too).
+
 ## Building the PC side (Windows / .NET 10 SDK)
 
 ```sh
@@ -225,8 +295,9 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 - Car: ToF driving logic, control loop and safety behaviour, drive modes (auto / manual / record_only; record_only at start-up) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps, run only when needed) with JPEG telemetry, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager, brought up in sequence by the core) and `set_wifi`, under-voltage / throttling monitor, hot-swapping of logic / packs (from the PC or over ssh) verified by manifests that also carry a description, capabilities and source scenarios, systemd service, Debian package
 - PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving, recording with scenario names, version management, videos from recordings)
+- Car: the image logic `cam_drive` (stop at red, go on green), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic ABI 2
 - Distribution: standard SD-card image, GitHub Releases from tags
-- Not yet: driving logic that uses the camera images
+- Not yet: leading vs parked vehicles (follow / overtake) and intersections (added as further detectors and behaviour in the same framework)
 
 ## License
 

@@ -172,6 +172,7 @@ int TofDriveLogic::speed_target(int C, double closing_mm_s, bool turning) const 
         }
     }
     if (turning) target = std::min(target, p_.v_turn_cap);
+    if (target > speed_cap_) target = std::max(0, speed_cap_);
     return target;
 }
 
@@ -335,6 +336,8 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
                                                          RUMI_DRIVE_MIN, RUMI_DRIVE_MAX));
     out.state = static_cast<uint8_t>(state_);
     out.flags = flags;
+    out.aux_format = 0;
+    out.aux_len = 0;
     return true;
 }
 

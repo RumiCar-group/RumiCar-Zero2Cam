@@ -58,7 +58,13 @@
                 <Border x:Name="ImageBorder" Grid.Row="0" Background="{StaticResource Brush.ImageBackground}" CornerRadius="8,8,0,0"
                         Focusable="True" MouseLeftButtonDown="OnImageClick">
                     <Grid>
-                        <Image Source="{Binding Image}" Stretch="Uniform" Margin="8" Visibility="{Binding ImageVisibility}"/>
+                        <!-- The image and the overlay share one coordinate system (image pixels) inside a Viewbox. -->
+                        <Viewbox Stretch="Uniform" Margin="8" Visibility="{Binding ImageVisibility}">
+                            <Grid x:Name="ImageSurface" Width="320" Height="240">
+                                <Image Source="{Binding Image}" Stretch="Fill"/>
+                                <Canvas x:Name="Overlay" IsHitTestVisible="False"/>
+                            </Grid>
+                        </Viewbox>
                         <TextBlock Text="画像の表示はオフです（受信と収録は続いています）" Foreground="#9CA3AF" HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Visibility="{Binding ImageHiddenNoteVisibility}"/>
                     </Grid>
@@ -74,7 +80,11 @@
                         <TextBlock Text="画像付き" Style="{StaticResource Text.Label}" Margin="16,0,12,0"/>
                         <TextBlock Text="{Binding Images}" Style="{StaticResource Text.Value}"/>
                     </StackPanel>
-                    <CheckBox Grid.Column="1" Content="画像を表示" IsChecked="{Binding ShowImage}" ToolTip="オフにすると表示だけ止めます。受信と収録には影響しません"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <CheckBox Content="判断を重ねる" IsChecked="{Binding ShowOverlay}" Margin="0,0,12,0"
+                                  ToolTip="ロジックの検出結果（信号機など）を画像の上に枠で描きます（赤 = 赤信号、緑 = 青信号。太枠 = 確定、細枠 = このコマだけ）"/>
+                        <CheckBox Content="画像を表示" IsChecked="{Binding ShowImage}" ToolTip="オフにすると表示だけ止めます。受信と収録には影響しません"/>
+                    </StackPanel>
                 </Grid>
             </Grid>
         </Border>
@@ -122,7 +132,7 @@
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
-                                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="判断状態" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LogicState}" Style="{StaticResource Text.Value}"/>
@@ -144,6 +154,8 @@
                             <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding Power}" Style="{StaticResource Text.Value}"/>
                             <TextBlock Grid.Row="9" Grid.Column="0" Text="バッテリー" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding Battery}" Style="{StaticResource Text.Value}"/>
+                            <TextBlock Grid.Row="10" Grid.Column="0" Text="検出" Style="{StaticResource Text.Label}" ToolTip="ロジックの検出器ごとの確からしさ（0〜1）、位置（セルの列,行）、セル数。● = 確定"/>
+                            <TextBlock Grid.Row="10" Grid.Column="1" Text="{Binding Detections}" Style="{StaticResource Text.Value}" TextWrapping="Wrap"/>
                         </Grid>
                     </StackPanel>
                 </Border>

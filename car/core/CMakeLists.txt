@@ -60,6 +60,12 @@ add_executable(rumicar-core src/main.cpp)
 target_compile_definitions(rumicar-core PRIVATE RUMICAR_CORE_VERSION="${RUMICAR_CORE_VERSION}")
 target_link_libraries(rumicar-core PRIVATE rumicar_core_lib rumicar_hw rumicar_camera Threads::Threads)
 
+# Replay of a recorded session through a logic and a pack (docs 4.5).  Needs only
+# the core library and the JPEG decoder, so it also builds without libcamera.
+add_executable(rumicar-replay src/tools/replay.cpp)
+target_link_libraries(rumicar-replay PRIVATE rumicar_core_lib rumicar_camera)
+install(TARGETS rumicar-replay RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-core.service.in ${CMAKE_CURRENT_BINARY_DIR}/rumicar-core.service @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../deploy/rumicar-ap.service.in ${CMAKE_CURRENT_BINARY_DIR}/rumicar-ap.service @ONLY)
 install(TARGETS rumicar-core RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

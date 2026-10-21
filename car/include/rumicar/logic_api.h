@@ -14,6 +14,9 @@
  * This header is the single source of truth for the contract between the
  * core and every logic plug-in.  Changing any struct layout or semantics
  * requires bumping RUMI_LOGIC_ABI_VERSION.
+ *
+ * ABI history: 1 = sensors + camera image in, steer/drive/state/flags out.
+ *              2 = adds the aux output in rumi_command and aux_name() (docs 3.6).
  */
 #ifndef RUMICAR_LOGIC_API_H
 #define RUMICAR_LOGIC_API_H
@@ -25,7 +28,7 @@
 extern "C" {
 #endif
 
-#define RUMI_LOGIC_ABI_VERSION 1u
+#define RUMI_LOGIC_ABI_VERSION 2u
 
 /* Name of the exported entry point. */
 #define RUMI_LOGIC_ENTRY_SYMBOL "rumi_logic_get_api"
@@ -75,6 +78,9 @@ typedef struct rumi_sensor_frame {
     uint32_t       image_stride;
 } rumi_sensor_frame;
 
+/* Size of rumi_command::aux. */
+#define RUMI_AUX_BYTES 48u
+
 /* Command produced by the logic for this frame. */
 typedef struct rumi_command {
     uint32_t size;
@@ -82,6 +88,13 @@ typedef struct rumi_command {
     int16_t  drive_permille; /* RUMI_DRIVE_MIN .. RUMI_DRIVE_MAX, negative = reverse */
     uint8_t  state;          /* logic-defined state id, reported in telemetry */
     uint32_t flags;          /* RUMI_CMD_FLAG_* */
+    /* Auxiliary output (ABI 2): logic-defined bytes the core forwards unchanged
+     * in telemetry (base64) for display on the PC, e.g. detector scores and
+     * positions.  aux_format identifies the layout (0 = none); aux_len bytes of
+     * aux are valid (0 .. RUMI_AUX_BYTES).  Never used for driving. */
+    uint16_t aux_format;
+    uint8_t  aux_len;
+    uint8_t  aux[RUMI_AUX_BYTES];
 } rumi_command;
 
 typedef struct rumi_logic_api {
@@ -107,6 +120,12 @@ typedef struct rumi_logic_api {
 
     /* Human-readable name for a state id (for telemetry/logs).  Never NULL. */
     const char* (*state_name)(void* instance, uint8_t state);
+
+    /* ABI 2: name of the index-th item described by the aux output (e.g. the
+     * detector whose score is in slot `index`), or NULL beyond the last one.
+     * The core lists them in get_status (aux_names) so the PC can label what
+     * it draws.  May return NULL for every index when aux is not used. */
+    const char* (*aux_name)(void* instance, uint8_t index);
 } rumi_logic_api;
 
 typedef const rumi_logic_api* (*rumi_logic_get_api_fn)(void);

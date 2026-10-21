@@ -182,6 +182,36 @@ public class ManifestAndRecordingTests : IDisposable
     }
 
     [Fact]
+    public void AuxFormat1DecodesDetections()
+    {
+        // grid 8x6, two detectors: red score 230 at (6,0) with 3 cells present+active; green score 20 at (0,0), nothing.
+        var bytes = new byte[] { 8, 6, 230, 6, 0, 3, 3, 20, 0, 0, 0, 0 };
+        var header = new TelemetryHeader { AuxFormat = 1, Aux = Convert.ToBase64String(bytes), TofMm = new[] { 1, 2, 3 } };
+        var d = AuxFormat1.Decode(header);
+        Assert.NotNull(d);
+        Assert.Equal(8, d!.GridX);
+        Assert.Equal(6, d.GridY);
+        Assert.Equal(2, d.Detections.Count);
+        Assert.Equal(230 / 255.0, d.Detections[0].Score, 6);
+        Assert.Equal(6, d.Detections[0].CellX);
+        Assert.Equal(0, d.Detections[0].CellY);
+        Assert.Equal(3, d.Detections[0].Cells);
+        Assert.True(d.Detections[0].Present && d.Detections[0].Active);
+        Assert.False(d.Detections[1].Present || d.Detections[1].Active);
+        // Round trip through the wire header keeps the aux fields.
+        var back = TelemetryFrameCodec.HeaderFromJson(TelemetryFrameCodec.HeaderToJson(header));
+        Assert.Equal(header.Aux, back!.Aux);
+        Assert.Equal(1, back.AuxFormat);
+        // Absent, other formats, bad base64 and too-short payloads decode to null.
+        Assert.Null(AuxFormat1.Decode(new TelemetryHeader { TofMm = new[] { 1, 2, 3 } }));
+        Assert.Null(AuxFormat1.Decode(new TelemetryHeader { AuxFormat = 2, Aux = header.Aux, TofMm = new[] { 1, 2, 3 } }));
+        Assert.Null(AuxFormat1.Decode(new TelemetryHeader { AuxFormat = 1, Aux = "@@@", TofMm = new[] { 1, 2, 3 } }));
+        Assert.Null(AuxFormat1.Decode(new byte[] { 8 }));
+        Assert.Null(AuxFormat1.Decode(new byte[] { 0, 6 }));
+        Assert.Empty(AuxFormat1.Decode(new byte[] { 8, 6, 1, 2 })!.Detections);   // a partial record is ignored
+    }
+
+    [Fact]
     public void TelemetryHeaderRoundTripsNewFields()
     {
         var header = new TelemetryHeader { Seq = 5, TofMm = new[] { 1, 2, 3 }, LogicName = "tof_drive", PackId = "base-tof", Throttled = 0x50001 };

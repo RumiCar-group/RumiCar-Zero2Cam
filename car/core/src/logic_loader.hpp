@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "manifest.hpp"
 #include "rumicar/logic_api.h"
@@ -44,6 +45,8 @@ public:
     // Returns 0 on success (see rumi_logic_api::step).
     int step(const rumi_sensor_frame& frame, rumi_command& out);
     const char* state_name(uint8_t state) const;
+    // Names of the aux output's items (ABI 2), in slot order; empty when unused.
+    std::vector<std::string> aux_names() const;
 
     const LogicLibrary& library() const { return *lib_; }
     const Manifest& pack_manifest() const { return pack_manifest_; }

@@ -67,5 +67,7 @@ private:
 
 // Base64 decoding (standard alphabet, '=' padding).  Throws std::runtime_error on bad input.
 std::vector<uint8_t> base64_decode(const std::string& text);
+// Base64 encoding (standard alphabet, '=' padding).
+std::string base64_encode(const uint8_t* data, size_t len);
 
 } // namespace rumicar

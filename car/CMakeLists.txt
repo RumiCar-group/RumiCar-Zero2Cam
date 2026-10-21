@@ -34,7 +34,8 @@ option(RUMICAR_BUILD_TESTS "Build unit tests" ON)
 
 add_compile_options(-Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion)
 
-set(TOF_DRIVE_VERSION "0.1.0")   # version of the shipped driving logic (logic/tof_drive)
+set(TOF_DRIVE_VERSION "0.2.0")   # version of the shipped driving logic (logic/tof_drive); 0.2.0 = ABI 2
+set(CAM_DRIVE_VERSION "0.1.0")   # version of the shipped camera driving logic (logic/cam_drive)
 
 find_package(nlohmann_json 3.11 REQUIRED)
 
@@ -61,6 +62,11 @@ string(JSON RUMICAR_BASE_PACK_VERSION GET "${RUMICAR_BASE_PACK_MANIFEST}" versio
 set(RUMICAR_SHIPPED_PACK ${RUMICAR_BASE_PACK_ID}-${RUMICAR_BASE_PACK_VERSION})
 set(RUMICAR_SHIPPED_LOGIC tof_drive-${TOF_DRIVE_VERSION})
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/packs/base/ DESTINATION share/rumicar/packs/${RUMICAR_SHIPPED_PACK})
+# A ToF-only starting pack for cam_drive (no vision.bin): the base every trained pack derives from.
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/packs/cam-base/manifest.json RUMICAR_CAM_PACK_MANIFEST)
+string(JSON RUMICAR_CAM_PACK_ID GET "${RUMICAR_CAM_PACK_MANIFEST}" id)
+string(JSON RUMICAR_CAM_PACK_VERSION GET "${RUMICAR_CAM_PACK_MANIFEST}" version)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/packs/cam-base/ DESTINATION share/rumicar/packs/${RUMICAR_CAM_PACK_ID}-${RUMICAR_CAM_PACK_VERSION})
 
 # --- Debian package (cpack -G DEB in the build directory) ----------------------
 set(CPACK_GENERATOR DEB)
