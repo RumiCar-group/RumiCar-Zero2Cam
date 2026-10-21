@@ -151,6 +151,7 @@ json CarState::status_json() const {
         {"pack_capabilities", running_.pack_capabilities},
         {"pack_scenarios", running_.pack_scenarios},
         {"pack_parent", running_.pack_parent},
+        {"aux_names", running_.aux_names},
         {"state_name", running_.state_name},
         {"battery_mv", 0},
         {"throttled", throttled_},

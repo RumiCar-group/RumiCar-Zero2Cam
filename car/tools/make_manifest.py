@@ -4,7 +4,7 @@
 Usage:
   make_manifest.py pack  <dir> --id <pack-id> --version <ver> --logic <logic-name> [--min-abi 1]
                          [--description TEXT] [--capability NAME ...] [--scenario NAME ...] [--parent DIR-NAME]
-  make_manifest.py logic <dir> --name <logic-name> --version <ver> --entry <file.so> [--abi 1] [--description TEXT]
+  make_manifest.py logic <dir> --name <logic-name> --version <ver> --entry <file.so> [--abi 2] [--description TEXT]
   make_manifest.py verify <dir>
   make_manifest.py show <dir>
 
@@ -195,7 +195,7 @@ def main() -> int:
     sl.add_argument("--name", required=True)
     sl.add_argument("--version", required=True)
     sl.add_argument("--entry", required=True)
-    sl.add_argument("--abi", type=int, default=1)
+    sl.add_argument("--abi", type=int, default=2)
     sl.add_argument("--description")
     sl.set_defaults(func=cmd_logic)
     sv = sub.add_parser("verify")

@@ -88,6 +88,9 @@ const char* tof_state_name(void*, uint8_t state) {
     return rumicar::tof::state_name(static_cast<rumicar::tof::State>(state));
 }
 
+// No auxiliary output: this logic only drives on the distance sensors.
+const char* tof_aux_name(void*, uint8_t) { return nullptr; }
+
 const rumi_logic_api kApi = {
     RUMI_LOGIC_ABI_VERSION,
     "tof_drive",
@@ -97,6 +100,7 @@ const rumi_logic_api kApi = {
     &tof_self_test,
     &tof_step,
     &tof_state_name,
+    &tof_aux_name,
 };
 
 } // namespace

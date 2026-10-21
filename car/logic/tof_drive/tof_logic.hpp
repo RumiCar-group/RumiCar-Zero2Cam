@@ -73,6 +73,14 @@ public:
 
     State state() const { return state_; }
 
+    // External upper limit on the forward drive command (per mille), applied
+    // to the speed target before rate limiting, so a cap of 0 brings the car
+    // to a smooth stop and lifting it resumes with the normal acceleration.
+    // Used by logics built on top of this one (cam_drive stops at a red
+    // light this way).  Reverse (recovery) and braking are not affected.
+    void set_speed_cap(int permille) { speed_cap_ = permille; }
+    int speed_cap() const { return speed_cap_; }
+
     // Filtered distances after conditioning (for telemetry/tests).  OPEN_MM when open.
     static constexpr int OPEN_MM = 9999;
     const std::array<int, RUMI_TOF_COUNT>& filtered() const { return filt_; }
@@ -111,6 +119,7 @@ private:
     int8_t   recover_steer_ = RUMI_STEER_CENTER;
 
     double   drive_ = 0.0;           // current drive command (per mille), rate limited
+    int      speed_cap_ = RUMI_DRIVE_MAX;
     int      prev_c_filt_ = OPEN_MM; // for closing-speed estimate
 
     // stuck detection

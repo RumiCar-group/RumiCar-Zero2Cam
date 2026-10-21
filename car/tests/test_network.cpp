@@ -156,7 +156,7 @@ void make_logic(const fs::path& dir, const std::string& name, const std::string&
     const std::string blob = "not a real shared object";
     write_file(dir / ("lib" + name + ".so"), blob);
     json m = {
-        {"schema", 1}, {"kind", "logic"}, {"name", name}, {"version", version}, {"abi", 1},
+        {"schema", 1}, {"kind", "logic"}, {"name", name}, {"version", version}, {"abi", 2},
         {"entry", "lib" + name + ".so"}, {"created", "2026-10-18T00:00:00Z"},
         {"files", json::array({{{"path", "lib" + name + ".so"}, {"sha256", sha256_hex(blob)}, {"bytes", blob.size()}}})},
     };

@@ -44,6 +44,7 @@
 #include "net/telemetry_server.hpp"
 #include "power.hpp"
 #include "request_handler.hpp"
+#include "upload.hpp"
 #include "rumicar/logic_api.h"
 #include "version_store.hpp"
 #include "wifi.hpp"
@@ -92,6 +93,7 @@ void publish_running(rumicar::CarState& state, const Active& active, uint8_t log
     s.pack_capabilities = pm.capabilities;
     s.pack_scenarios = pm.scenarios;
     s.pack_parent = pm.parent;
+    s.aux_names = active.instance->aux_names();
     s.state = logic_state;
     s.state_name = active.instance->state_name(logic_state);
     s.flags = flags;
@@ -415,7 +417,7 @@ int main(int argc, char** argv) {
         publish_running(state, active, rc == 0 ? cmd.state : last_state, rc == 0 ? cmd.flags : 0u);
         if (network_up) {
             try {
-                const json header = {
+                json header = {
                     {"seq", frame.seq},
                     {"t_us", frame.t_us},
                     {"tof_mm", {frame.tof_mm[0], frame.tof_mm[1], frame.tof_mm[2]}},
@@ -440,6 +442,12 @@ int main(int argc, char** argv) {
                     {"image_seq", image ? image->sequence : 0u},
                     {"image_t_us", image ? image->sensor_t_us : 0ull},
                 };
+                // Auxiliary output of the logic (ABI 2), e.g. detector scores for the PC's overlay.
+                if (rc == 0 && cmd.aux_len > 0) {
+                    const size_t n = std::min<size_t>(cmd.aux_len, RUMI_AUX_BYTES);
+                    header["aux_format"] = cmd.aux_format;
+                    header["aux"] = base64_encode(cmd.aux, n);
+                }
                 telemetry.publish(std::make_shared<const std::vector<uint8_t>>(
                     net::encode_telemetry_frame(header.dump(), image ? image->jpeg : no_image)));
             } catch (const std::exception& e) {

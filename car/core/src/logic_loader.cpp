@@ -34,7 +34,7 @@ LogicLibrary::LogicLibrary(const std::string& dir) : dir_(dir) {
     auto get_api = reinterpret_cast<rumi_logic_get_api_fn>(sym);
     api_ = get_api();
     if (!api_ || api_->abi_version != RUMI_LOGIC_ABI_VERSION || !api_->name || !api_->version || !api_->create ||
-        !api_->destroy || !api_->self_test || !api_->step || !api_->state_name) {
+        !api_->destroy || !api_->self_test || !api_->step || !api_->state_name || !api_->aux_name) {
         dlclose(handle_);
         handle_ = nullptr;
         throw std::runtime_error(so.string() + ": plug-in API table is invalid or has a different ABI version");
@@ -84,6 +84,16 @@ int LogicInstance::step(const rumi_sensor_frame& frame, rumi_command& out) {
 const char* LogicInstance::state_name(uint8_t state) const {
     const char* n = lib_->api().state_name(instance_, state);
     return n ? n : "?";
+}
+
+std::vector<std::string> LogicInstance::aux_names() const {
+    std::vector<std::string> names;
+    for (unsigned i = 0; i < 255; ++i) {
+        const char* n = lib_->api().aux_name(instance_, static_cast<uint8_t>(i));
+        if (!n) break;
+        names.emplace_back(n);
+    }
+    return names;
 }
 
 } // namespace rumicar

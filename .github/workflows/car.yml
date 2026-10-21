@@ -39,7 +39,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config git ca-certificates curl gnupg python3 dpkg-dev file \
+            build-essential cmake pkg-config git ca-certificates curl gnupg python3 python3-numpy python3-pil dpkg-dev file \
             libgpiod-dev nlohmann-json3-dev libssl-dev libturbojpeg0-dev
           echo "gcc:       $(gcc --version | head -1)"
           echo "cmake:     $(cmake --version | head -1)"
@@ -92,8 +92,27 @@ jobs:
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
 
-      - name: Verify the bundled base pack
-        run: python3 car/tools/make_manifest.py verify car/packs/base
+      - name: Verify the bundled packs
+        run: |
+          python3 car/tools/make_manifest.py verify car/packs/base
+          python3 car/tools/make_manifest.py verify car/packs/cam-base
+
+      - name: Golden data of the vision layer is reproducible from the Python implementation
+        run: |
+          python3 car/tests/data/vision/make_golden.py
+          git diff --exit-code --stat car/tests/data/vision
+
+      - name: Learning tools end to end (train_pack.py -> pack -> rumicar-replay with libcam_drive.so)
+        run: python3 car/tests/tools_smoke.py build
+
+      - name: Upload the replay tool (runs a recording through a logic and a pack on a PC)
+        uses: actions/upload-artifact@v5
+        with:
+          name: rumicar-replay-${{ matrix.arch }}
+          path: |
+            build/core/rumicar-replay
+            build/logic/stage
+          if-no-files-found: error
 
       - name: Build the Debian package
         if: matrix.publish
@@ -111,7 +130,10 @@ jobs:
           test "$(readlink /var/lib/rumicar/current/logic)" = "../logic/tof_drive-$(sed -n 's/^set(TOF_DRIVE_VERSION "\([^"]*\)").*/\1/p' car/CMakeLists.txt)"
           test -L /var/lib/rumicar/current/pack
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/logic/tof_drive-*
+          python3 car/tools/make_manifest.py verify /var/lib/rumicar/logic/cam_drive-*
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/base-tof-*
+          python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/cam-base-*
+          test -x /usr/bin/rumicar-replay
           test "$(stat -c %a /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection)" = "600"
           test -x /usr/bin/rumicar-core && test -x /usr/bin/rumicar-activate && test -x /usr/bin/rumicar-ap-ensure
           test -f /usr/lib/systemd/system/rumicar-ap.timer

@@ -23,4 +23,13 @@ private:
 // Width/height of a JPEG (header only).  Throws std::runtime_error on bad data.
 void jpeg_size(const std::vector<uint8_t>& jpeg, uint32_t& width, uint32_t& height);
 
+// Decodes a JPEG to tightly packed RGB24 (used by the replay tool, never on
+// the car's control path).  Throws std::runtime_error on bad data.
+struct DecodedImage {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> rgb;   // stride = width * 3
+};
+DecodedImage jpeg_decode(const std::vector<uint8_t>& jpeg);
+
 } // namespace rumicar::cam

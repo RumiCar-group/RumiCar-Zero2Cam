@@ -35,6 +35,9 @@ public sealed class TelemetryHeader
     [JsonPropertyName("battery_mv")] public int BatteryMillivolts { get; set; }
     /// <summary>Firmware throttling flags (bit 0 under-voltage now, bit 16 under-voltage since boot, ...); 0 when fine or unsupported.</summary>
     [JsonPropertyName("throttled")] public uint Throttled { get; set; }
+    /// <summary>Auxiliary output of the driving logic (ABI 2): a format id and base64 bytes, absent when the logic has none. Format 1 = <see cref="AuxFormat1"/>.</summary>
+    [JsonPropertyName("aux_format")] public int AuxFormat { get; set; }
+    [JsonPropertyName("aux")] public string? Aux { get; set; }
     /// <summary>Width/height of the JPEG, 0 when the frame carries no image.</summary>
     [JsonPropertyName("image_w")] public int ImageWidth { get; set; }
     [JsonPropertyName("image_h")] public int ImageHeight { get; set; }

@@ -44,7 +44,7 @@ void test_committed_base_pack_is_consistent(const fs::path& pack_dir) {
     CHECK(m.kind == Manifest::Kind::Pack);
     CHECK(m.id == "base-tof");
     CHECK(m.logic_name == "tof_drive");
-    CHECK(m.logic_min_abi == RUMI_LOGIC_ABI_VERSION);
+    CHECK(m.logic_min_abi >= 1 && m.logic_min_abi <= RUMI_LOGIC_ABI_VERSION);   // packs made for ABI 1 stay valid
     CHECK(m.files.size() == 1 && m.files[0].path == "params.json");
     // The shipped pack says what it is (shown by the PC, docs 4.1).
     CHECK(!m.description.empty());
@@ -138,7 +138,7 @@ void test_logic_library_loads(const fs::path& tmp, const fs::path& so, const fs:
     Manifest m;
     m.kind = Manifest::Kind::Logic;
     m.id = "tof_drive";
-    m.version = "0.1.0";
+    m.version = TOF_DRIVE_VERSION;   // must match what the freshly built plug-in reports
     m.abi = RUMI_LOGIC_ABI_VERSION;
     m.entry = "libtof_drive.so";
     m.files.push_back({"libtof_drive.so", sha256_file_hex((d / "libtof_drive.so").string()), fs::file_size(d / "libtof_drive.so")});
@@ -184,6 +184,42 @@ void test_logic_library_loads(const fs::path& tmp, const fs::path& so, const fs:
     CHECK_MSG(throws([&] { LogicLibrary x(d2.string()); }), "version mismatch must be refused");
 }
 
+// The camera logic plug-in loads with the ToF-only cam-base pack, reports its
+// state names, accepts the base pack's structure, and refuses a tof_drive pack.
+void test_cam_drive_library_loads(const fs::path& tmp, const fs::path& so, const fs::path& cam_pack_dir, const fs::path& tof_pack_dir) {
+    const fs::path d = tmp / "logic" / "cam_drive-test";
+    fs::remove_all(d);
+    fs::create_directories(d);
+    fs::copy_file(so, d / "libcam_drive.so", fs::copy_options::overwrite_existing);
+    Manifest m;
+    m.kind = Manifest::Kind::Logic;
+    m.id = "cam_drive";
+    m.version = CAM_DRIVE_VERSION;
+    m.abi = RUMI_LOGIC_ABI_VERSION;
+    m.entry = "libcam_drive.so";
+    m.files.push_back({"libcam_drive.so", sha256_file_hex((d / "libcam_drive.so").string()), fs::file_size(d / "libcam_drive.so")});
+    write_file(d / "manifest.json", manifest_to_json(m));
+
+    auto lib = std::make_shared<LogicLibrary>(d.string());
+    CHECK(std::string(lib->api().name) == "cam_drive");
+    const Manifest cm = load_and_verify_manifest(cam_pack_dir.string());
+    CHECK(cm.id == "cam-base" && cm.logic_name == "cam_drive" && cm.logic_min_abi == 2);
+    CHECK(cm.capabilities.size() == 1 && cm.capabilities[0] == "walls");
+    LogicInstance inst(lib, cam_pack_dir.string());
+    CHECK(inst.aux_names().empty());   // no vision.bin: nothing to show
+    rumi_sensor_frame f{};
+    f.size = sizeof(f);
+    f.t_us = 1000000;
+    f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_NO_TARGET;
+    rumi_command c{};
+    CHECK(inst.step(f, c) == 0);
+    CHECK(std::string(inst.state_name(c.state)) == "CRUISE");
+    CHECK(std::string(inst.state_name(17)) == "SIGNAL_STOP");
+    CHECK(c.aux_len == 0);
+    // The tof_drive pack is for another logic.
+    CHECK_MSG(throws([&] { LogicInstance x(lib, tof_pack_dir.string()); }), "a tof_drive pack must be refused by cam_drive");
+}
+
 void test_core_config() {
     CoreConfig c = parse_core_config("{}");
     CHECK(c.loop_period_ms == 50 && c.steer_in1 == 17 && c.tof_addresses[1] == 0x2D);
@@ -212,12 +248,14 @@ void test_core_config() {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::fprintf(stderr, "usage: test_pack <base pack dir> <libtof_drive.so>\n");
+    if (argc < 5) {
+        std::fprintf(stderr, "usage: test_pack <base pack dir> <libtof_drive.so> <cam-base pack dir> <libcam_drive.so>\n");
         return 2;
     }
     const fs::path pack_dir = fs::absolute(argv[1]);
     const fs::path so = fs::absolute(argv[2]);
+    const fs::path cam_pack_dir = fs::absolute(argv[3]);
+    const fs::path cam_so = fs::absolute(argv[4]);
     const fs::path tmp = fs::temp_directory_path() / "rumicar-test-pack";
     fs::create_directories(tmp);
 
@@ -226,6 +264,7 @@ int main(int argc, char** argv) {
     test_manifest_rejections(tmp);
     test_manifest_metadata();
     test_logic_library_loads(tmp, so, pack_dir);
+    test_cam_drive_library_loads(tmp, cam_so, cam_pack_dir, pack_dir);
     test_core_config();
     return check::summary("test_pack");
 }

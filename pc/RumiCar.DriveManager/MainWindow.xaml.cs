@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private string? _lastSessionDirectory;
     private uint _lastThrottled;
     private JsonElement? _lastStatus;
+    private List<string> _auxNames = new();
 
     private static readonly string AppVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "?";
 
@@ -222,6 +223,11 @@ public partial class MainWindow : Window
         }
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("throttled", out var th) && th.TryGetUInt32(out var throttled))
             ApplyThrottled(throttled);
+        if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("aux_names", out _))
+        {
+            _auxNames = GetStringList(data, "aux_names");
+            if (_auxNames.Count == 0) { _vm.Detections = "（このロジックは検出結果を出しません）"; Overlay.Children.Clear(); }
+        }
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("battery_mv", out var mv) && mv.TryGetInt32(out var millivolts))
             _vm.Battery = FormatBattery(millivolts);
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("estop", out var es) && (es.ValueKind == JsonValueKind.True || es.ValueKind == JsonValueKind.False))
@@ -360,6 +366,9 @@ public partial class MainWindow : Window
         if (h.PackId.Length > 0 && !_vm.PackInfo.StartsWith(h.PackId + " " + h.PackVersion, StringComparison.Ordinal))
             _vm.PackInfo = $"{h.PackId} {h.PackVersion}";
 
+        var aux = AuxFormat1.Decode(h);
+        _vm.Detections = DescribeDetections(aux);
+
         if (frame.Jpeg.Length == 0 || !_vm.ShowImage) return;   // hidden: no decoding either
         try
         {
@@ -371,10 +380,68 @@ public partial class MainWindow : Window
             bmp.EndInit();
             bmp.Freeze();
             _vm.Image = bmp;
+            if (h.ImageWidth > 0 && h.ImageHeight > 0 && (ImageSurface.Width != h.ImageWidth || ImageSurface.Height != h.ImageHeight))
+            {
+                ImageSurface.Width = h.ImageWidth;
+                ImageSurface.Height = h.ImageHeight;
+            }
+            DrawOverlay(aux, h.ImageWidth, h.ImageHeight);
         }
         catch (Exception ex)
         {
             _vm.AddLog("画像を表示できません: " + ex.Message);
+        }
+    }
+
+    private string DescribeDetections(AuxFormat1.Decoded? aux)
+    {
+        if (aux is null) return _auxNames.Count == 0 ? "-" : "（このコマには検出結果がありません）";
+        var parts = new List<string>();
+        foreach (var d in aux.Detections)
+        {
+            var name = d.Index < _auxNames.Count ? Capability.DescribeDetector(_auxNames[d.Index]) : $"#{d.Index}";
+            parts.Add($"{name} {d.Score:F2} ({d.CellX},{d.CellY}) ×{d.Cells}{(d.Active ? " ●" : d.Present ? " ○" : "")}");
+        }
+        return string.Join("　", parts);
+    }
+
+    /// <summary>Boxes for the detectors' best cells in image pixels (the Viewbox scales them with the image).</summary>
+    private void DrawOverlay(AuxFormat1.Decoded? aux, int imageWidth, int imageHeight)
+    {
+        Overlay.Children.Clear();
+        if (aux is null || !_vm.ShowOverlay || imageWidth <= 0 || imageHeight <= 0) return;
+        var cellW = imageWidth / (double)aux.GridX;
+        var cellH = imageHeight / (double)aux.GridY;
+        foreach (var d in aux.Detections)
+        {
+            if (!d.Present && !d.Active) continue;
+            var name = d.Index < _auxNames.Count ? _auxNames[d.Index] : "";
+            var brush = name.Contains("red", StringComparison.Ordinal) ? System.Windows.Media.Brushes.Red
+                      : name.Contains("green", StringComparison.Ordinal) ? System.Windows.Media.Brushes.Lime
+                      : System.Windows.Media.Brushes.Yellow;
+            var rect = new System.Windows.Shapes.Rectangle
+            {
+                Width = cellW,
+                Height = cellH,
+                Stroke = brush,
+                StrokeThickness = d.Active ? 3 : 1,
+                Opacity = 0.9,
+            };
+            System.Windows.Controls.Canvas.SetLeft(rect, d.CellX * cellW);
+            System.Windows.Controls.Canvas.SetTop(rect, d.CellY * cellH);
+            Overlay.Children.Add(rect);
+            var label = new System.Windows.Controls.TextBlock
+            {
+                Text = $"{Capability.DescribeDetector(name)} {d.Score:F2}",
+                Foreground = brush,
+                FontSize = 10,
+                FontWeight = System.Windows.FontWeights.SemiBold,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(160, 0, 0, 0)),
+                Padding = new Thickness(2, 0, 2, 0),
+            };
+            System.Windows.Controls.Canvas.SetLeft(label, d.CellX * cellW);
+            System.Windows.Controls.Canvas.SetTop(label, Math.Max(0, d.CellY * cellH - 13));
+            Overlay.Children.Add(label);
         }
     }
 

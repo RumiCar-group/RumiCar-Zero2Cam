@@ -55,6 +55,18 @@ public static class Capability
         "intersection" => "交差点",
         _ => name,
     };
+
+    /// <summary>Detector names of the cam_drive logic, shown in Japanese.</summary>
+    public static string DescribeDetector(string name) => name switch
+    {
+        "traffic_light_red" => "赤信号",
+        "traffic_light_green" => "青信号",
+        "vehicle" => "車両",
+        "intersection_left" => "交差点(左)",
+        "intersection_right" => "交差点(右)",
+        "" => "?",
+        _ => name,
+    };
 }
 
 /// <summary>Firmware throttling flags (telemetry "throttled"), shown in Japanese (docs 3.9).</summary>
@@ -108,6 +120,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _frames = "0";
     private string _images = "0";
     private bool _showImage = true;
+    private bool _showOverlay = true;
+    private string _detections = "-";
     private bool _autoRecord = true;
     private string _recordingStatus = "停止（接続すると自動で始まります）";
     private string _pushStatus = "-";
@@ -151,6 +165,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { if (Set(ref _showImage, value)) { OnPropertyChanged(nameof(ImageVisibility)); OnPropertyChanged(nameof(ImageHiddenNoteVisibility)); if (!value) Image = null; } }
     }
     public System.Windows.Visibility ImageVisibility => _showImage ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+    /// <summary>Draw the logic's detections (aux output) over the image.</summary>
+    public bool ShowOverlay { get => _showOverlay; set => Set(ref _showOverlay, value); }
+    /// <summary>Text form of the detections for the status card.</summary>
+    public string Detections { get => _detections; set => Set(ref _detections, value); }
     public System.Windows.Visibility ImageHiddenNoteVisibility => _showImage ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
     /// <summary>Start a recording session whenever a connection is made (default on).</summary>
     public bool AutoRecord
