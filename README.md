@@ -7,6 +7,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 
 - 使い方（SD カードの作成から走行・収録・データの更新まで）：この README の [使い方](#使い方) 以下
 - 仕様（設定、通信形式、配布形式、ビルド）：[docs/RumiCar-Zero2Cam 仕様書.docx](docs/RumiCar-Zero2Cam%20仕様書.docx)
+- 設計の記録（調べたこと、比べた案、決めた理由、画像ロジックの設計と実装の経緯。学習の参考に）：[docs/RumiCar-Zero2Cam 設計の記録.docx](docs/RumiCar-Zero2Cam%20設計の記録.docx)
 - 配布物：[Releases](https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases)
 
 ## 構成
@@ -15,7 +16,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 |---|---|
 | `car/` | 車載側。`rumicar-core`（制御ループ・ハードウェア・通信・差し替え機構）、走行ロジック `tof_drive`（共有ライブラリ）、同梱パック `base-tof`、単体テスト、Debian パッケージと SD イメージの作成 |
 | `pc/` | PC 側。`RumiCar.Protocol`（通信形式・manifest・収録）、`RumiCar.Protocol.Tests`、`RumiCar.DriveManager`（WPF の走行管理アプリ） |
-| `docs/` | 仕様書 |
+| `docs/` | 仕様書と設計の記録（どちらも .docx。教育目的で公開） |
 | `.github/workflows/` | 自動ビルド（`car.yml`: Debian 13 arm64/amd64 と SD イメージ、`pc.yml`: Windows、`release.yml`: タグで Release） |
 
 ---

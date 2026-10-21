@@ -7,6 +7,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 
 - How to use it (from writing the SD card to driving, recording, and updating decision data): the [How to use](#how-to-use) section below
 - Specification (settings, wire formats, distribution formats, builds): [docs/RumiCar-Zero2Cam 仕様書.docx](docs/RumiCar-Zero2Cam%20仕様書.docx) (Japanese)
+- Design record (what was investigated, the options compared, why things were decided, how the image logic was designed and built — for learning): [docs/RumiCar-Zero2Cam 設計の記録.docx](docs/RumiCar-Zero2Cam%20設計の記録.docx) (Japanese)
 - Downloads: [Releases](https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases)
 
 ## Layout
@@ -15,7 +16,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 |---|---|
 | `car/` | Car side: `rumicar-core` (control loop, hardware, network, hot-swap of versions), the driving logic `tof_drive` (shared library), the bundled pack `base-tof`, unit tests, Debian package and SD-card image builds |
 | `pc/` | PC side: `RumiCar.Protocol` (wire formats, manifests, recording), `RumiCar.Protocol.Tests`, `RumiCar.DriveManager` (WPF drive manager) |
-| `docs/` | Specification |
+| `docs/` | The specification and the design record (both .docx, in Japanese; published for learning) |
 | `.github/workflows/` | CI (`car.yml`: Debian 13 arm64/amd64 and the SD-card image, `pc.yml`: Windows, `release.yml`: releases from tags) |
 
 ---
