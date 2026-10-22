@@ -14,7 +14,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 
 | Directory | Contents |
 |---|---|
-| `car/` | Car side: `rumicar-core` (control loop, hardware, network, hot-swap of versions), the driving logic `tof_drive` (shared library), the bundled pack `base-tof`, unit tests, Debian package and SD-card image builds |
+| `car/` | Car side: `rumicar-core` (control loop, hardware, network, hot-swap of versions), the driving logic `tof_drive` and `cam_drive` (shared libraries), the bundled packs `base-tof` and `cam-base`, the learning and replay tools, unit tests, Debian package and SD-card image builds |
 | `pc/` | PC side: `RumiCar.Protocol` (wire formats, manifests, recording), `RumiCar.Protocol.Tests`, `RumiCar.DriveManager` (WPF drive manager) |
 | `docs/` | The specification and the design record (both .docx, in Japanese; published for learning) |
 | `.github/workflows/` | CI (`car.yml`: Debian 13 arm64/amd64 and the SD-card image, `pc.yml`: Windows, `release.yml`: releases from tags) |
@@ -316,6 +316,18 @@ The car is normally an access point and has no route to the Internet. To install
 sudo nmcli device wifi connect "<home SSID>" password "<password>"
 ```
 
+### 9.4 Reading the version numbers
+
+There are three kinds of version numbers, and each advances on its own.
+
+| Kind | Example | What it numbers and where it appears |
+|---|---|---|
+| Core (product) version | `v0.2.0` | The Release tag. The SD-card image, the `.deb`, the drive manager and the car's `core_version` share it. Shown as `本体 <version>` in the log when you connect |
+| Logic version | `tof_drive-0.2.0`, `cam_drive-0.2.0` | One per logic (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION` in `car/CMakeLists.txt`, `version` in its manifest). Shown in the version list and in the status panel's versions (logic / data) |
+| Pack (decision data) version | `base-tof-0.1.1`, `cam-base-0.1.0`, your own `cam-signal-0.1.0` | `version` in each pack's `manifest.json`. Give a pack you learned yourself a version that is not yet on the car (section 7) |
+
+Core 0.2.0 ships with `tof_drive-0.2.0`, `cam_drive-0.2.0`, `base-tof-0.1.1` and `cam-base-0.1.0`. When the core and a logic happen to carry the same number, they are still counted separately.
+
 ## 10. Troubleshooting
 
 | Symptom | What to check |
@@ -364,13 +376,14 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 - The image is made by `car/image/build-image.sh` (root, arm64 host: the official Raspberry Pi OS Lite 64-bit image gets the package installed in a chroot plus the first-boot settings). In CI the `image` job of `car.yml` builds it on pushes to main and on tags.
 - A Release is made by tagging a commit on main as `vX.Y.Z` and pushing the tag (or by creating a Release with a new tag on GitHub's Releases page): `release.yml` then attaches the image, the `.deb`, the PC app and `SHA256SUMS.txt`.
+- The core version is the tag's `X.Y.Z`, injected by CI (`-DRUMICAR_VERSION` in `car.yml`, `-p:Version` in `pc.yml`). A build without a tag uses `RUMICAR_VERSION` in `car/CMakeLists.txt` and `<Version>` in `pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj`, so bump both to the same number after each Release (an older number would make a locally built `.deb` a downgrade on a car that has the Release installed). The logic versions (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION`) are independent of the core version and are raised when a logic changes (9.4).
 
-## Scope of this version (0.1.x)
+## Scope of this version (0.2.0)
 
 - Car: ToF driving logic, control loop and safety behaviour, drive modes (auto / manual / record_only; record_only at start-up) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps, run only when needed) with JPEG telemetry, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager, brought up in sequence by the core) and `set_wifi`, under-voltage / throttling monitor, hot-swapping of logic / packs (from the PC or over ssh) verified by manifests that also carry a description, capabilities and source scenarios, systemd service, Debian package
 - PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving, recording with scenario names, version management, videos from recordings)
 - Car: the image logic `cam_drive` (stop at red and go on green; follow a vehicle ahead and pass a parked one; stop at intersections and go straight or turn), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic ABI 2
-- Distribution: standard SD-card image, GitHub Releases from tags
+- Distribution: standard SD-card image, GitHub Releases from tags (0.2.0: the logic contract moved from ABI 1 to ABI 2, so logic you built yourself must be rebuilt; hence the step up from 0.1.x)
 - Next: recordings and tuning on real cars (passing and turning times, how intersections look), choosing the turn by the situation (now fixed per pack, or towards the side seen)
 
 ## License

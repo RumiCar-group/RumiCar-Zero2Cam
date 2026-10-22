@@ -14,7 +14,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 
 | ディレクトリ | 内容 |
 |---|---|
-| `car/` | 車載側。`rumicar-core`（制御ループ・ハードウェア・通信・差し替え機構）、走行ロジック `tof_drive`（共有ライブラリ）、同梱パック `base-tof`、単体テスト、Debian パッケージと SD イメージの作成 |
+| `car/` | 車載側。`rumicar-core`（制御ループ・ハードウェア・通信・差し替え機構）、走行ロジック `tof_drive`・`cam_drive`（共有ライブラリ）、同梱パック `base-tof`・`cam-base`、学習・再生ツール、単体テスト、Debian パッケージと SD イメージの作成 |
 | `pc/` | PC 側。`RumiCar.Protocol`（通信形式・manifest・収録）、`RumiCar.Protocol.Tests`、`RumiCar.DriveManager`（WPF の走行管理アプリ） |
 | `docs/` | 仕様書と設計の記録（どちらも .docx。教育目的で公開） |
 | `.github/workflows/` | 自動ビルド（`car.yml`: Debian 13 arm64/amd64 と SD イメージ、`pc.yml`: Windows、`release.yml`: タグで Release） |
@@ -314,6 +314,18 @@ sudo apt install ./rumicar-zero2cam_<版>_arm64.deb
 sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 ```
 
+### 9.4 版番号の読み方
+
+版番号は 3 種類あり、それぞれ別々に進みます。
+
+| 種類 | 例 | 何の番号か・どこに出るか |
+|---|---|---|
+| 本体（製品）の版 | `v0.2.0` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>` |
+| ロジックの版 | `tof_drive-0.2.0`、`cam_drive-0.2.0` | ロジックごとの番号（`car/CMakeLists.txt` の `TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`、manifest の `version`）。「版の管理」の一覧と状態欄の「版（ロジック／データ）」 |
+| 判断データ（パック）の版 | `base-tof-0.1.1`、`cam-base-0.1.0`、自分で作った `cam-signal-0.1.0` | パックごとの `manifest.json` の `version`。自分で学習させた版は、車に入っている版と重ならない番号を付けます（7 章） |
+
+本体 0.2.0 の Release に同梱されているのは `tof_drive-0.2.0`・`cam_drive-0.2.0`・`base-tof-0.1.1`・`cam-base-0.1.0` です。本体とロジックの番号がたまたま同じでも、別の数え方です。
+
 ## 10. 困ったとき
 
 | 症状 | 確認すること |
@@ -362,13 +374,14 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 - イメージは `car/image/build-image.sh` で作ります（root、arm64 ホスト。公式 Raspberry Pi OS Lite 64bit にパッケージを chroot で導入し、初回起動の設定を加えます）。CI では main への push とタグで `car.yml` の `image` ジョブが作ります。
 - Release は、main のコミットに `vX.Y.Z` のタグを付けて push する（または GitHub の Releases ページで新しいタグを指定して Release を作る）と `release.yml` が走り、イメージ・.deb・PC アプリ・`SHA256SUMS.txt` を添付します。
+- 本体の版はタグの `X.Y.Z` を CI が埋め込みます（`car.yml` の `-DRUMICAR_VERSION`、`pc.yml` の `-p:Version`）。タグ無しでビルドしたときは `car/CMakeLists.txt` の `RUMICAR_VERSION` と `pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` の `<Version>` の値になるので、Release を出したらこの 2 つも同じ番号に上げておきます（古い番号の .deb を作ると、車に入っている版よりダウングレード扱いになるため）。ロジックの版（`TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`）は本体の版とは別に、ロジックを変えたときに上げます（9.4）。
 
-## 本版（0.1.x）の範囲
+## 本版（0.2.0）の範囲
 
 - 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときだけ動かす）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序立てて起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中差し替え（PC または ssh から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、モード、非常停止、手動操作、シナリオ付き収録、版の管理、収録からの動画作成）
 - 車：画像ロジック `cam_drive`（信号機で停止・発進、前の車両への追従と駐車車両の追い越し、交差点での停止・直進・右左折）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジック契約 ABI 2
-- 配布：標準 SD カードイメージ、タグで GitHub Release
+- 配布：標準 SD カードイメージ、タグで GitHub Release（0.2.0：ロジック契約が ABI 1 から 2 に変わり、自作ロジックは作り直しが必要なため 0.1.x から繰り上げ）
 - これから：実車での収録と調整（追い越し・右左折の時間、交差点の見え方の学習）、場面に応じた右左折の選び方（今は版ごとに固定か、見つけた側へ）
 
 ## ライセンス
