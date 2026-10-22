@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 # Version of the car software (package, core, image).  CI passes the release
 # tag here (vX.Y.Z -> X.Y.Z) so every artifact of a release carries its number.
-set(RUMICAR_VERSION "0.1.0" CACHE STRING "Version of rumicar-core and the rumicar-zero2cam package (X.Y.Z)")
+set(RUMICAR_VERSION "0.2.0" CACHE STRING "Version of rumicar-core and the rumicar-zero2cam package (X.Y.Z); CI overrides it from the release tag vX.Y.Z, so bump it after each release")
 if(NOT RUMICAR_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "RUMICAR_VERSION must be X.Y.Z, got '${RUMICAR_VERSION}'")
 endif()

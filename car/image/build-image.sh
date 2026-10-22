@@ -3,7 +3,7 @@
 # official Raspberry Pi OS Lite (64-bit) + the rumicar-zero2cam package +
 # first-boot settings (user, SSH, hostname, wireless country, config.txt).
 #
-#   sudo car/image/build-image.sh --deb rumicar-zero2cam_0.1.0_arm64.deb --out dist [options]
+#   sudo car/image/build-image.sh --deb rumicar-zero2cam_0.2.0_arm64.deb --out dist [options]
 #
 # Runs as root on an arm64 Debian/Ubuntu host (GitHub's ubuntu-24.04-arm
 # runner, or a Raspberry Pi): the package is installed natively in a chroot
