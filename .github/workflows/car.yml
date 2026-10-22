@@ -74,6 +74,7 @@ jobs:
 
       - name: Version (a release tag vX.Y.Z gives X.Y.Z; any other build gets +g<commit>)
         id: version
+        shell: bash   # the container's default sh (dash) has no ${var:0:7}
         # The release workflow has already checked that the tag equals the
         # version in car/CMakeLists.txt.  Builds that are not a release carry
         # the commit, so their core_version and .deb never pass for a release.
