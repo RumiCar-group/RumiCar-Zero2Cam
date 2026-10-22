@@ -81,3 +81,36 @@ add_custom_command(
   VERBATIM)
 add_custom_target(cam_drive_manifest ALL DEPENDS ${CAM_DRIVE_STAGE}/manifest.json)
 install(DIRECTORY ${CAM_DRIVE_STAGE}/ DESTINATION lib/rumicar/logic/cam_drive-${CAM_DRIVE_VERSION})
+
+# --- py_drive: the user's own driving program in Python (drive.py in the pack) ---
+# PY_DRIVE_VERSION is defined in the top-level CMakeLists.txt.
+add_library(py_drive_process STATIC py_drive/py_process.cpp)
+target_include_directories(py_drive_process PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/py_drive)
+
+add_library(py_drive MODULE py_drive/plugin.cpp)
+target_link_libraries(py_drive PRIVATE py_drive_process rumicar_api ${CMAKE_DL_LIBS})
+target_compile_definitions(py_drive PRIVATE PY_DRIVE_VERSION="${PY_DRIVE_VERSION}")
+set_target_properties(py_drive PROPERTIES
+  PREFIX "lib"
+  OUTPUT_NAME "py_drive"
+  CXX_VISIBILITY_PRESET hidden
+  VISIBILITY_INLINES_HIDDEN ON
+  POSITION_INDEPENDENT_CODE ON
+)
+set_target_properties(py_drive_process PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# The logic directory holds the library and runner.py, which runs drive.py.
+set(PY_DRIVE_STAGE ${CMAKE_CURRENT_BINARY_DIR}/stage/py_drive-${PY_DRIVE_VERSION})
+add_custom_command(
+  OUTPUT ${PY_DRIVE_STAGE}/manifest.json
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${PY_DRIVE_STAGE}
+  COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:py_drive> ${PY_DRIVE_STAGE}/libpy_drive.so
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/py_drive/runner.py ${PY_DRIVE_STAGE}/runner.py
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${PY_DRIVE_STAGE}
+          --name py_drive --version ${PY_DRIVE_VERSION} --entry libpy_drive.so --abi 2
+          --description "Runs your own driving program: drive.py (Python) in the pack decides steering and drive from the three distance sensors every frame"
+  DEPENDS py_drive ${CMAKE_CURRENT_SOURCE_DIR}/py_drive/runner.py ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
+  COMMENT "Writing manifest.json for py_drive ${PY_DRIVE_VERSION}"
+  VERBATIM)
+add_custom_target(py_drive_manifest ALL DEPENDS ${PY_DRIVE_STAGE}/manifest.json)
+install(DIRECTORY ${PY_DRIVE_STAGE}/ DESTINATION lib/rumicar/logic/py_drive-${PY_DRIVE_VERSION})

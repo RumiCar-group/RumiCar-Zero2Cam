@@ -1,0 +1,8 @@
+{
+  "speed": 600,
+  "slow_speed": 450,
+  "back_speed": 500,
+  "stop_mm": 100,
+  "turn_mm": 200,
+  "side_mm": 60
+}

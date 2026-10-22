@@ -101,6 +101,7 @@ jobs:
         run: |
           python3 car/tools/make_manifest.py verify car/packs/base
           python3 car/tools/make_manifest.py verify car/packs/cam-base
+          python3 car/tools/make_manifest.py verify car/packs/py-sample
 
       - name: Golden data of the vision layer is reproducible from the Python implementation
         run: python3 car/tests/data/vision/make_golden.py --check
@@ -136,6 +137,19 @@ jobs:
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/logic/cam_drive-*
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/base-tof-*
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/cam-base-*
+          python3 car/tools/make_manifest.py verify /var/lib/rumicar/logic/py_drive-*
+          python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/py-sample-*
+          test -f /var/lib/rumicar/logic/py_drive-*/runner.py
+          grep -q '"auto_accel_permille_per_s": 1125' /etc/rumicar/core.json
+          # Switching to another logic with its pack in one step, and back (rumicar-activate pair / rollback both).
+          s=$(mktemp -d) && cp -a /var/lib/rumicar/. "$s"/
+          RUMICAR_STATE_DIR="$s" rumicar-activate pair "$(basename "$(ls -d "$s"/logic/py_drive-*)")" "$(basename "$(ls -d "$s"/packs/py-sample-*)")"
+          readlink "$s/current/logic" | grep -q py_drive && readlink "$s/current/pack" | grep -q py-sample
+          RUMICAR_STATE_DIR="$s" rumicar-activate rollback both
+          readlink "$s/current/logic" | grep -q tof_drive && readlink "$s/current/pack" | grep -q base-tof
+          if RUMICAR_STATE_DIR="$s" rumicar-activate pair tof_drive-0.2.0 no-such-pack; then echo "pair with a missing pack must fail"; exit 1; fi
+          readlink "$s/current/logic" | grep -q tof_drive
+          rm -rf "$s"
           test -x /usr/bin/rumicar-replay
           test "$(stat -c %a /etc/NetworkManager/system-connections/RumiCar-AP.nmconnection)" = "600"
           test -x /usr/bin/rumicar-core && test -x /usr/bin/rumicar-activate && test -x /usr/bin/rumicar-ap-ensure

@@ -22,6 +22,10 @@ struct CoreConfig {
     int watchdog_ms = 200;           // motors are braked if the loop stalls longer than this
     int activation_poll_ms = 500;    // how often current/* links are checked for a change
     int max_drive_permille = 1000;   // global cap applied to the logic's drive command
+    // Auto mode starts from rest: after any time the logic was not driving
+    // (another mode, an emergency stop, an error) the drive allowed in auto
+    // grows from 0 at this rate (per mille per second); 0 = no start ramp.
+    int auto_accel_permille_per_s = 1125;
 
     // Paths
     std::string state_dir = "/var/lib/rumicar";

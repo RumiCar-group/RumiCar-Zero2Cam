@@ -22,13 +22,16 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
+#include "auto_output.hpp"
 #include "camera/camera_control.hpp"
 #include "camera/image_source.hpp"
 #include "car_state.hpp"
@@ -39,6 +42,7 @@
 #include "hw/vl53l0x.hpp"
 #include "log.hpp"
 #include "logic_loader.hpp"
+#include "manifest.hpp"
 #include "net/control_server.hpp"
 #include "net/telemetry_frame.hpp"
 #include "net/telemetry_server.hpp"
@@ -54,6 +58,24 @@
 #endif
 
 namespace {
+
+// True when the pack of a selection is for the logic of the selection (by the
+// manifests' names, without verifying the files).  An inconsistent pair is
+// what the loop sees for a moment when the two links are changed one after
+// the other (rumicar-activate logic ..., then pack ...).
+bool selection_matches(const rumicar::ActiveSelection& sel) {
+    try {
+        const auto read = [](const std::string& dir) {
+            std::ifstream in(dir + "/manifest.json");
+            std::stringstream ss;
+            ss << in.rdbuf();
+            return rumicar::parse_manifest(ss.str());
+        };
+        return read(sel.pack_dir).logic_name == read(sel.logic_dir).id;
+    } catch (const std::exception&) {
+        return true;   // unreadable: let the full verification report it
+    }
+}
 
 using Clock = std::chrono::steady_clock;
 using json = nlohmann::json;
@@ -188,6 +210,7 @@ int main(int argc, char** argv) {
     DriveMode startup_mode = DriveMode::RecordOnly;
     parse_drive_mode(cfg.startup_mode, startup_mode);   // validated by the config parser
     CarState state(cfg.heartbeat_timeout_ms, startup_mode);
+    state.set_max_drive(cfg.max_drive_permille);
     log::info(std::string("start-up mode ") + drive_mode_name(startup_mode) +
               (startup_mode == DriveMode::RecordOnly ? " (motors braked until the PC selects auto)" : " (drives as soon as the logic runs)"));
     Active active;
@@ -316,9 +339,13 @@ int main(int argc, char** argv) {
     std::array<hw::Vl53l0x::Status, 3> last_status{hw::Vl53l0x::Status::Ok, hw::Vl53l0x::Status::Ok, hw::Vl53l0x::Status::Ok};
     ActiveSelection last_failed_selection;
     bool have_failed_selection = false;
+    ActiveSelection deferred_selection;   // a logic/pack mismatch seen once, given one more poll
+    bool have_deferred_selection = false;
     int overruns = 0;
     const std::vector<uint8_t> no_image;
     uint32_t last_image_seq = 0;
+    AutoOutputLimiter auto_output(cfg.auto_accel_permille_per_s);
+    auto last_frame_time = Clock::now();
 
     log::info("control loop started, period " + std::to_string(cfg.loop_period_ms) + " ms");
     while (!g_stop.load()) {
@@ -377,12 +404,17 @@ int main(int argc, char** argv) {
         int8_t out_steer = RUMI_STEER_CENTER;
         int out_drive = 0;
         bool out_brake = true;
+        const double dt_s = std::chrono::duration<double>(t0 - last_frame_time).count();
+        last_frame_time = t0;
+        const bool auto_driving = !in.estop && in.mode == DriveMode::Auto && rc == 0;
+        if (!auto_driving) auto_output.idle();   // the next auto run starts from rest
         if (in.estop) {
             // braked
         } else if (in.mode == DriveMode::Auto) {
             if (rc == 0) {
                 out_steer = cmd.steer;
-                out_drive = std::clamp<int>(cmd.drive_permille, -cfg.max_drive_permille, cfg.max_drive_permille);
+                // Start ramp and the PC's auto limit (within max_drive_permille, see CarState).
+                out_drive = auto_output.drive(cmd.drive_permille, std::min(in.auto_limit, cfg.max_drive_permille), dt_s);
                 out_brake = (cmd.flags & (RUMI_CMD_FLAG_BRAKE | RUMI_CMD_FLAG_FAULT)) != 0;
             }
         } else if (in.mode == DriveMode::Manual) {
@@ -466,7 +498,12 @@ int main(int argc, char** argv) {
                 if (requested) state.complete_activation(ActivationResult{false, "", "", reason});
             } else if (*sel == active.selection) {
                 if (requested) state.complete_activation(ActivationResult{true, sel->logic_dir, sel->pack_dir, ""});
+            } else if (!requested && !selection_matches(*sel) && !(have_deferred_selection && *sel == deferred_selection)) {
+                // Probably half of a pair being switched by hand: look again at the next poll.
+                deferred_selection = *sel;
+                have_deferred_selection = true;
             } else if (!(have_failed_selection && *sel == last_failed_selection)) {
+                have_deferred_selection = false;
                 log::info("activation requested: logic " + sel->logic_dir + ", pack " + sel->pack_dir);
                 try {
                     Active fresh = load_active(store, *sel, active.lib);

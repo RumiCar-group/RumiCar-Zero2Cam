@@ -71,6 +71,16 @@ public:
     void client_connected(bool connected);
     bool client_is_connected() const;
 
+    // --- drive limits ---------------------------------------------------------
+    // max_drive_permille (core.json) caps every mode.  The auto limit is the
+    // cap for auto mode that the PC sets at run time (set_auto_limit, docs
+    // 5.2); it starts at the maximum and never exceeds it.  Not kept across a
+    // restart.
+    void set_max_drive(int permille);
+    // Returns true when the value changed (a status event is sent).  The value is clamped to 0..max.
+    bool set_auto_limit(int permille);
+    int auto_limit() const;
+
     // --- per-frame decision (loop) ------------------------------------------
     struct FrameInputs {
         DriveMode mode;
@@ -78,6 +88,7 @@ public:
         int8_t manual_steer;
         int manual_drive;
         bool manual_timed_out;   // manual mode and no heartbeat within the timeout
+        int auto_limit;          // cap of the drive in auto mode (per mille)
     };
     FrameInputs frame_inputs(Clock::time_point now) const;
 
@@ -117,6 +128,8 @@ private:
     int manual_drive_ = 0;
     Clock::time_point last_heartbeat_{};
     bool client_connected_ = false;
+    int max_drive_ = 1000;
+    int auto_limit_ = 1000;
 
     RunningStatus running_;
     uint32_t throttled_ = 0;

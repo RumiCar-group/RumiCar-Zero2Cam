@@ -14,7 +14,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 
 | Directory | Contents |
 |---|---|
-| `car/` | Car side: `rumicar-core` (control loop, hardware, network, hot-swap of versions), the driving logic `tof_drive` and `cam_drive` (shared libraries), the bundled packs `base-tof` and `cam-base`, the learning and replay tools, unit tests, Debian package and SD-card image builds |
+| `car/` | Car side: `rumicar-core` (control loop, hardware, network, hot-swap of versions), the driving logics `tof_drive`, `cam_drive` and `py_drive` (shared libraries; `py_drive` runs your own Python program), the bundled packs `base-tof`, `cam-base` and `py-sample`, the learning and replay tools, unit tests, Debian package and SD-card image builds |
 | `pc/` | PC side: `RumiCar.Protocol` (wire formats, manifests, recording), `RumiCar.Protocol.Tests`, `RumiCar.DriveManager` (WPF drive manager) |
 | `docs/` | The specification and the design record (both .docx, in Japanese; published for learning) |
 | `.github/workflows/` | CI (`car.yml`: Debian 13 arm64/amd64 and the SD-card image, `pc.yml`: Windows, `release.yml`: releases from tags) |
@@ -82,11 +82,12 @@ The drive manager's user interface is in Japanese; the table below gives the mea
 | 走行モード (drive mode) | **自動** auto: the car's logic drives / **手動** manual: driven from the PC (see "Manual driving" below) / **収録のみ** record-only: motors stopped, images and status still streamed (push the car by hand to collect data). The line below shows the start-up mode (default: record only) |
 | 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`), **シナリオ** scenario (what this recording is: e.g. "壁のみの走行データ" walls only, "信号機ありケース1" traffic light case 1; type a name or pick one used before), **メモ** note (optional), and 収録開始 / 収録停止 (start / stop). **By default a recording starts automatically on every connection** (the 「接続したら自動で収録を開始する」 checkbox) and closes on disconnect. The scenario and note at the moment the recording starts are written to `session.json`. Every received frame is saved. The "(画像付き N)" count next to 受信コマ数 grows when camera images arrive |
 | 動画を作る… (make video) | Pick a session folder; its images become `video.avi` (Motion JPEG, real time, 20 fps) in that folder. Works without a connection (6.4) |
-| 版の管理 (versions) | Logic and packs installed on the car (`[使用中]` = active, `[直前]` = previous, with verification failures shown). 一覧更新 refresh, 送る… send, 有効化 activate, 削除 delete, ロジックを戻す roll back the logic, データを戻す roll back the pack (section 6) |
+| 版の管理 (versions) | Logic and packs installed on the car (`[使用中]` = active, `[直前]` = previous, with verification failures shown; selecting one shows its description, capabilities, scenarios and which logic it is for). 一覧更新 refresh, 送る… send, 自分のプログラムを送る… send my program (section 11), 有効化 activate, 削除 delete, ロジックを戻す roll back the logic, データを戻す roll back the pack (section 6). A pack is made for one logic, so activating a pack of another logic switches that logic too (and the other way round); rolling back does the same |
+| 自動の最大出力 (auto limit) | Cap of the drive the logic may output in auto mode (default 100 %). The car remembers it until it is restarted; it can never exceed the car's `max_drive_permille`. Independent of the manual 最大出力. Switching to auto also ramps the drive up from 0 to this cap, so the car never leaps off when you switch from manual or record-only |
 | 操縦パッド (driving pad) | Usable in manual mode (see below). Underneath: the command being sent (e.g. 「操舵 左 / 前進 45.0%（パッド）」), 最大出力 (maximum output), 停止 (stop) and 左右スクロールの向きを反転 (reverse the sideways scroll) |
 | ログ (log) | Connection, responses, events and errors with timestamps. On connecting it shows the car's core version and this application's version, with a warning when they are from different releases (9.4) |
 
-The window title and the header show the application's version.
+The window title and the header show the application's version. Next to it the header shows **PC の Wi-Fi**, the network this PC is connected to. It turns red (and the log says so) when the PC leaves the network it was on when it connected to the car (normally `RumiCar`): Windows sometimes moves from an access point without Internet to another known network on its own, so look here first when the connection suddenly drops (section 10). On Windows 11 24H2 and later the name shows as unreadable until you turn on Settings → Privacy & security → Location → "Let desktop apps access your location" (Windows treats network names as location data).
 
 ### Manual driving
 
@@ -307,7 +308,7 @@ rumicar-activate show                  # active / previous versions and the last
 sudo nano /etc/rumicar/core.json       # settings (then sudo systemctl restart rumicar-core)
 ```
 
-Main settings in `/etc/rumicar/core.json` (spec 3.3): `car_name`, `startup_mode` (`record_only`, the default, or `auto` to drive at power-on), `max_drive_permille` (drive limit, 1000 = 100 %), `camera.enabled`, `camera.on_demand` (run the camera only while a PC is connected or in auto mode; default true), `camera.fps`, `network.heartbeat_timeout_ms`, `network.ap_start` (`core`, the default: the core brings the access point up in sequence; `boot`: NetworkManager does it), `network.wifi_txpower_dbm` (transmit power limit; 0 = driver default; try 10–14 when batteries sag), `power.throttled_path` (under-voltage / throttling monitor; empty disables it).
+Main settings in `/etc/rumicar/core.json` (spec 3.3): `car_name`, `startup_mode` (`record_only`, the default, or `auto` to drive at power-on), `max_drive_permille` (drive limit, 1000 = 100 %), `auto_accel_permille_per_s` (ramp of the drive when auto is entered; default 1125 = 0.8 s to 100 %; 0 = no ramp), `camera.enabled`, `camera.on_demand` (run the camera only while a PC is connected or in auto mode; default true), `camera.fps`, `network.heartbeat_timeout_ms`, `network.ap_start` (`core`, the default: the core brings the access point up in sequence; `boot`: NetworkManager does it), `network.wifi_txpower_dbm` (transmit power limit; 0 = driver default; try 10–14 when batteries sag), `power.throttled_path` (under-voltage / throttling monitor; empty disables it).
 
 ## 9. Updating
 
@@ -341,11 +342,11 @@ There are three kinds of version numbers, and each advances on its own.
 
 | Kind | Example | What it numbers and where it appears |
 |---|---|---|
-| Core (product) version | `v0.2.1` | The Release tag. The SD-card image, the `.deb`, the drive manager and the car's `core_version` share it. Shown as `本体 <version>, このアプリ <version>` in the log when you connect, and in the application's title |
+| Core (product) version | `v0.3.0` | The Release tag. The SD-card image, the `.deb`, the drive manager and the car's `core_version` share it. Shown as `本体 <version>, このアプリ <version>` in the log when you connect, and in the application's title |
 | Logic version | `tof_drive-0.2.0`, `cam_drive-0.2.0` | One per logic (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION` in `car/CMakeLists.txt`, `version` in its manifest). Shown in the version list and in the status panel's versions (logic / data) |
 | Pack (decision data) version | `base-tof-0.1.1`, `cam-base-0.1.0`, your own `cam-signal-0.1.0` | `version` in each pack's `manifest.json`. Give a pack you learned yourself a version that is not yet on the car (section 7) |
 
-Cores 0.2.0 and 0.2.1 ship with `tof_drive-0.2.0`, `cam_drive-0.2.0`, `base-tof-0.1.1` and `cam-base-0.1.0` (0.2.1 changes the drive manager's manual driving and the versioning, not the logic). When the core and a logic happen to carry the same number, they are still counted separately.
+Core 0.3.0 ships with `tof_drive-0.2.0`, `cam_drive-0.2.0`, `py_drive-0.1.0`, `base-tof-0.1.1`, `cam-base-0.1.0` and `py-sample-0.1.0`. When the core and a logic happen to carry the same number, they are still counted separately.
 
 **Builds that are not a release** (the `.deb`, SD-card image and application GitHub Actions makes for anything but a tag) carry `+g` and the first 7 characters of the commit after the number (e.g. `0.2.1+g1a2b3c4`), so they cannot be mistaken for the tagged release. Debian orders them `0.2.1` < `0.2.1+g1a2b3c4` < `0.2.2`. When the numbers (before the `+`) of the car's core and the application differ, the log warns on connecting.
 
@@ -358,12 +359,70 @@ Cores 0.2.0 and 0.2.1 ship with `tof_drive-0.2.0`, `cam_drive-0.2.0`, `base-tof-
 | No image | On the car: `sudo journalctl -u rumicar-core -b \| grep -i camera`. Camera ribbon orientation. `rpicam-hello --list-cameras` shows the camera? |
 | The car does not drive | After boot it waits in record-only mode (press 「自動」 in the app; set `startup_mode` to `auto` to drive without a PC). Does `sudo journalctl -u rumicar-core -b` start with `hardware bring-up failed`? (The I2C/PWM settings are appended to `/boot/firmware/config.txt`.) Is the e-stop latched (「非常停止解除」 in the app)? ToF readings of `--` mean SENSOR_FAULT, which stops the car |
 | Power drops or the car reboots during start-up (dry cells) | Since v0.1.3 the core starts sensors → Wi-Fi → camera in sequence and keeps the motors stopped until 「自動」 is pressed, so the power-hungry parts never start together. If it still drops out: fresh or rechargeable (NiMH) cells; lower the radio's transmit power with `network.wifi_txpower_dbm` (about 10); watch the 電源 field in the app for 「低電圧」 (on boards that report it). Drops while driving: lower `max_drive_permille` to limit the current at acceleration |
+| The PC drops off `RumiCar` by itself | The car's access point has no Internet, so Windows may treat it as unusable and move to another remembered Wi-Fi; the app's PC の Wi-Fi turns red when that happens. Set `RumiCar` to connect automatically in Windows' Wi-Fi settings and, while driving, untick "connect automatically" on your other networks (home, office), or drive where they are out of reach. A PC on wired Ethernet can keep its Wi-Fi for the car alone |
+| The car leaps off when switched to auto | Since v0.3.0 the drive ramps up from 0 when auto is entered (`auto_accel_permille_per_s`, default 1125 = 0.8 s to 100 %). Too fast: lower 自動の最大出力 in the app (reset at restart); permanently: the car's `max_drive_permille` |
+| My own program does not run | The app's log gives the reason (`drive.py の N 行目 …`, i.e. the line in drive.py). Errors after it started, and `print()`, go to the car's log (`sudo journalctl -u rumicar-core -f`). A `loop()` that takes more than 30 ms brakes that frame; no answer for 1 s stops the program (no `time.sleep()`, no endless loops). Section 11 |
 | Wi-Fi disappeared | The access point is brought up by `rumicar-core`; if the core stops, `rumicar-ap.timer` re-activates it from 90 s after boot and then every 60 s. Check `systemctl status rumicar-ap.timer` and `nmcli connection show --active` |
 | `hardware bring-up failed: open /dev/i2c-1` | The v0.1.1 image did not load the `i2c-dev` kernel module, so `/dev/i2c-1` was missing. `sudo raspi-config` → Interface Options → I2C → Yes fixes it (persists across reboots). Not needed with the v0.1.2 image and package |
 | A switch fails | The reason in the app's log (manifest mismatch, missing keys, wrong logic name…). `rumicar-activate show` on the car |
 | SSH password rejected | The first-boot setup may not have finished yet. Reboot and wait a few minutes |
 
 Please report problems in [Issues](https://github.com/RumiCar-group/RumiCar-Zero2Cam/issues) with the app's log or the output of `sudo journalctl -u rumicar-core -b`.
+
+## 11. Writing your own driving program (Python)
+
+Besides the bundled logics (`tof_drive`, `cam_drive`) the car can run **a Python program you write yourself**: the logic `py_drive` runs the `drive.py` of the pack sent to it. Unlike the learning pipeline (section 7) this is for writing the "look at the distance sensors, decide steering and drive" part in your own way. No compiler or development environment is needed: a text editor and the drive manager are enough.
+
+### 11.1 Getting started
+
+1. Copy the sample in `car/packs/py-sample/` (`drive.py` and `params.json`) to a folder of your own on the PC (e.g. `C:\Users\<you>\RumiCarData\my-drive`). The folder's name becomes the pack's name (anything but letters and digits becomes `-`).
+2. Edit `loop(car)` in `drive.py` (or leave it as it is for a first try).
+3. Connect to the car and pick that folder with **自分のプログラムを送る…** in 版の管理. The app writes the `manifest.json`, sends the folder and activates the logic `py_drive` together with it (the log says 「有効化: ロジックも py_drive-… に切り替えます」).
+4. Press 自動 and the car drives. Keep 自動の最大出力 at 30–50 % at first.
+5. After editing, send again. Every send is a new version (the version is the time it was sent) and the previous one is a データを戻す away.
+
+A line `drive.py の N 行目 …` in the app's log names the line in drive.py to fix. `print()` output and errors after the start go to the car's log (`ssh rumicar@10.42.0.1`, then `sudo journalctl -u rumicar-core -f`).
+
+### 11.2 Writing drive.py
+
+```python
+def setup(car):          # once at the start (optional)
+    car.state("START")
+
+def loop(car):           # 20 times a second (every 50 ms)
+    if car.center < 150:           # something close ahead
+        car.steer(car.LEFT if car.left > car.right else car.RIGHT)   # towards the open side
+        car.drive(400)
+    else:
+        car.steer(car.CENTER)
+        car.drive(car.params["speed"])   # a value from params.json
+```
+
+| What you can use | Meaning |
+|---|---|
+| `car.left` / `car.center` / `car.right` | The distance sensors in mm; `car.FAR` (8190) when nothing is near, `None` when a sensor gave no reading |
+| `car.params` | The contents of `params.json` (a dict): put the numbers that differ per car or course here, so the program itself need not change |
+| `car.time` / `car.dt` / `car.frame` | Seconds since the start / since the previous `loop` / frame counter |
+| `car.steer(direction)` | `car.LEFT` / `car.CENTER` / `car.RIGHT` (or `"left"` etc.). The car's steering has three positions |
+| `car.drive(value)` | `-1000` (full reverse) … `0` (stop) … `1000` (full forward). `steer()` and `drive()` values stay until changed |
+| `car.brake()` / `car.stop()` | Brake / drive 0 (coast) |
+| `car.state("NAME")` | A name for what the program is doing (letters, digits, `_`), shown as 判断状態 in the app |
+| `print(...)` | Goes to the car's log |
+
+You can put your own `.py` files next to `drive.py` and `import` them. Only Python's standard library is available on the car (no numpy etc.). The camera image is not available to `py_drive` (images go through the learning pipeline of section 7).
+
+### 11.3 What the core does for safety
+
+- `loop()` gets **30 ms** per frame; a frame it misses brakes. No answer for **1 s** stops the program and the car stays braked (activate again to restart). Do not use `time.sleep()` or endless `while` loops.
+- A frame with an exception brakes and the program goes on. Out-of-range values (`drive(5000)`) are errors too.
+- Entering auto ramps the drive up from 0, and the car never exceeds 自動の最大出力 or its `max_drive_permille`. Manual mode, record-only and the emergency stop work the same for every logic.
+- The program runs in a process of its own, so a program that hangs cannot stall the core's 50 ms control period.
+
+### 11.4 More
+
+- A sent pack lands in `/var/lib/rumicar/packs/<folder>-<time>/` on the car; `rumicar-activate pair py_drive-0.1.0 <pack>` switches to it over ssh (logic and pack are switched as a pair).
+- The ToF driving (`tof_drive`) is written in C++. When a program written in Python is to become a "real" driving logic, `car/logic/tof_drive/` is the model to follow.
+- The sample `py-sample` is also installed on the car, so you can activate `py-sample-0.1.0` from 版の管理 and watch it drive without the repository on the PC.
 
 ---
 
@@ -383,7 +442,7 @@ To install on a car, use the Debian package (the CI artifact `rumicar-zero2cam-d
 
 Without libcamera, build with `-DRUMICAR_WITH_CAMERA=OFF` (that core does not start a camera and drives on the ToF sensors only).
 
-The driving logics live in `car/logic/`: `tof_drive` (ToF driving) and `cam_drive` (the camera's judgement on top of it: `vision_features` features, `vision_pack` for `vision.bin`, `vision_eval` detector evaluation with temporal confirmation, `cam_logic` the traffic-light, vehicle and intersection behaviours and their precedence). The contract between the core and the logics is `car/include/rumicar/logic_api.h` (ABI 2: the `aux` output and `aux_name`). The Python implementation of the features and `vision.bin` is `car/tools/rumicar_vision.py`; `test_vision` checks it against the C++ bit for bit through the golden data in `car/tests/data/vision` (made by `make_golden.py`). `car/tests/tools_smoke.py <build dir>` learns from synthetic recordings and checks with `rumicar-replay` that the car stops and goes, follows and passes, and stops at an intersection (CI runs it too).
+The driving logics live in `car/logic/`: `tof_drive` (ToF driving), `cam_drive` (the camera's judgement on top of it: `vision_features` features, `vision_pack` for `vision.bin`, `vision_eval` detector evaluation with temporal confirmation, `cam_logic` the traffic-light, vehicle and intersection behaviours and their precedence) and `py_drive` (`runner.py` runs the pack's `drive.py` in a process of its own, `py_process` exchanges one line per frame; a late answer brakes the frame, a dead process brakes for good; `test_py_drive` runs the real runner). The contract between the core and the logics is `car/include/rumicar/logic_api.h` (ABI 2: the `aux` output and `aux_name`). The Python implementation of the features and `vision.bin` is `car/tools/rumicar_vision.py`; `test_vision` checks it against the C++ bit for bit through the golden data in `car/tests/data/vision` (made by `make_golden.py`). `car/tests/tools_smoke.py <build dir>` learns from synthetic recordings and checks with `rumicar-replay` that the car stops and goes, follows and passes, and stops at an intersection (CI runs it too).
 
 ## Building the PC side (Windows / .NET 10 SDK)
 
@@ -400,12 +459,13 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 - **Write the number of the next Release into the sources first, then tag.** (1) In a pull request set `RUMICAR_VERSION` in `car/CMakeLists.txt`, `<Version>` in `pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` and the `assemblyIdentity version` (`X.Y.Z.0`) in `pc/RumiCar.DriveManager/app.manifest` to the same number, (2) merge it, (3) tag that merge commit `vX.Y.Z` and push the tag. `release.yml` first checks that the tag equals those three and is a commit on main, and stops before building if not, so no Release can carry a number that differs from its contents.
 - Builds other than a tag (main, pull requests) get `+g<commit>` appended by CI (`-DRUMICAR_VERSION_SUFFIX` in `car.yml`, `-p:InformationalVersion` in `pc.yml`); a local build carries the number in the sources. The logic versions (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION`) are independent of the core version and are raised when a logic changes (9.4).
 
-## Scope of this version (0.2.1)
+## Scope of this version (0.3.0)
 
 - Car: ToF driving logic, control loop and safety behaviour, drive modes (auto / manual / record_only; record_only at start-up) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps, run only when needed) with JPEG telemetry, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager, brought up in sequence by the core) and `set_wifi`, under-voltage / throttling monitor, hot-swapping of logic / packs (from the PC or over ssh) verified by manifests that also carry a description, capabilities and source scenarios, systemd service, Debian package
-- PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving with a pad, scrolling and keys, recording with scenario names, version management, videos from recordings)
+- PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving with a pad, scrolling and keys, the auto limit, the PC's Wi-Fi, recording with scenario names, version management with paired logic/pack switching, sending your own program, videos from recordings)
 - Car: the image logic `cam_drive` (stop at red and go on green; follow a vehicle ahead and pass a parked one; stop at intersections and go straight or turn), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic ABI 2
-- Distribution: standard SD-card image, GitHub Releases from tags (0.2.0: the logic contract moved from ABI 1 to ABI 2, so logic you built yourself must be rebuilt; hence the step up from 0.1.x; 0.2.1: manual driving with the pad and scrolling, the release checks the tag against the sources, builds that are not a release carry `+g<commit>`)
+- Car: the logic `py_drive` that runs your own Python program (`drive.py`) with the sample `py-sample`, the start ramp and the auto limit (`set_auto_limit`) of auto mode, paired switching of logic and pack (`activate_pair`)
+- Distribution: standard SD-card image, GitHub Releases from tags (0.2.0: the logic contract moved from ABI 1 to ABI 2, so logic you built yourself must be rebuilt; hence the step up from 0.1.x; 0.2.1: manual driving with the pad and scrolling, the release checks the tag against the sources, builds that are not a release carry `+g<commit>`; 0.3.0: your own driving program, the auto limit and no more leaping off, the PC's Wi-Fi shown)
 - Next: recordings and tuning on real cars (passing and turning times, how intersections look), choosing the turn by the situation (now fixed per pack, or towards the side seen)
 
 ## License

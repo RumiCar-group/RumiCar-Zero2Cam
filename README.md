@@ -14,7 +14,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 
 | ディレクトリ | 内容 |
 |---|---|
-| `car/` | 車載側。`rumicar-core`（制御ループ・ハードウェア・通信・差し替え機構）、走行ロジック `tof_drive`・`cam_drive`（共有ライブラリ）、同梱パック `base-tof`・`cam-base`、学習・再生ツール、単体テスト、Debian パッケージと SD イメージの作成 |
+| `car/` | 車載側。`rumicar-core`（制御ループ・ハードウェア・通信・差し替え機構）、走行ロジック `tof_drive`・`cam_drive`・`py_drive`（共有ライブラリ。`py_drive` は自作の Python プログラムを動かす）、同梱パック `base-tof`・`cam-base`・`py-sample`、学習・再生ツール、単体テスト、Debian パッケージと SD イメージの作成 |
 | `pc/` | PC 側。`RumiCar.Protocol`（通信形式・manifest・収録）、`RumiCar.Protocol.Tests`、`RumiCar.DriveManager`（WPF の走行管理アプリ） |
 | `docs/` | 仕様書と設計の記録（どちらも .docx。教育目的で公開） |
 | `.github/workflows/` | 自動ビルド（`car.yml`: Debian 13 arm64/amd64 と SD イメージ、`pc.yml`: Windows、`release.yml`: タグで Release） |
@@ -79,12 +79,13 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 | モーター出力／ロジックの判断 | 「操舵 左／中央／右 / 前進 74.8% (191/255)」のように表示。% は駆動モーターの **PWM のデューティ比**（車は千分率 0〜1000 で扱い、1000 = 100%）、括弧内は同じ値を Arduino 版の `analogWrite` の 0〜255 に換算したもの（748‰ × 255 ÷ 1000 ≈ 191）。前進／後退／停止（惰行）／ブレーキ（両入力 High）を区別します。「モーター出力」は実際にモーターへ出した値、「ロジックの判断」はロジックがそのコマで決めた値（手動・収録のみ・非常停止中でも表示） |
 | 走行モード | **自動**：車のロジックが走行／**手動**：PC から操作（下の「手動での操作」）／**収録のみ**：モーターを止めたまま画像と状態を受信（手で動かしてデータを集めるときに）。下に「起動時のモード」（既定は収録のみ）が出ます |
 | 操縦パッド | 手動モードのときに使えます（下の「手動での操作」）。下に送っている指令（例「操舵 左 / 前進 45.0%（パッド）」）、「最大出力」、「停止」、「左右スクロールの向きを反転」があります |
+| 自動の最大出力 | 「自動」でロジックが出す駆動の上限（既定 100%）。車が覚え、車を再起動すると 100% に戻ります。車の設定 `max_drive_permille` より上にはできません。手動の「最大出力」とは別です。また「自動」に切り替えたときは、この上限まで 0 から少しずつ速くなります（手動や収録のみから切り替えても、いきなり走り出しません） |
 | 収録 | 保存先（既定 `C:\Users\<ユーザー>\RumiCarData`）、**シナリオ**（この収録が何の場面か。例：「壁のみの走行データ」「信号機ありケース1」。入力するか、前に使った名前を選ぶ）、**メモ**（任意）、「収録開始／収録停止」。**既定では接続すると自動で収録が始まり**（「接続したら自動で収録を開始する」のチェック）、切断で閉じます。シナリオとメモは収録開始時の値が `session.json` に書かれます。受信した全コマを保存します。「受信コマ数」の（画像付き N）が増えていればカメラの画像が届いています |
 | 動画を作る… | 収録フォルダを選ぶと、その画像から `video.avi`（Motion JPEG、実時間、20 コマ/秒）を同じフォルダに作ります。接続していなくても使えます（6.4） |
-| 版の管理 | 車に入っているロジック／データの一覧（`[使用中]`、`[直前]`、検証失敗の表示）。「一覧更新」「送る…」「有効化」「削除」「ロジックを戻す」「データを戻す」（6 章） |
+| 版の管理 | 車に入っているロジック／データの一覧（`[使用中]`、`[直前]`、検証失敗の表示。選ぶと説明・対応・学習元・どのロジック用かが下に出ます）。「一覧更新」「送る…」「自分のプログラムを送る…」（11 章）「有効化」「削除」「ロジックを戻す」「データを戻す」（6 章）。データ（パック）はロジックごとに作られているので、別のロジック用のデータを「有効化」すると、そのロジックも一緒に切り替わります（逆も同じ）。戻すときも同様に両方が戻ります |
 | ログ | 接続・応答・イベント・エラーを時刻付きで表示。接続時に車の本体とこのアプリの版を出し、違う Release 同士なら注意を出します（9.4） |
 
-タイトル（ウィンドウと画面左上）にアプリの版が出ます。
+タイトル（ウィンドウと画面左上）にアプリの版が出ます。その隣に **PC の Wi-Fi**（この PC がいまつながっているネットワークの名前）が出ます。車に接続したときのネットワーク（通常 `RumiCar`）から外れると赤くなり、ログにも出ます。Windows はインターネットにつながらないアクセスポイントから勝手に別のネットワークへ移ることがあるので、「急に通信が切れた」ときはまずここを見てください（10 章）。Windows 11 24H2 以降で名前が「読めません」と出るときは、Windows の 設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにします（Windows がネットワーク名を位置情報の一部として扱うため）。
 
 ### 手動での操作
 
@@ -305,7 +306,7 @@ rumicar-activate show                  # 使用中／直前の版と、最後の
 sudo nano /etc/rumicar/core.json       # 設定（変更後は sudo systemctl restart rumicar-core）
 ```
 
-主な設定（`/etc/rumicar/core.json`、仕様書 3.3）：`car_name`（車の名前）、`startup_mode`（起動時のモード：`record_only` 既定／`auto` 電源投入で走り出す）、`max_drive_permille`（駆動の上限、1000 = 100%）、`camera.enabled`、`camera.on_demand`（PC 接続中か自動モードのときだけカメラを動かす。既定 true）、`camera.fps`、`network.heartbeat_timeout_ms`、`network.ap_start`（アクセスポイントを `core` が立てる（既定）か `boot` で NetworkManager に任せるか）、`network.wifi_txpower_dbm`（無線の送信出力の上限。0 = 既定のまま。電池での電圧低下が気になるときに 10〜14 程度を試す）、`power.throttled_path`（低電圧・処理速度制限の監視。空で無効）。
+主な設定（`/etc/rumicar/core.json`、仕様書 3.3）：`car_name`（車の名前）、`startup_mode`（起動時のモード：`record_only` 既定／`auto` 電源投入で走り出す）、`max_drive_permille`（駆動の上限、1000 = 100%）、`auto_accel_permille_per_s`（「自動」に切り替えたときの立ち上がり。既定 1125 = 0.8 秒で 100%。0 で制限なし）、`camera.enabled`、`camera.on_demand`（PC 接続中か自動モードのときだけカメラを動かす。既定 true）、`camera.fps`、`network.heartbeat_timeout_ms`、`network.ap_start`（アクセスポイントを `core` が立てる（既定）か `boot` で NetworkManager に任せるか）、`network.wifi_txpower_dbm`（無線の送信出力の上限。0 = 既定のまま。電池での電圧低下が気になるときに 10〜14 程度を試す）、`power.throttled_path`（低電圧・処理速度制限の監視。空で無効）。
 
 ## 9. 更新する
 
@@ -339,11 +340,11 @@ sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 
 | 種類 | 例 | 何の番号か・どこに出るか |
 |---|---|---|
-| 本体（製品）の版 | `v0.2.1` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
+| 本体（製品）の版 | `v0.3.0` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
 | ロジックの版 | `tof_drive-0.2.0`、`cam_drive-0.2.0` | ロジックごとの番号（`car/CMakeLists.txt` の `TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`、manifest の `version`）。「版の管理」の一覧と状態欄の「版（ロジック／データ）」 |
 | 判断データ（パック）の版 | `base-tof-0.1.1`、`cam-base-0.1.0`、自分で作った `cam-signal-0.1.0` | パックごとの `manifest.json` の `version`。自分で学習させた版は、車に入っている版と重ならない番号を付けます（7 章） |
 
-本体 0.2.0 と 0.2.1 の Release に同梱されているのは `tof_drive-0.2.0`・`cam_drive-0.2.0`・`base-tof-0.1.1`・`cam-base-0.1.0` です（0.2.1 は走行管理アプリの手動操作と版の付け方の改修で、ロジックは変わっていません）。本体とロジックの番号がたまたま同じでも、別の数え方です。
+本体 0.3.0 の Release に同梱されているのは `tof_drive-0.2.0`・`cam_drive-0.2.0`・`py_drive-0.1.0`・`base-tof-0.1.1`・`cam-base-0.1.0`・`py-sample-0.1.0` です。本体とロジックの番号がたまたま同じでも、別の数え方です。
 
 **Release ではないビルド**（GitHub Actions がタグ以外で作った `.deb`・SD カードイメージ・アプリ）は、版の後ろに `+g` と commit の先頭 7 文字が付きます（例 `0.2.1+g1a2b3c4`）。タグの付いた Release の物と取り違えないためです。Debian の版の比較では `0.2.1` ＜ `0.2.1+g1a2b3c4` ＜ `0.2.2` です。車の本体とアプリの版の数字（`+` より前）が違うと、接続時のログに注意が出ます。
 
@@ -357,11 +358,69 @@ sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 | 走らない | 起動直後は「収録のみ」で待っています（アプリで「自動」を押す。PC なしで走らせるなら `startup_mode` を `auto` に）。`sudo journalctl -u rumicar-core -b` の先頭に `hardware bring-up failed` が無いか（I2C／PWM の設定は `/boot/firmware/config.txt` の末尾に追記されています）。非常停止がかかっていないか（アプリの「非常停止解除」）。ToF の値が `--`（読めず）のときは SENSOR_FAULT で止まります |
 | 起動の途中で電源が落ちる・再起動する（乾電池） | 起動時に電気を食う部分（Wi-Fi、カメラ、モーター）が重ならないよう、v0.1.3 から本体がセンサー → Wi-Fi → カメラの順に立ち上げ、モーターは「自動」を押すまで止めています。それでも落ちるときは、電池を新しいものか充電式（ニッケル水素）にする、`network.wifi_txpower_dbm` を 10 程度にして無線の送信出力を下げる、アプリの「電源」欄に「低電圧」と出ていないか見る（出る機種なら原因の切り分けに使えます）。走行中に落ちるなら `max_drive_permille` を下げて加速時の電流を抑えます |
 | Wi-Fi が途中で消えた | 本体（rumicar-core）が止まるとアクセスポイントも立ちませんが、`rumicar-ap.timer` が起動 90 秒後から 60 秒ごとに立て直します。`systemctl status rumicar-ap.timer` と `nmcli connection show --active` で確認します |
+| PC が `RumiCar` から勝手に外れる | 車の AP はインターネットにつながらないので、Windows が「使えないネットワーク」とみなして、覚えている別の Wi-Fi に移ることがあります。アプリの「PC の Wi-Fi」が赤くなったらこれです。対策：Windows の Wi-Fi 設定で `RumiCar` を「自動的に接続」にし、ほかのネットワーク（自宅や職場の Wi-Fi）の「自動的に接続」を走らせる間だけ外す。または、ほかのネットワークが届かない場所で走らせる。有線 LAN でインターネットにつないでいる PC は、Wi-Fi を車専用にできます |
+| 「自動」にしたとたん飛び出す | v0.3.0 から、自動に切り替えたときは 0 から少しずつ速くなります（`auto_accel_permille_per_s`、既定 1125 = 0.8 秒で 100%）。速すぎるときはアプリの「自動の最大出力」を下げます（再起動で戻ります）。常に抑えるなら車の `max_drive_permille` |
+| 自分のプログラムが動かない | アプリのログに理由（`drive.py の N 行目 …`）が出ます。走り出した後のエラーと `print()` は車のログ（`sudo journalctl -u rumicar-core -f`）。`loop()` が 30 ms 以内に終わらないコマはブレーキ、1 秒以上答えが無いと止まります（`time.sleep()` や無限ループは使わない）。11 章 |
 | `hardware bring-up failed: open /dev/i2c-1` | v0.1.1 のイメージはカーネルモジュール `i2c-dev` を読み込む設定が無く、`/dev/i2c-1` ができませんでした。`sudo raspi-config` → Interface Options → I2C → Yes で直ります（再起動後も有効）。v0.1.2 以降のイメージとパッケージでは不要です |
 | 切り替えに失敗する | アプリのログの理由（manifest の不一致、必須キー不足、ロジック名の不一致など）。車の `rumicar-activate show` |
 | SSH のパスワードが通らない | 初回起動の設定が反映される前の可能性。再起動して数分待つ |
 
 アプリのログ欄の内容か `sudo journalctl -u rumicar-core -b` の出力を添えて [Issues](https://github.com/RumiCar-group/RumiCar-Zero2Cam/issues) に書いてください。
+
+## 11. 自分の走行プログラムを書く（Python）
+
+同梱の走行ロジック（`tof_drive`、`cam_drive`）のほかに、**自分で書いた Python のプログラム**で車を走らせられます。ロジック `py_drive` が、送られたパックの `drive.py` を車の上で動かします。学習の仕組み（7 章）とは別に、「距離センサーの値を見て、操舵と駆動を決める」ところを自分の考えで書くためのものです。コンパイラや開発環境は要りません。テキストエディタ（メモ帳でも可）と走行管理アプリだけで書いて送れます。
+
+### 11.1 はじめかた
+
+1. リポジトリの `car/packs/py-sample/` にある見本（`drive.py` と `params.json`）を、PC の好きな場所のフォルダ（例 `C:\Users\<ユーザー>\RumiCarData\my-drive`）にコピーします。フォルダの名前がそのままデータの名前になります（英数字以外は `-` になります）。
+2. `drive.py` を開いて、`loop(car)` の中を書き換えます（最初はそのままで構いません）。
+3. 車に接続し、「版の管理」の **「自分のプログラムを送る…」** でそのフォルダを選びます。アプリが `manifest.json` を作って送り、ロジック `py_drive` とそのデータを有効にします（ログに「有効化: ロジックも py_drive-… に切り替えます」と出ます）。
+4. 「自動」を押すと走ります。最初は「自動の最大出力」を 30〜50% にしておくと安心です。
+5. 書き換えたら、もう一度「自分のプログラムを送る…」。送るたびに新しい版（送った日時が版の番号）になり、前の版は「データを戻す」で戻せます。
+
+走行管理アプリのログに `drive.py の N 行目 …` と出たら、その行を直します。`print()` の出力と走り出した後のエラーは車のログに出ます（`ssh rumicar@10.42.0.1` で `sudo journalctl -u rumicar-core -f`）。
+
+### 11.2 drive.py の書き方
+
+```python
+def setup(car):          # 始まるときに 1 回（無くてもよい）
+    car.state("START")
+
+def loop(car):           # 1 秒に 20 回（50 ms ごと）
+    if car.center < 150:           # 前が近い
+        car.steer(car.LEFT if car.left > car.right else car.RIGHT)   # 開いている側へ
+        car.drive(400)
+    else:
+        car.steer(car.CENTER)
+        car.drive(car.params["speed"])   # params.json の値
+```
+
+| 使えるもの | 意味 |
+|---|---|
+| `car.left` / `car.center` / `car.right` | 距離センサーの値（mm）。何も近くに無いときは `car.FAR`（8190）、読めないときは `None` |
+| `car.params` | `params.json` の内容（辞書）。車やコースごとに変える数はここに書くと、プログラムを直さずに済みます |
+| `car.time` / `car.dt` / `car.frame` | 始まってからの秒数／前回の `loop` からの秒数／コマ数 |
+| `car.steer(向き)` | `car.LEFT`／`car.CENTER`／`car.RIGHT`（`"left"` などの文字でも可）。車の操舵は 3 段です |
+| `car.drive(数)` | 駆動。`-1000`（全力で後退）〜 `0`（止まる）〜 `1000`（全力で前進）。`steer()` と `drive()` の値は次に変えるまで続きます |
+| `car.brake()` / `car.stop()` | ブレーキ／駆動を 0 に（惰性で止まる） |
+| `car.state("名前")` | 今していることの名前（英数字と `_`）。アプリの「判断状態」に出ます |
+| `print(...)` | 車のログに出ます |
+
+`drive.py` と同じフォルダに自分の `.py` を置いて `import` することもできます。使えるのは Python の標準ライブラリだけです（車には numpy などは入っていません）。カメラの画像は `py_drive` では使えません（画像は 7 章の学習の仕組みで）。
+
+### 11.3 安全のために本体がしていること
+
+- `loop()` 1 回に **30 ms** の時間を与え、間に合わなかったコマはブレーキします。**1 秒**答えが無いとプログラムを止め、車はブレーキしたままになります（もう一度「有効化」で再開）。`time.sleep()` や終わらない `while` は書かないでください。
+- エラー（例外）が出たコマはブレーキし、プログラムは続きます。範囲外の値（`drive(5000)` など）もエラーです。
+- 「自動」にしたときは 0 から少しずつ速くなり、「自動の最大出力」と車の `max_drive_permille` より速くは走りません。手動モード・収録のみ・非常停止は、どのロジックでも同じです。
+- プログラムは本体とは別のプロセスで動くので、プログラムが固まっても本体の制御周期（50 ms）は守られます。
+
+### 11.4 もう少し
+
+- 送られたパックは `/var/lib/rumicar/packs/<フォルダ名>-<日時>/` に入り、`rumicar-activate pair py_drive-0.1.0 <パック>` で ssh からも切り替えられます（ロジックとデータは組で切り替えます）。
+- ToF の走行（`tof_drive`）は C++ で書かれています。Python で書いたものを本物の走行ロジックに「昇格」させたいときは、`car/logic/tof_drive/` が手本です。
+- 見本 `py-sample` は車にも同梱されているので、PC にリポジトリが無くても「版の管理」から `py-sample-0.1.0` を有効化して動きを見られます。
 
 ---
 
@@ -381,7 +440,7 @@ sudo cmake --install build --prefix /usr/local   # 手動インストール
 
 libcamera 無しの環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF だけで走ります）。
 
-走行ロジックは `car/logic/` にあります：`tof_drive`（ToF 走行）と `cam_drive`（その上にカメラの判断を足したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間確定、`cam_logic` 信号機・車両・交差点の振る舞いと優先順位）。本体とロジックの契約は `car/include/rumicar/logic_api.h`（ABI 2：補助出力 `aux` と `aux_name`）です。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ と完全一致することを `test_vision` が確かめます。`car/tests/tools_smoke.py <build dir>` は合成収録から学習して `rumicar-replay` で止まる・進む、追従して追い越す、交差点で止まるまでを通しで確かめます（CI でも実行）。
+走行ロジックは `car/logic/` にあります：`tof_drive`（ToF 走行）、`cam_drive`（その上にカメラの判断を足したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間確定、`cam_logic` 信号機・車両・交差点の振る舞いと優先順位）、`py_drive`（パックの `drive.py` を `runner.py` が別プロセスで動かし、`py_process` がコマごとに 1 行で送受信。時間切れ・異常終了でブレーキ。`test_py_drive` が本物の runner で確かめます）。本体とロジックの契約は `car/include/rumicar/logic_api.h`（ABI 2：補助出力 `aux` と `aux_name`）です。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ と完全一致することを `test_vision` が確かめます。`car/tests/tools_smoke.py <build dir>` は合成収録から学習して `rumicar-replay` で止まる・進む、追従して追い越す、交差点で止まるまでを通しで確かめます（CI でも実行）。
 
 ## PC 側のビルド（Windows / .NET 10 SDK）
 
@@ -398,12 +457,13 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 - 本体の版は、**次に出す Release の番号をソースに先に書いてからタグを付けます**。手順：(1) プルリクエストで `car/CMakeLists.txt` の `RUMICAR_VERSION`、`pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` の `<Version>`、`pc/RumiCar.DriveManager/app.manifest` の `assemblyIdentity version`（`X.Y.Z.0`）を同じ番号にする、(2) マージする、(3) そのマージの commit に `vX.Y.Z` のタグを付けて push する。`release.yml` は最初にタグとこの 3 か所が一致し、タグが main の commit であることを確かめ、違えばビルドせずに止まります（タグと中身の番号が食い違った Release を作らないため）。
 - タグ以外のビルド（main・プルリクエスト）では、CI が版の後ろに `+g<commit>` を付けます（`car.yml` の `-DRUMICAR_VERSION_SUFFIX`、`pc.yml` の `-p:InformationalVersion`）。手元でのビルドはソースの番号のままです。ロジックの版（`TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`）は本体の版とは別に、ロジックを変えたときに上げます（9.4）。
 
-## 本版（0.2.1）の範囲
+## 本版（0.3.0）の範囲
 
 - 車：ToF 走行ロジック、制御ループと安全動作、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときだけ動かす）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序立てて起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中差し替え（PC または ssh から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
-- PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、モード、非常停止、手動操作（操縦パッド・スクロール・キー）、シナリオ付き収録、版の管理、収録からの動画作成）
+- PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、モード、非常停止、手動操作（操縦パッド・スクロール・キー）、自動の最大出力、PC の Wi-Fi の表示、シナリオ付き収録、版の管理（ロジックとデータの組での切り替え）、自分のプログラムの送信、収録からの動画作成）
 - 車：画像ロジック `cam_drive`（信号機で停止・発進、前の車両への追従と駐車車両の追い越し、交差点での停止・直進・右左折）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジック契約 ABI 2
-- 配布：標準 SD カードイメージ、タグで GitHub Release（0.2.0：ロジック契約が ABI 1 から 2 に変わり、自作ロジックは作り直しが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに、タグとソースの版の一致を Release で検査、Release でないビルドに `+g<commit>`）
+- 車：自作の走行プログラム（Python の `drive.py`）を走らせるロジック `py_drive` と見本 `py-sample`、自動モードの立ち上がり制限と最大出力（`set_auto_limit`）、ロジックとデータの組での切り替え（`activate_pair`）
+- 配布：標準 SD カードイメージ、タグで GitHub Release（0.2.0：ロジック契約が ABI 1 から 2 に変わり、自作ロジックは作り直しが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに、タグとソースの版の一致を Release で検査、Release でないビルドに `+g<commit>`。0.3.0：自作の走行プログラム、自動の最大出力と急発進の防止、PC の Wi-Fi 表示）
 - これから：実車での収録と調整（追い越し・右左折の時間、交差点の見え方の学習）、場面に応じた右左折の選び方（今は版ごとに固定か、見つけた側へ）
 
 ## ライセンス

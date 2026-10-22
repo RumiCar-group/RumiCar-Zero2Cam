@@ -3,7 +3,8 @@
 #
 #   rumicar-activate logic <dir-name>     e.g. tof_drive-0.2.0
 #   rumicar-activate pack  <dir-name>     e.g. base-tof-0.1.0
-#   rumicar-activate rollback logic|pack  back to the previous selection
+#   rumicar-activate pair <logic-dir> <pack-dir>   both at once (another logic needs its own pack)
+#   rumicar-activate rollback logic|pack|both      back to the previous selection
 #   rumicar-activate show
 #
 # Directories live under $RUMICAR_STATE_DIR (default /var/lib/rumicar):
@@ -16,7 +17,7 @@ set -eu
 
 STATE_DIR="${RUMICAR_STATE_DIR:-/var/lib/rumicar}"
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 link_atomic() { # link_atomic <kind> <relative target>
     kind="$1"; target="$2"
@@ -31,7 +32,7 @@ link_atomic() { # link_atomic <kind> <relative target>
     sync
 }
 
-activate() { # activate <kind> <dir-name>
+check() { # check <kind> <dir-name>: prints the relative link target
     kind="$1"; name="$2"
     case "$kind" in
         logic) sub=logic ;;
@@ -44,12 +45,40 @@ activate() { # activate <kind> <dir-name>
     dir="$STATE_DIR/$sub/$name"
     [ -d "$dir" ] || { echo "error: $dir does not exist" >&2; exit 1; }
     [ -f "$dir/manifest.json" ] || { echo "error: $dir has no manifest.json" >&2; exit 1; }
-    link_atomic "$kind" "../$sub/$name"
-    echo "current/$kind -> ../$sub/$name"
+    echo "../$sub/$name"
 }
 
-rollback() { # rollback <kind>
+activate() { # activate <kind> <dir-name>
+    target="$(check "$1" "$2")"
+    link_atomic "$1" "$target"
+    echo "current/$1 -> $target"
+}
+
+pair() { # pair <logic-dir> <pack-dir>: both checked first, then written back to back
+    # (the core waits one poll before rejecting a logic/pack mismatch, docs 3.5)
+    logic_target="$(check logic "$1")"
+    pack_target="$(check pack "$2")"
+    link_atomic logic "$logic_target"
+    link_atomic pack "$pack_target"
+    echo "current/logic -> $logic_target"
+    echo "current/pack -> $pack_target"
+}
+
+rollback() { # rollback <kind>|both
+    if [ "$1" = both ]; then
+        for kind in logic pack; do
+            [ -L "$STATE_DIR/previous/$kind" ] || { echo "error: no previous $kind" >&2; exit 1; }
+        done
+        logic_target="$(readlink "$STATE_DIR/previous/logic")"
+        pack_target="$(readlink "$STATE_DIR/previous/pack")"
+        link_atomic logic "$logic_target"
+        link_atomic pack "$pack_target"
+        echo "current/logic -> $logic_target"
+        echo "current/pack -> $pack_target"
+        return 0
+    fi
     kind="$1"
+    case "$kind" in logic|pack) ;; *) usage ;; esac
     [ -L "$STATE_DIR/previous/$kind" ] || { echo "error: no previous $kind" >&2; exit 1; }
     target="$(readlink "$STATE_DIR/previous/$kind")"
     link_atomic "$kind" "$target"
@@ -76,6 +105,7 @@ show() {
 [ $# -ge 1 ] || usage
 case "$1" in
     logic|pack) [ $# -eq 2 ] || usage; activate "$1" "$2" ;;
+    pair)       [ $# -eq 3 ] || usage; pair "$2" "$3" ;;
     rollback)   [ $# -eq 2 ] || usage; rollback "$2" ;;
     show)       show ;;
     *) usage ;;

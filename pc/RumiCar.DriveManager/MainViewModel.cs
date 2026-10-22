@@ -12,6 +12,8 @@ public sealed class VersionRow
 {
     public string Kind { get; init; } = "";       // "logic" or "pack"
     public string Name { get; init; } = "";       // directory name
+    public string Id { get; init; } = "";         // pack id or logic name
+    public string Logic { get; init; } = "";      // pack: the logic it is for (empty from cores before 0.3.0)
     public string Version { get; init; } = "";
     public bool Verified { get; init; }
     public string Error { get; init; } = "";
@@ -31,7 +33,7 @@ public sealed class VersionRow
     {
         get
         {
-            var parts = new List<string> { $"{(Kind == "logic" ? "ロジック" : "データ")} {Name}" };
+            var parts = new List<string> { $"{(Kind == "logic" ? "ロジック" : "データ")} {Name}" + (Logic.Length > 0 ? $"（{Logic} 用）" : "") };
             if (Description.Length > 0) parts.Add(Description);
             if (Capabilities.Count > 0) parts.Add("対応: " + Capability.Describe(Capabilities));
             if (Scenarios.Count > 0) parts.Add("学習元: " + string.Join(", ", Scenarios));
@@ -156,6 +158,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _invertHorizontal;
     private bool _manualEnabled;
     private string _manualStatus = "手動モードにすると操作できます";
+    private int _autoLimit = 1000;
+    private bool _autoLimitEnabled;
+    private string _autoLimitNote = "接続すると車の値を読みます";
+    private string _pcWifi = "PC の Wi-Fi: -";
+    private bool _pcWifiWarning;
+    private string _pcWifiHint = "";
 
     public string Host { get => _host; set => Set(ref _host, value); }
     public string CarName { get => _carName; set => Set(ref _carName, value); }
@@ -225,6 +233,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public System.Windows.Visibility ManualHintVisibility => _manualEnabled ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
     /// <summary>The manual command being sent, in words.</summary>
     public string ManualStatus { get => _manualStatus; set => Set(ref _manualStatus, value); }
+    /// <summary>Cap of the drive in auto mode (per mille), as the car reports it; the slider changes it (set_auto_limit).</summary>
+    public int AutoLimit
+    {
+        get => _autoLimit;
+        set { if (Set(ref _autoLimit, Math.Clamp(value, 0, 1000))) OnPropertyChanged(nameof(AutoLimitText)); }
+    }
+    public string AutoLimitText => $"{_autoLimit / 10.0:F0}%";
+    /// <summary>Connected to a car that knows set_auto_limit (core 0.3.0 and later).</summary>
+    public bool AutoLimitEnabled { get => _autoLimitEnabled; set => Set(ref _autoLimitEnabled, value); }
+    public string AutoLimitNote { get => _autoLimitNote; set => Set(ref _autoLimitNote, value); }
+    /// <summary>The Wi-Fi network of this PC (shown in the header).</summary>
+    public string PcWifi { get => _pcWifi; set => Set(ref _pcWifi, value); }
+    /// <summary>The PC left the car's network while connected to the car.</summary>
+    public bool PcWifiWarning { get => _pcWifiWarning; set => Set(ref _pcWifiWarning, value); }
+    public string PcWifiHint { get => _pcWifiHint; set => Set(ref _pcWifiHint, value); }
     /// <summary>Version of this application (the release tag's number), shown in the header.</summary>
     public string AppVersion { get; init; } = "";
 

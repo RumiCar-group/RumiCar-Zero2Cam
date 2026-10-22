@@ -33,6 +33,7 @@ public sealed class Manifest
     // common
     [JsonPropertyName("version")] public string Version { get; set; } = "";
     [JsonPropertyName("created")] public string? Created { get; set; }
+    [JsonPropertyName("description")] public string? Description { get; set; }
     [JsonPropertyName("files")] public List<ManifestFile> Files { get; set; } = new();
 
     public bool IsPack => Kind == "pack";

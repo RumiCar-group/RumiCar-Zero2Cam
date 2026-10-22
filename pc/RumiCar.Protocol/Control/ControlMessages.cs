@@ -15,7 +15,9 @@ public static class RequestType
     public const string EStopClear = "estop_clear";
     public const string ListVersions = "list_versions";
     public const string Activate = "activate";
+    public const string ActivatePair = "activate_pair";
     public const string Rollback = "rollback";
+    public const string SetAutoLimit = "set_auto_limit";
     public const string SetWifi = "set_wifi";
     public const string GetLog = "get_log";
     public const string UploadBegin = "upload_begin";
@@ -139,10 +141,28 @@ public static class ControlCodec
         return Build(id, RequestType.Activate, new { kind, name = directoryName });
     }
 
+    /// <summary>A logic and a pack for it in one step (switching to another logic, docs 5.2).</summary>
+    public static ControlRequest ActivatePair(long id, string logicDirectory, string packDirectory)
+    {
+        ValidateDirectoryName(logicDirectory, nameof(logicDirectory));
+        ValidateDirectoryName(packDirectory, nameof(packDirectory));
+        return Build(id, RequestType.ActivatePair, new { logic = logicDirectory, pack = packDirectory });
+    }
+
     public static ControlRequest Rollback(long id, string kind)
     {
         ValidateKind(kind);
         return Build(id, RequestType.Rollback, new { kind });
+    }
+
+    /// <summary>Back to the previous logic and pack together (undoes activate_pair).</summary>
+    public static ControlRequest RollbackBoth(long id) => Build(id, RequestType.Rollback, new { kind = "both" });
+
+    /// <summary>Cap of the drive in auto mode, per mille (the car clamps it to its max_drive_permille).</summary>
+    public static ControlRequest SetAutoLimit(long id, int drivePermille)
+    {
+        if (drivePermille is < 0 or > 1000) throw new ArgumentOutOfRangeException(nameof(drivePermille));
+        return Build(id, RequestType.SetAutoLimit, new { drive_permille = drivePermille });
     }
 
     /// <summary>Temporary (until reboot) access-point change.</summary>
@@ -191,6 +211,12 @@ public static class ControlCodec
         if (directoryName.Length == 0 || directoryName.Contains('/') || directoryName.Contains('\\') || directoryName.StartsWith('.'))
             throw new ArgumentException("bad directory name", nameof(directoryName));
         return Build(id, RequestType.DeleteVersion, new { kind, name = directoryName });
+    }
+
+    private static void ValidateDirectoryName(string name, string param)
+    {
+        if (name.Length == 0 || name.Contains('/') || name.Contains('\\') || name.StartsWith('.'))
+            throw new ArgumentException("bad directory name", param);
     }
 
     private static void ValidateKind(string kind)

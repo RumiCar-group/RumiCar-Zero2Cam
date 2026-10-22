@@ -6,6 +6,7 @@
   "watchdog_ms": 200,
   "activation_poll_ms": 500,
   "max_drive_permille": 1000,
+  "auto_accel_permille_per_s": 1125,
   "paths": {
     "state_dir": "/var/lib/rumicar"
   },
