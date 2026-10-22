@@ -1,7 +1,8 @@
 name: release
 
-# Tag a commit on main as vX.Y.Z and push the tag: the car and PC builds run,
-# the SD-card image is made, and a GitHub Release carries all of them.
+# Tag a commit on main as vX.Y.Z and push the tag: the tag is checked against
+# the versions in the sources, the car and PC builds run, the SD-card image is
+# made, and a GitHub Release carries all of them.
 on:
   push:
     tags: ['v*']
@@ -10,9 +11,38 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    # The tag must be the version written in the sources (docs 7.3), so the
+    # number on the release, in its files and inside the programs is one and
+    # the same, and a build of the same commit without the tag differs only
+    # by the +g<commit> metadata.  It must also be on main.
+    name: Tag matches the versions in the sources
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Compare
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::tag $tag is not vX.Y.Z"; exit 1; }
+          v="${tag#v}"
+          car="$(sed -n 's/^set(RUMICAR_VERSION "\([^"]*\)".*/\1/p' car/CMakeLists.txt)"
+          app="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj)"
+          manifest="$(sed -n 's/.*assemblyIdentity version="\([^"]*\)".*/\1/p' pc/RumiCar.DriveManager/app.manifest)"
+          echo "tag $v, car/CMakeLists.txt $car, RumiCar.DriveManager.csproj $app, app.manifest $manifest"
+          fail=0
+          [ "$car" = "$v" ] || { echo "::error::car/CMakeLists.txt RUMICAR_VERSION is $car, the tag is $tag"; fail=1; }
+          [ "$app" = "$v" ] || { echo "::error::RumiCar.DriveManager.csproj <Version> is $app, the tag is $tag"; fail=1; }
+          [ "$manifest" = "$v.0" ] || { echo "::error::app.manifest assemblyIdentity version is $manifest, expected $v.0"; fail=1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$tag is not a commit on main"; fail=1; }
+          [ "$fail" = 0 ] || { echo "Change the versions in a pull request, merge it, then tag that merge commit."; exit 1; }
+
   car:
+    needs: check
     uses: ./.github/workflows/car.yml
   pc:
+    needs: check
     uses: ./.github/workflows/pc.yml
 
   publish:

@@ -152,6 +152,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _pushStatus = "-";
     private VersionRow? _selectedVersion;
     private BitmapImage? _image;
+    private int _manualMaxDrive = 600;
+    private bool _invertHorizontal;
+    private bool _manualEnabled;
+    private string _manualStatus = "手動モードにすると操作できます";
 
     public string Host { get => _host; set => Set(ref _host, value); }
     public string CarName { get => _carName; set => Set(ref _carName, value); }
@@ -206,6 +210,23 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public VersionRow? SelectedVersion { get => _selectedVersion; set => Set(ref _selectedVersion, value); }
     public ObservableCollection<VersionRow> InstalledVersions { get; } = new();
     public BitmapImage? Image { get => _image; set => Set(ref _image, value); }
+
+    /// <summary>Upper limit of the manual drive (per mille) for the pad, the scroll and the ↑ ↓ keys.</summary>
+    public int ManualMaxDrive
+    {
+        get => _manualMaxDrive;
+        set { if (Set(ref _manualMaxDrive, Math.Clamp(value, 100, 1000))) OnPropertyChanged(nameof(ManualMaxDriveText)); }
+    }
+    public string ManualMaxDriveText => $"{_manualMaxDrive / 10.0:F0}%";
+    /// <summary>Reverse the horizontal scroll (touchpads set to the other scrolling direction).</summary>
+    public bool InvertHorizontal { get => _invertHorizontal; set => Set(ref _invertHorizontal, value); }
+    /// <summary>The car is connected and in manual mode: the pad and the keys drive.</summary>
+    public bool ManualEnabled { get => _manualEnabled; set { if (Set(ref _manualEnabled, value)) OnPropertyChanged(nameof(ManualHintVisibility)); } }
+    public System.Windows.Visibility ManualHintVisibility => _manualEnabled ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+    /// <summary>The manual command being sent, in words.</summary>
+    public string ManualStatus { get => _manualStatus; set => Set(ref _manualStatus, value); }
+    /// <summary>Version of this application (the release tag's number), shown in the header.</summary>
+    public string AppVersion { get; init; } = "";
 
     public ObservableCollection<string> Log { get; } = new();
 

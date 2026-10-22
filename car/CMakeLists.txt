@@ -1,11 +1,21 @@
 cmake_minimum_required(VERSION 3.25)
-# Version of the car software (package, core, image).  CI passes the release
-# tag here (vX.Y.Z -> X.Y.Z) so every artifact of a release carries its number.
-set(RUMICAR_VERSION "0.2.0" CACHE STRING "Version of rumicar-core and the rumicar-zero2cam package (X.Y.Z); CI overrides it from the release tag vX.Y.Z, so bump it after each release")
+# Version of the car software (package, core, image) = the product version
+# (docs 2.1, 7.3).  It is the number of the next (or current) release: change it
+# in the pull request that prepares a release, then tag the merge vX.Y.Z; the
+# release workflow refuses a tag that differs from this value.  CI builds that
+# are not a release add the commit as build metadata (RUMICAR_VERSION_SUFFIX
+# "+g<commit>"), so their core_version and .deb never pass for the release.
+set(RUMICAR_VERSION "0.2.1" CACHE STRING "Product version X.Y.Z (the release tag without the v)")
+set(RUMICAR_VERSION_SUFFIX "" CACHE STRING "Build metadata for builds that are not a release, e.g. +g1a2b3c4 (empty for a release)")
 if(NOT RUMICAR_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "RUMICAR_VERSION must be X.Y.Z, got '${RUMICAR_VERSION}'")
 endif()
+if(NOT RUMICAR_VERSION_SUFFIX MATCHES "^(\\+[0-9A-Za-z.]+)?$")
+  message(FATAL_ERROR "RUMICAR_VERSION_SUFFIX must be empty or +<letters, digits, dots>, got '${RUMICAR_VERSION_SUFFIX}'")
+endif()
 project(RumiCarZero2Cam VERSION ${RUMICAR_VERSION} LANGUAGES CXX)
+set(RUMICAR_FULL_VERSION "${RUMICAR_VERSION}${RUMICAR_VERSION_SUFFIX}")
+message(STATUS "RumiCar Zero2Cam ${RUMICAR_FULL_VERSION}")
 
 include(GNUInstallDirs)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -71,7 +81,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/packs/cam-base/ DESTINATION share/
 # --- Debian package (cpack -G DEB in the build directory) ----------------------
 set(CPACK_GENERATOR DEB)
 set(CPACK_PACKAGE_NAME rumicar-zero2cam)
-set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VERSION ${RUMICAR_FULL_VERSION})   # Debian: 0.2.1 < 0.2.1+g1a2b3c4 < 0.2.2
 set(CPACK_PACKAGE_CONTACT "RumiCar-group <https://github.com/RumiCar-group/RumiCar-Zero2Cam>")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RumiCar Zero2Cam car software: control loop, ToF driving logic, access point, PC link")
 set(CPACK_SET_DESTDIR ON)   # install() rules use CMAKE_INSTALL_PREFIX (/usr) and absolute /etc paths
