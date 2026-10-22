@@ -1,6 +1,6 @@
 # rumicar-core: control loop, hardware layer, pack/logic management.
 
-set(RUMICAR_CORE_VERSION "${PROJECT_VERSION}")
+set(RUMICAR_CORE_VERSION "${RUMICAR_FULL_VERSION}")   # reported as core_version in hello
 
 option(RUMICAR_WITH_CAMERA "Capture images with libcamera (needs libcamera-dev and libturbojpeg0-dev)" ON)
 

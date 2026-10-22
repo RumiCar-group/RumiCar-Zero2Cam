@@ -31,6 +31,8 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Orientation="Horizontal">
                 <TextBlock Text="RumiCar 走行管理" Style="{StaticResource Text.Title}"/>
+                <TextBlock Text="{Binding AppVersion}" Style="{StaticResource Text.Muted}" Margin="8,0,0,2" VerticalAlignment="Bottom"
+                           ToolTip="このアプリの版（Release のタグの番号）。「+g」の後ろに英数字が付くのは Release ではないビルド（その commit）"/>
                 <Border Style="{StaticResource Pill}" Margin="12,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="{Binding ConnectionState}" FontSize="12" Foreground="{StaticResource Brush.Accent}" FontWeight="SemiBold"/>
                 </Border>
@@ -56,7 +58,7 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <Border x:Name="ImageBorder" Grid.Row="0" Background="{StaticResource Brush.ImageBackground}" CornerRadius="8,8,0,0"
-                        Focusable="True" MouseLeftButtonDown="OnImageClick">
+                        Focusable="True" MouseLeftButtonDown="OnImageClick" MouseWheel="OnDriveWheel">
                     <Grid>
                         <!-- The image and the overlay share one coordinate system (image pixels) inside a Viewbox. -->
                         <Viewbox Stretch="Uniform" Margin="8" Visibility="{Binding ImageVisibility}">
@@ -168,8 +170,55 @@
                             <Button Content="手動" Tag="manual" Style="{StaticResource Button.Mode}" Margin="6,0,0,0" Click="OnModeManualClick" IsEnabled="{Binding Connected}"/>
                             <Button Content="収録のみ" Tag="record_only" Style="{StaticResource Button.Mode}" Margin="6,0,0,0" Click="OnModeRecordOnlyClick" IsEnabled="{Binding Connected}"/>
                         </StackPanel>
-                        <TextBlock Style="{StaticResource Text.Muted}" Margin="0,8,0,0"
-                                   Text="手動：矢印キー（↑ 前進 ↓ 後退 ← → 操舵）。手動モードで画像をクリックしてから操作します。"/>
+
+                        <!-- Manual driving pad (docs 6.2): press and drag, scroll, or the arrow keys -->
+                        <Border x:Name="DrivePad" Height="190" Margin="0,10,0,0" CornerRadius="8" BorderThickness="1"
+                                BorderBrush="{StaticResource Brush.CardBorder}" Background="{StaticResource Brush.LogBackground}"
+                                Focusable="True" Cursor="Hand" IsEnabled="{Binding ManualEnabled}"
+                                MouseDown="OnPadMouseDown" MouseMove="OnPadMouseMove" MouseUp="OnPadMouseUp"
+                                LostMouseCapture="OnPadLostCapture" MouseWheel="OnDriveWheel"
+                                ToolTip="押したまま動かす：上 = 前進・下 = 後退（中心から離すほど速い）、左右の 1/3 = 操舵。離すと止まる&#x0a;上下スクロール：速度を設定（そのまま走り続ける）　左右スクロール（2 本指で横・Shift + ホイール）：その間だけ操舵&#x0a;右クリック・中クリック・Space：停止">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="33.5*"/>
+                                    <ColumnDefinition Width="33*"/>
+                                    <ColumnDefinition Width="33.5*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Background="{StaticResource Brush.AccentSoft}" Opacity="0.55" CornerRadius="7,0,0,7"/>
+                                <Border Grid.Column="2" Background="{StaticResource Brush.AccentSoft}" Opacity="0.55" CornerRadius="0,7,7,0"/>
+                                <Rectangle Grid.ColumnSpan="3" Height="1" Fill="{StaticResource Brush.ButtonBorder}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="前進" Style="{StaticResource Text.Muted}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,6,0,0"/>
+                                <TextBlock Grid.Column="1" Text="後退" Style="{StaticResource Text.Muted}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,6"/>
+                                <TextBlock Grid.Column="0" Text="← 左" Style="{StaticResource Text.Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,24"/>
+                                <TextBlock Grid.Column="2" Text="右 →" Style="{StaticResource Text.Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,24"/>
+                                <TextBlock Grid.Column="1" Text="停止" Style="{StaticResource Text.Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,24"/>
+                                <Canvas Grid.ColumnSpan="3" IsHitTestVisible="False">
+                                    <Ellipse x:Name="PadMarker" Width="18" Height="18" Fill="{StaticResource Brush.Accent}" Stroke="White" StrokeThickness="2" Visibility="Collapsed"/>
+                                </Canvas>
+                                <TextBlock Grid.ColumnSpan="3" Text="「手動」にすると操作できます" Style="{StaticResource Text.Muted}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="{Binding ManualHintVisibility}" Margin="0,24,0,0"/>
+                            </Grid>
+                        </Border>
+                        <TextBlock Text="{Binding ManualStatus}" Style="{StaticResource Text.Value}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="最大出力" Style="{StaticResource Text.Label}" VerticalAlignment="Center"
+                                       ToolTip="パッドの端・スクロール・↑ ↓ キーで出す駆動の上限。車の設定 max_drive_permille でも制限されます"/>
+                            <Slider Grid.Column="1" Minimum="100" Maximum="1000" SmallChange="50" LargeChange="100" TickFrequency="50" IsSnapToTickEnabled="True"
+                                    Value="{Binding ManualMaxDrive}" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="{Binding ManualMaxDriveText}" Style="{StaticResource Text.Value}" Width="44" TextAlignment="Right" VerticalAlignment="Center"/>
+                            <Button Grid.Column="3" Content="停止" MinWidth="64" Margin="8,0,0,0" Click="OnManualStopClick" IsEnabled="{Binding ManualEnabled}"
+                                    ToolTip="手動の指令を 0（停止・中央）にします（Space キーと同じ）。非常停止ではありません"/>
+                        </Grid>
+                        <CheckBox Content="左右スクロールの向きを反転" IsChecked="{Binding InvertHorizontal}" Margin="0,6,0,0"
+                                  ToolTip="タッチパッドの設定によって、2 本指で右へ動かしたのに左へ切れるときにオンにします"/>
+                        <TextBlock Style="{StaticResource Text.Muted}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Text="手動：パッドを押したまま動かす（離すと止まる）／上下スクロールで速度、左右スクロールで操舵（画像の上でも可）／矢印キー（↑ ↓ ← →）。Space・右クリックで停止。ウィンドウから離れると止まります。"/>
                         <TextBlock Style="{StaticResource Text.Muted}" Margin="0,4,0,0">
                             <Run Text="起動時のモード: "/><Run Text="{Binding StartupMode}"/><Run Text="（収録のみ = 電源を入れても走らず、「自動」を押すと走り出します）"/>
                         </TextBlock>

@@ -79,11 +79,30 @@ The drive manager's user interface is in Japanese; the table below gives the mea
 | Image | Latest camera image (320×240, about 20 frames/s). Untick 「画像を表示」 to stop only the display (frames are still received and recorded; lowers the PC load) |
 | 状態 (status) | モード = mode; 非常停止 = e-stop (green = none, red = active, with reason); 判断状態 = logic state (CRUISE / TURN_LEFT / TURN_RIGHT / EMERGENCY_BRAKE / RECOVER_REVERSE / SENSOR_FAULT); ToF 左/中/右 = left/centre/right distance [mm] (`open` = nothing nearby, `--` = no reading); モーター出力 = what went to the motors; ロジックの判断 = what the logic decided; 版 = logic / pack versions; **判断データ** = the active pack's name, version and description; **対応機能** = what it handles (壁 walls / 信号機 traffic light / 車両 vehicle / 交差点 intersection); **学習元** = the recorded scenarios it was built from and its parent version; **電源** = under-voltage / throttling reported by the car's firmware (「正常（低電圧なし）」 is normal) |
 | モーター出力 / ロジックの判断 | Shown as 「操舵 左/中央/右 / 前進 74.8% (191/255)」: steering left/centre/right, then 前進 forward / 後退 reverse / 停止 coast / ブレーキ brake. The percentage is the **PWM duty cycle** of the drive motor (the car uses per mille 0–1000) and the bracketed value is the same duty on the Arduino `analogWrite` scale 0–255 (748 × 255 ÷ 1000 ≈ 191). モーター出力 is what actually went to the motors; ロジックの判断 is what the logic decided for that frame (shown even in manual, record-only and e-stop) |
-| 走行モード (drive mode) | **自動** auto: the car's logic drives / **手動** manual: arrow keys on the PC (↑ forward 50 %, ↓ reverse 50 %, ←→ steer; click the image first so the keys reach the car) / **収録のみ** record-only: motors stopped, images and status still streamed (push the car by hand to collect data). The line below shows the start-up mode (default: record only) |
+| 走行モード (drive mode) | **自動** auto: the car's logic drives / **手動** manual: driven from the PC (see "Manual driving" below) / **収録のみ** record-only: motors stopped, images and status still streamed (push the car by hand to collect data). The line below shows the start-up mode (default: record only) |
 | 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`), **シナリオ** scenario (what this recording is: e.g. "壁のみの走行データ" walls only, "信号機ありケース1" traffic light case 1; type a name or pick one used before), **メモ** note (optional), and 収録開始 / 収録停止 (start / stop). **By default a recording starts automatically on every connection** (the 「接続したら自動で収録を開始する」 checkbox) and closes on disconnect. The scenario and note at the moment the recording starts are written to `session.json`. Every received frame is saved. The "(画像付き N)" count next to 受信コマ数 grows when camera images arrive |
 | 動画を作る… (make video) | Pick a session folder; its images become `video.avi` (Motion JPEG, real time, 20 fps) in that folder. Works without a connection (6.4) |
 | 版の管理 (versions) | Logic and packs installed on the car (`[使用中]` = active, `[直前]` = previous, with verification failures shown). 一覧更新 refresh, 送る… send, 有効化 activate, 削除 delete, ロジックを戻す roll back the logic, データを戻す roll back the pack (section 6) |
-| ログ (log) | Connection, responses, events and errors with timestamps |
+| 操縦パッド (driving pad) | Usable in manual mode (see below). Underneath: the command being sent (e.g. 「操舵 左 / 前進 45.0%（パッド）」), 最大出力 (maximum output), 停止 (stop) and 左右スクロールの向きを反転 (reverse the sideways scroll) |
+| ログ (log) | Connection, responses, events and errors with timestamps. On connecting it shows the car's core version and this application's version, with a warning when they are from different releases (9.4) |
+
+The window title and the header show the application's version.
+
+### Manual driving
+
+In manual mode the car is driven with the **driving pad** in the driving card, the scroll of a mouse or touchpad, and the arrow keys. The car's steering has three positions (left / centre / right: the steering motor is on or off); the drive is continuous from 0 to 100 %.
+
+| Input | Steering | Drive |
+|---|---|---|
+| **Press and drag on the pad** (left mouse button; on a touchpad, click and hold, or tap-and-drag) | Left / right third of the pad steers left / right, back to the middle centres (with a little hysteresis at the borders so it does not flicker) | Upper half forward, lower half reverse, faster the further from the centre line, 最大出力 at the edge; a band around the line is stop. **Letting go stops the car** |
+| **Vertical scroll** (wheel, two fingers up/down on a touchpad; over the pad or the image) | — | Sets a speed that **stays**: 5 % per wheel notch. From forward to reverse it stops at 0 first; lift your fingers and scroll again to go into reverse |
+| **Sideways scroll** (two fingers sideways, a tilting wheel, Shift + wheel) | Left / right while it moves, centre 0.25 s after it stops | — |
+| **Arrow keys** | ← → while held | ↑ ↓ forward / reverse at 最大出力 while held |
+| **Stop** | Space, right or middle click on the pad, the 停止 button. Also when the window loses focus (switching to another application) | |
+
+Precedence: the pad while pressed, else held keys, else scrolling (← → combine with a scroll speed: set a speed by scrolling, steer with ← →). Pressing the pad or ↑ ↓ resets the scroll speed to 0, so letting go never resumes an older speed. 最大出力 (default 60 %) limits all three inputs; the car's `max_drive_permille` limits again. If sideways scrolling steers the wrong way with your touchpad settings, tick 左右スクロールの向きを反転.
+
+In manual mode the car makes an emergency stop when it hears nothing from the PC for 1 s (table above).
 
 Press 「切断」 to disconnect. The car keeps driving after you close the app (it is designed to run without a PC). Use the emergency stop or switch the car off to stop it.
 
@@ -322,11 +341,13 @@ There are three kinds of version numbers, and each advances on its own.
 
 | Kind | Example | What it numbers and where it appears |
 |---|---|---|
-| Core (product) version | `v0.2.0` | The Release tag. The SD-card image, the `.deb`, the drive manager and the car's `core_version` share it. Shown as `本体 <version>` in the log when you connect |
+| Core (product) version | `v0.2.1` | The Release tag. The SD-card image, the `.deb`, the drive manager and the car's `core_version` share it. Shown as `本体 <version>, このアプリ <version>` in the log when you connect, and in the application's title |
 | Logic version | `tof_drive-0.2.0`, `cam_drive-0.2.0` | One per logic (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION` in `car/CMakeLists.txt`, `version` in its manifest). Shown in the version list and in the status panel's versions (logic / data) |
 | Pack (decision data) version | `base-tof-0.1.1`, `cam-base-0.1.0`, your own `cam-signal-0.1.0` | `version` in each pack's `manifest.json`. Give a pack you learned yourself a version that is not yet on the car (section 7) |
 
-Core 0.2.0 ships with `tof_drive-0.2.0`, `cam_drive-0.2.0`, `base-tof-0.1.1` and `cam-base-0.1.0`. When the core and a logic happen to carry the same number, they are still counted separately.
+Cores 0.2.0 and 0.2.1 ship with `tof_drive-0.2.0`, `cam_drive-0.2.0`, `base-tof-0.1.1` and `cam-base-0.1.0` (0.2.1 changes the drive manager's manual driving and the versioning, not the logic). When the core and a logic happen to carry the same number, they are still counted separately.
+
+**Builds that are not a release** (the `.deb`, SD-card image and application GitHub Actions makes for anything but a tag) carry `+g` and the first 7 characters of the commit after the number (e.g. `0.2.1+g1a2b3c4`), so they cannot be mistaken for the tagged release. Debian orders them `0.2.1` < `0.2.1+g1a2b3c4` < `0.2.2`. When the numbers (before the `+`) of the car's core and the application differ, the log warns on connecting.
 
 ## 10. Troubleshooting
 
@@ -376,14 +397,15 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 
 - The image is made by `car/image/build-image.sh` (root, arm64 host: the official Raspberry Pi OS Lite 64-bit image gets the package installed in a chroot plus the first-boot settings). In CI the `image` job of `car.yml` builds it on pushes to main and on tags.
 - A Release is made by tagging a commit on main as `vX.Y.Z` and pushing the tag (or by creating a Release with a new tag on GitHub's Releases page): `release.yml` then attaches the image, the `.deb`, the PC app and `SHA256SUMS.txt`.
-- The core version is the tag's `X.Y.Z`, injected by CI (`-DRUMICAR_VERSION` in `car.yml`, `-p:Version` in `pc.yml`). A build without a tag uses `RUMICAR_VERSION` in `car/CMakeLists.txt` and `<Version>` in `pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj`, so bump both to the same number after each Release (an older number would make a locally built `.deb` a downgrade on a car that has the Release installed). The logic versions (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION`) are independent of the core version and are raised when a logic changes (9.4).
+- **Write the number of the next Release into the sources first, then tag.** (1) In a pull request set `RUMICAR_VERSION` in `car/CMakeLists.txt`, `<Version>` in `pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` and the `assemblyIdentity version` (`X.Y.Z.0`) in `pc/RumiCar.DriveManager/app.manifest` to the same number, (2) merge it, (3) tag that merge commit `vX.Y.Z` and push the tag. `release.yml` first checks that the tag equals those three and is a commit on main, and stops before building if not, so no Release can carry a number that differs from its contents.
+- Builds other than a tag (main, pull requests) get `+g<commit>` appended by CI (`-DRUMICAR_VERSION_SUFFIX` in `car.yml`, `-p:InformationalVersion` in `pc.yml`); a local build carries the number in the sources. The logic versions (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION`) are independent of the core version and are raised when a logic changes (9.4).
 
-## Scope of this version (0.2.0)
+## Scope of this version (0.2.1)
 
 - Car: ToF driving logic, control loop and safety behaviour, drive modes (auto / manual / record_only; record_only at start-up) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps, run only when needed) with JPEG telemetry, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager, brought up in sequence by the core) and `set_wifi`, under-voltage / throttling monitor, hot-swapping of logic / packs (from the PC or over ssh) verified by manifests that also carry a description, capabilities and source scenarios, systemd service, Debian package
-- PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving, recording with scenario names, version management, videos from recordings)
+- PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, modes, e-stop, manual driving with a pad, scrolling and keys, recording with scenario names, version management, videos from recordings)
 - Car: the image logic `cam_drive` (stop at red and go on green; follow a vehicle ahead and pass a parked one; stop at intersections and go straight or turn), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic ABI 2
-- Distribution: standard SD-card image, GitHub Releases from tags (0.2.0: the logic contract moved from ABI 1 to ABI 2, so logic you built yourself must be rebuilt; hence the step up from 0.1.x)
+- Distribution: standard SD-card image, GitHub Releases from tags (0.2.0: the logic contract moved from ABI 1 to ABI 2, so logic you built yourself must be rebuilt; hence the step up from 0.1.x; 0.2.1: manual driving with the pad and scrolling, the release checks the tag against the sources, builds that are not a release carry `+g<commit>`)
 - Next: recordings and tuning on real cars (passing and turning times, how intersections look), choosing the turn by the situation (now fixed per pack, or towards the side seen)
 
 ## License

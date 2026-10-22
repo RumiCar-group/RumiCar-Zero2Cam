@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RumiCar.Protocol.Control;
@@ -14,7 +16,7 @@ namespace RumiCar.DriveManager;
 
 public partial class MainWindow : Window
 {
-    private readonly MainViewModel _vm = new();
+    private readonly MainViewModel _vm = new() { AppVersion = AppVersion };
     private CarConnection? _car;
     private bool _closing;
 
@@ -31,8 +33,13 @@ public partial class MainWindow : Window
     private int _framesReceived;
     private int _imagesReceived;
 
-    private int _manualSteer;
-    private int _manualDrive;
+    // Manual driving: the inputs (pad, scroll, keys) go into the model; a 50 ms
+    // timer sends the resulting command whenever it changes (docs 6.2).
+    private readonly ManualInput _manual = new();
+    private readonly DispatcherTimer _manualTimer = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(50) };
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private (int Steer, int Drive)? _manualSent;   // last command the car accepted; null = send the next one in any case
+    private bool _manualSending;
     private bool _manualMode;
     private bool _pushing;
     private bool _makingVideo;
@@ -43,15 +50,50 @@ public partial class MainWindow : Window
     // Detectors (by aux slot) that have reported cells: they say where (Local); the others judge the whole view (Global).
     private readonly HashSet<int> _localDetectors = new();
 
-    private static readonly string AppVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "?";
+    /// <summary>The release number (X.Y.Z from the tag), or X.Y.Z+g&lt;commit&gt; for a build that is not a release (docs 7.3).</summary>
+    private static readonly string AppVersion =
+        typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "?";
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = _vm;
+        Title = "RumiCar 走行管理 " + AppVersion;
         PreviewKeyDown += OnKey;
         PreviewKeyUp += OnKey;
+        Deactivated += (_, _) => StopManual("ウィンドウを離れたので停止");
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.ManualMaxDrive)) _manual.MaxDrive = _vm.ManualMaxDrive;
+            else if (e.PropertyName == nameof(MainViewModel.InvertHorizontal)) _manual.InvertHorizontal = _vm.InvertHorizontal;
+        };
+        _manual.MaxDrive = _vm.ManualMaxDrive;
+        _manualTimer.Tick += (_, _) => ManualTick();
+        _manualTimer.Start();
         LoadScenarioHistory();
+    }
+
+    // Horizontal scrolling (two fingers sideways on a touchpad, a tilting wheel)
+    // arrives only as WM_MOUSEHWHEEL; WPF has no event for it.
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(WndProc);
+    }
+
+    private const int WM_MOUSEHWHEEL = 0x020E;
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_MOUSEHWHEEL && _manualMode && OverDriveSurface())
+        {
+            var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);   // positive = to the right
+            _manual.HorizontalWheel(delta, _clock.ElapsedMilliseconds);
+            ManualTick();
+            handled = true;
+        }
+        return IntPtr.Zero;
     }
 
     /// <summary>Offers the scenario names used before (from &lt;data root&gt;/scenarios.json).</summary>
@@ -94,7 +136,9 @@ public partial class MainWindow : Window
             if (_vm.AutoRecord) StartRecording();   // default: every connection is recorded
             var carName = CarConnection.GetString(car.HelloResult, "car");
             var coreVersion = CarConnection.GetString(car.HelloResult, "core_version");
-            if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}");
+            if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}, このアプリ {AppVersion}");
+            if (coreVersion is not null && !ProductVersion.SameRelease(coreVersion, AppVersion))
+                _vm.AddLog($"注意：車の本体（{coreVersion}）とこのアプリ（{AppVersion}）の版が違います。同じ Release の SD カードイメージ（または .deb）とアプリを使ってください");
             var status = await car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None);
             if (status.Ok && status.Result is JsonElement result)
             {
@@ -124,9 +168,7 @@ public partial class MainWindow : Window
         _car = null;
         _vm.Connected = false;
         _vm.ConnectionState = "切断";
-        _manualMode = false;
-        _manualSteer = 0;
-        _manualDrive = 0;
+        SetManualMode(false);
         ConnectButton.Content = "接続";
         _vm.InstalledVersions.Clear();
         _vm.PushStatus = "-";
@@ -305,12 +347,19 @@ public partial class MainWindow : Window
     private void SetMode(string mode)
     {
         _vm.Mode = mode;
-        _manualMode = mode == DriveMode.Manual;
-        if (!_manualMode)
-        {
-            _manualSteer = 0;
-            _manualDrive = 0;
-        }
+        SetManualMode(mode == DriveMode.Manual);
+    }
+
+    /// <summary>Entering or leaving manual mode starts from "stopped, centred" in either case.</summary>
+    private void SetManualMode(bool on)
+    {
+        if (on == _manualMode) return;
+        _manualMode = on;
+        _manual.Stop();
+        DrivePad.ReleaseMouseCapture();
+        _manualSent = null;
+        _vm.ManualEnabled = on;
+        ManualTick();
     }
 
     // Telemetry thread.
@@ -510,38 +559,171 @@ public partial class MainWindow : Window
     private Task SetModeAsync(string mode) =>
         SendAsync(car => ControlCodec.SetMode(car.NextId(), mode), "モード " + mode);
 
-    // Clicking the image takes keyboard focus away from the text boxes so the arrow keys drive.
+    // Clicking the image takes keyboard focus away from the text boxes so the keys drive.
     private void OnImageClick(object sender, MouseButtonEventArgs e) => ImageBorder.Focus();
 
-    // Manual driving with the arrow keys; only effective while the car is in manual mode.
-    private async void OnKey(object sender, KeyEventArgs e)
+    // --- manual driving (docs 6.2) ----------------------------------------------------
+
+    /// <summary>The pad, or the camera image (scrolling there drives too, so one can watch while driving).</summary>
+    private bool OverDriveSurface() => DrivePad.IsMouseOver || ImageBorder.IsMouseOver;
+
+    // Keys: ← → steer, ↑ ↓ drive while held, Space stops.  Not while typing in a text box.
+    private void OnKey(object sender, KeyEventArgs e)
     {
-        var car = _car;
-        if (car is null || !_manualMode) return;
-        if (e.OriginalSource is System.Windows.Controls.TextBox) return;
-        var down = e.IsDown;
-        int steer = _manualSteer, drive = _manualDrive;
+        if (!_manualMode) return;
+        if (e.OriginalSource is System.Windows.Controls.TextBox || e.OriginalSource is System.Windows.Controls.ComboBox) return;
+        ManualKey key;
         switch (e.Key)
         {
-            case Key.Left: steer = down ? -1 : (steer == -1 ? 0 : steer); break;
-            case Key.Right: steer = down ? 1 : (steer == 1 ? 0 : steer); break;
-            case Key.Up: drive = down ? 500 : (drive > 0 ? 0 : drive); break;
-            case Key.Down: drive = down ? -500 : (drive < 0 ? 0 : drive); break;
+            case Key.Left: key = ManualKey.Left; break;
+            case Key.Right: key = ManualKey.Right; break;
+            case Key.Up: key = ManualKey.Forward; break;
+            case Key.Down: key = ManualKey.Reverse; break;
+            case Key.Space:
+                if (e.IsDown) StopManual(null);
+                e.Handled = true;
+                return;
             default: return;
         }
         e.Handled = true;
-        if (steer == _manualSteer && drive == _manualDrive) return;   // key repeat
-        _manualSteer = steer;
-        _manualDrive = drive;
+        if (e.IsRepeat) return;
+        _manual.Key(key, e.IsDown);
+        ManualTick();
+    }
+
+    // Pad: press and drag (mouse or touchpad); releasing stops.  Right or middle click stops.
+    private void OnPadMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_manualMode) return;
+        e.Handled = true;
+        if (e.ChangedButton != MouseButton.Left)
+        {
+            StopManual(null);
+            return;
+        }
+        DrivePad.Focus();
+        DrivePad.CaptureMouse();
+        var (x, y) = PadPosition(e.GetPosition(DrivePad));
+        _manual.PadDown(x, y);
+        ManualTick();
+    }
+
+    private void OnPadMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_manual.Dragging) return;
+        var (x, y) = PadPosition(e.GetPosition(DrivePad));
+        _manual.PadMove(x, y);
+        ManualTick();
+    }
+
+    private void OnPadMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left) return;
+        DrivePad.ReleaseMouseCapture();   // LostMouseCapture releases the pad
+        e.Handled = true;
+    }
+
+    private void OnPadLostCapture(object sender, MouseEventArgs e)
+    {
+        if (!_manual.Dragging) return;
+        _manual.PadUp();
+        ManualTick();
+    }
+
+    // Scrolling over the pad or the image: up/down sets the speed, Shift + wheel steers like a sideways scroll.
+    private void OnDriveWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!_manualMode) return;
+        e.Handled = true;   // the right column must not scroll away under the pointer
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) _manual.HorizontalWheel(-e.Delta, _clock.ElapsedMilliseconds);
+        else _manual.Wheel(e.Delta, _clock.ElapsedMilliseconds);
+        ManualTick();
+    }
+
+    private void OnManualStopClick(object sender, RoutedEventArgs e) => StopManual(null);
+
+    /// <summary>Pad coordinates −1..+1 (x to the right, y up) of a point in the pad.</summary>
+    private (double X, double Y) PadPosition(Point p)
+    {
+        var w = Math.Max(1.0, DrivePad.ActualWidth);
+        var h = Math.Max(1.0, DrivePad.ActualHeight);
+        return (p.X / w * 2.0 - 1.0, 1.0 - p.Y / h * 2.0);
+    }
+
+    private void StopManual(string? why)
+    {
+        if (!_manualMode) return;
+        var (_, drive, _) = _manual.Command(_clock.ElapsedMilliseconds);
+        _manual.Stop();
+        DrivePad.ReleaseMouseCapture();
+        if (why is not null && drive != 0) _vm.AddLog("手動操作: " + why);
+        ManualTick();
+    }
+
+    /// <summary>Every 50 ms and after every input: show the command and send it when it changed.</summary>
+    private void ManualTick()
+    {
+        if (!_manualMode)
+        {
+            DrawPad(0, 0, false);
+            return;
+        }
+        var (steer, drive, source) = _manual.Command(_clock.ElapsedMilliseconds);
+        var how = source switch
+        {
+            ManualSource.Pad => "パッド",
+            ManualSource.Keys => "キー",
+            ManualSource.Scroll => "スクロール",
+            _ => "",
+        };
+        var setPoint = _manual.SetPoint != 0 && source != ManualSource.Pad ? $"　設定速度 {_manual.SetPoint / 10.0:F0}%" : "";
+        _vm.ManualStatus = DescribeCommand(steer, drive, false) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
+        DrawPad(steer, drive, true);
+        if (_manualSent == (steer, drive) || _manualSending) return;
+        _ = SendManualAsync(steer, drive);
+    }
+
+    private async Task SendManualAsync(int steer, int drive)
+    {
+        var car = _car;
+        if (car is null) return;
+        _manualSending = true;
         try
         {
             var r = await car.RequestAsync(ControlCodec.ManualDrive(car.NextId(), steer, drive), CancellationToken.None);
-            if (!r.Ok) _vm.AddLog("手動操作: 拒否 (" + r.Error + ")");
+            if (r.Ok) _manualSent = (steer, drive);
+            else
+            {
+                _vm.AddLog("手動操作: 拒否 (" + r.Error + ")");
+                _manualSent = (steer, drive);   // not again until the command changes
+            }
         }
         catch (Exception ex)
         {
             _vm.AddLog("手動操作を送れません: " + ex.Message);
+            _manualSent = (steer, drive);
         }
+        finally
+        {
+            _manualSending = false;
+        }
+        ManualTick();   // the inputs may have moved on while the request was out
+    }
+
+    /// <summary>The marker on the pad shows the command being sent (steering zone, drive height).</summary>
+    private void DrawPad(int steer, int drive, bool enabled)
+    {
+        var w = DrivePad.ActualWidth;
+        var h = DrivePad.ActualHeight;
+        if (w <= 0 || h <= 0) return;
+        PadMarker.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        if (!enabled) return;
+        var max = Math.Max(1, _manual.MaxDrive);
+        var a = Math.Min(1.0, Math.Abs(drive) / (double)max);
+        var y = drive == 0 ? 0.0 : Math.Sign(drive) * (ManualInput.DriveDeadZone + a * (1.0 - ManualInput.DriveDeadZone));
+        var x = steer * (1.0 + ManualInput.SteerEnter) / 2.0;   // middle of the left / right zone
+        System.Windows.Controls.Canvas.SetLeft(PadMarker, (x + 1.0) / 2.0 * w - PadMarker.Width / 2.0);
+        System.Windows.Controls.Canvas.SetTop(PadMarker, (1.0 - y) / 2.0 * h - PadMarker.Height / 2.0);
     }
 
     // --- versions (list / push / activate / rollback / delete) ------------------
