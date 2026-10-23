@@ -18,7 +18,9 @@ if(RUMICAR_BUILD_CORE)
   add_executable(test_pack test_pack.cpp)
   target_link_libraries(test_pack PRIVATE rumicar_core_lib)
   target_compile_definitions(test_pack PRIVATE TOF_DRIVE_VERSION="${TOF_DRIVE_VERSION}")
-  add_test(NAME pack COMMAND test_pack ${CMAKE_SOURCE_DIR}/packs/base $<TARGET_FILE:tof_drive> ${CMAKE_SOURCE_DIR}/packs/cam-base $<TARGET_FILE:cam_drive>)
+  add_dependencies(test_pack py_drive_manifest)
+  add_test(NAME pack COMMAND test_pack ${CMAKE_SOURCE_DIR}/packs/base $<TARGET_FILE:tof_drive> ${CMAKE_SOURCE_DIR}/packs/cam-base $<TARGET_FILE:cam_drive>
+           ${CMAKE_BINARY_DIR}/logic/stage/py_drive-${PY_DRIVE_VERSION} ${CMAKE_SOURCE_DIR}/packs/py-sample)
   target_compile_definitions(test_pack PRIVATE CAM_DRIVE_VERSION="${CAM_DRIVE_VERSION}")
 
   # Control/telemetry servers exercised over real TCP sockets on 127.0.0.1.
@@ -34,3 +36,9 @@ if(RUMICAR_BUILD_CORE)
   target_link_libraries(test_util PRIVATE rumicar_core_lib)
   add_test(NAME util COMMAND test_util)
 endif()
+
+# py_drive with the real runner.py (needs python3, as on the car).
+add_executable(test_py_drive test_py_drive.cpp)
+target_link_libraries(test_py_drive PRIVATE rumicar_api ${CMAKE_DL_LIBS})
+add_dependencies(test_py_drive py_drive_manifest)
+add_test(NAME py_drive COMMAND test_py_drive ${CMAKE_BINARY_DIR}/logic/stage/py_drive-${PY_DRIVE_VERSION} ${CMAKE_SOURCE_DIR}/packs/py-sample)

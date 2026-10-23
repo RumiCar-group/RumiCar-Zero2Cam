@@ -110,6 +110,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.watchdog_ms = s.get_int("watchdog_ms", c.watchdog_ms, 50, 2000);
         c.activation_poll_ms = s.get_int("activation_poll_ms", c.activation_poll_ms, 100, 10000);
         c.max_drive_permille = s.get_int("max_drive_permille", c.max_drive_permille, 0, 1000);
+        c.auto_accel_permille_per_s = s.get_int("auto_accel_permille_per_s", c.auto_accel_permille_per_s, 0, 100000);
         c.car_name = s.get_string("car_name", c.car_name);
         c.startup_mode = s.get_string("startup_mode", c.startup_mode);
         seen_top.insert(s.seen.begin(), s.seen.end());

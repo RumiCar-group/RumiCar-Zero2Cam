@@ -296,6 +296,10 @@ void test_servers(const fs::path& base_pack) {
     make_pack(state_dir / "packs" / "broken-0.1.0", "broken", "0.1.0", base_params);
     write_file(state_dir / "packs" / "broken-0.1.0" / "params.json", "tampered");
     make_logic(state_dir / "logic" / "tof_drive-0.1.0", "tof_drive", "0.1.0");
+    // Another logic with a pack of its own (switching needs both, docs 5.2).
+    make_logic(state_dir / "logic" / "py_drive-0.1.0", "py_drive", "0.1.0");
+    make_pack(state_dir / "packs" / "my-drive-20261023.101500", "my-drive", "20261023.101500", "{}",
+              {{"logic", {{"name", "py_drive"}, {"min_abi", 2}}}});
 
     VersionStore store(state_dir.string());
     store.activate("logic", "tof_drive-0.1.0");
@@ -309,6 +313,7 @@ void test_servers(const fs::path& base_pack) {
     CHECK(store.link_target("previous", "pack").empty());
 
     CarState state(300);   // short heartbeat timeout for the test
+    state.set_max_drive(800);
     WifiAp wifi("/usr/bin/nmcli", "");   // no access point profile on the test host
     RequestHandler handler(state, store, wifi, "TestCar", "9.9.9", 2000ms);
     std::atomic<int> connects{0}, disconnects{0};
@@ -417,11 +422,34 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["ok"].get<bool>());
     CHECK(state.mode() == DriveMode::Auto);
 
+    // --- auto limit (docs 5.2): within max_drive_permille, reported in the status ---------------
+    r = request(c, "get_status", nullptr);
+    CHECK(r["result"]["auto_limit"] == 800 && r["result"]["max_drive_permille"] == 800);
+    r = request(c, "set_auto_limit", {{"drive_permille", 450}}, &events);
+    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 450);
+    ev = wait_event(c, "status");
+    CHECK(!ev.is_null() && ev["data"]["auto_limit"] == 450);
+    CHECK(state.frame_inputs(CarState::Clock::now()).auto_limit == 450);
+    r = request(c, "set_auto_limit", {{"drive_permille", 1000}});
+    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 800);   // clamped to the maximum
+    r = request(c, "set_auto_limit", {{"drive_permille", -1}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "set_auto_limit", nullptr);
+    CHECK(!r["ok"].get<bool>());
+
     // --- versions: list / activate / rollback / failure --------------------------
     r = request(c, "list_versions", nullptr);
     CHECK(r["ok"].get<bool>());
-    CHECK(r["result"]["logic"].is_array() && r["result"]["logic"].size() == 1);
-    CHECK(r["result"]["logic"][0]["name"] == "tof_drive-0.1.0" && r["result"]["logic"][0]["verified"] == true);
+    CHECK(r["result"]["logic"].is_array() && r["result"]["logic"].size() == 2);
+    {
+        bool saw_tof = false;
+        for (const auto& l : r["result"]["logic"]) saw_tof = saw_tof || (l["name"] == "tof_drive-0.1.0" && l["verified"] == true);
+        CHECK(saw_tof);
+        bool saw_pack_logic = false;
+        for (const auto& p : r["result"]["packs"])
+            if (p["name"] == "my-drive-20261023.101500") saw_pack_logic = p["logic"] == "py_drive";
+        CHECK_MSG(saw_pack_logic, "list_versions must say which logic a pack is for");
+    }
     CHECK(r["result"]["current"]["pack"] == "base-tof-0.1.0");
     CHECK(r["result"]["current"]["logic"] == "tof_drive-0.1.0");
     {
@@ -470,6 +498,49 @@ void test_servers(const fs::path& base_pack) {
         bool threw = false;
         try { store.restore_current("pack", (tmp / "elsewhere").string()); } catch (const std::exception&) { threw = true; }
         CHECK(threw);
+    }
+
+    // --- a logic and its pack together (activate_pair), and back (rollback both) ---------------
+    r = request(c, "activate_pair", {{"logic", "py_drive-0.1.0"}, {"pack", "nope-1"}});
+    CHECK(!r["ok"].get<bool>());
+    CHECK(store.link_target("current", "logic") == "tof_drive-0.1.0");   // nothing written when either is wrong
+    r = request(c, "activate_pair", {{"logic", "../x"}, {"pack", "my-drive-20261023.101500"}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "activate_pair", {{"logic", "py_drive-0.1.0"}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "activate_pair", {{"logic", "py_drive-0.1.0"}, {"pack", "my-drive-20261023.101500"}});
+    CHECK_MSG(r["ok"].get<bool>(), r.dump());
+    CHECK(store.link_target("current", "logic") == "py_drive-0.1.0" && store.link_target("current", "pack") == "my-drive-20261023.101500");
+    CHECK(store.link_target("previous", "logic") == "tof_drive-0.1.0" && store.link_target("previous", "pack") == "base-tof-0.1.0");
+    r = request(c, "rollback", {{"kind", "both"}});
+    CHECK_MSG(r["ok"].get<bool>(), r.dump());
+    CHECK(store.link_target("current", "logic") == "tof_drive-0.1.0" && store.link_target("current", "pack") == "base-tof-0.1.0");
+    CHECK(store.link_target("previous", "logic") == "py_drive-0.1.0");
+    r = request(c, "rollback", {{"kind", "everything"}});
+    CHECK(!r["ok"].get<bool>());
+    // The pair is never seen half-written: a reader racing with activate_pair sees the old or the new pair.
+    {
+        std::atomic<bool> stop{false};
+        std::atomic<int> mixed{0}, reads{0};
+        std::thread reader([&] {
+            while (!stop.load()) {
+                std::string reason;
+                if (const auto sel = store.read_current(reason)) {
+                    const bool py_logic = sel->logic_dir.find("py_drive") != std::string::npos;
+                    const bool py_pack = sel->pack_dir.find("my-drive") != std::string::npos;
+                    if (py_logic != py_pack) ++mixed;
+                    ++reads;
+                }
+            }
+        });
+        for (int i = 0; i < 200; ++i) {
+            store.activate_pair("py_drive-0.1.0", "my-drive-20261023.101500");
+            store.activate_pair("tof_drive-0.1.0", "base-tof-0.1.0");
+        }
+        stop.store(true);
+        reader.join();
+        CHECK(reads.load() > 0);
+        CHECK_MSG(mixed.load() == 0, std::to_string(mixed.load()) + " half-written pairs seen");
     }
 
     // --- uploads from the PC -----------------------------------------------------

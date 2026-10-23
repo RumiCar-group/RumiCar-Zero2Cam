@@ -41,6 +41,21 @@ public partial class MainWindow : Window
     private (int Steer, int Drive)? _manualSent;   // last command the car accepted; null = send the next one in any case
     private bool _manualSending;
     private bool _manualMode;
+
+    // Auto limit: the slider sends set_auto_limit 0.3 s after the last move; values from the car do not echo back.
+    private readonly DispatcherTimer _autoLimitTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
+    private bool _applyingAutoLimit;
+
+    // The PC's Wi-Fi network, every 2 s; the one at connection time is the car's.
+    private readonly DispatcherTimer _wifiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private PcWifi.Status? _wifi;
+    private string? _carNetwork;
+    private bool _wifiQuerying;
+    private bool _wifiHiddenLogged;
+
+    // What list_versions last said is current and previous (directory names), for the activation planner.
+    private string _currentLogic = "", _currentPack = "", _previousLogic = "", _previousPack = "";
+    private List<InstalledVersion> _installed = new();
     private bool _pushing;
     private bool _makingVideo;
     private string? _lastSessionDirectory;
@@ -71,6 +86,22 @@ public partial class MainWindow : Window
         _manual.MaxDrive = _vm.ManualMaxDrive;
         _manualTimer.Tick += (_, _) => ManualTick();
         _manualTimer.Start();
+        _autoLimitTimer.Tick += async (_, _) =>
+        {
+            _autoLimitTimer.Stop();
+            await SendAutoLimitAsync();
+        };
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.AutoLimit) && !_applyingAutoLimit && _vm.AutoLimitEnabled)
+            {
+                _autoLimitTimer.Stop();
+                _autoLimitTimer.Start();
+            }
+        };
+        _wifiTimer.Tick += async (_, _) => await RefreshWifiAsync();
+        _wifiTimer.Start();
+        _ = RefreshWifiAsync();
         LoadScenarioHistory();
     }
 
@@ -134,6 +165,11 @@ public partial class MainWindow : Window
             _lastStatus = null;
             _lastThrottled = 0;
             if (_vm.AutoRecord) StartRecording();   // default: every connection is recorded
+            await RefreshWifiAsync();
+            var wifi = _wifi;
+            _carNetwork = wifi is { Kind: PcWifi.Kind.Connected } ? wifi.Ssid : null;
+            if (_carNetwork is not null) _vm.AddLog($"PC の Wi-Fi: {_carNetwork}（この接続中に変わったら知らせます）");
+            UpdateWifiDisplay();
             var carName = CarConnection.GetString(car.HelloResult, "car");
             var coreVersion = CarConnection.GetString(car.HelloResult, "core_version");
             if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}, このアプリ {AppVersion}");
@@ -169,6 +205,10 @@ public partial class MainWindow : Window
         _vm.Connected = false;
         _vm.ConnectionState = "切断";
         SetManualMode(false);
+        _carNetwork = null;
+        _vm.AutoLimitEnabled = false;
+        _vm.AutoLimitNote = "接続すると車の値を読みます";
+        UpdateWifiDisplay();
         ConnectButton.Content = "接続";
         _vm.InstalledVersions.Clear();
         _vm.PushStatus = "-";
@@ -280,6 +320,105 @@ public partial class MainWindow : Window
             _vm.EStop = FormatEStop(es.ValueKind == JsonValueKind.True, CarConnection.GetString(data, "estop_reason") ?? "");
         var stateName = CarConnection.GetString(data, "state_name");
         if (stateName is not null) _vm.LogicState = FormatState(stateName);
+        if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("auto_limit", out var al) && al.TryGetInt32(out var autoLimit))
+        {
+            _applyingAutoLimit = true;
+            try { _vm.AutoLimit = autoLimit; }
+            finally { _applyingAutoLimit = false; }
+            _vm.AutoLimitEnabled = _car is not null;
+            var max = data.TryGetProperty("max_drive_permille", out var mx) && mx.TryGetInt32(out var m) ? m : 1000;
+            _vm.AutoLimitNote = max < 1000 ? $"車の上限 {max / 10.0:F0}%（core.json の max_drive_permille）まで" : "車を再起動すると 100% に戻ります";
+        }
+        else if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("mode", out _) && !data.TryGetProperty("auto_limit", out _))
+        {
+            _vm.AutoLimitEnabled = false;
+            _vm.AutoLimitNote = "車の本体が 0.3.0 以降で使えます";
+        }
+    }
+
+    // --- auto limit and the PC's Wi-Fi ---------------------------------------------------------
+
+    private async Task SendAutoLimitAsync()
+    {
+        var car = _car;
+        if (car is null || !_vm.AutoLimitEnabled) return;
+        var wanted = _vm.AutoLimit;
+        try
+        {
+            var r = await car.RequestAsync(ControlCodec.SetAutoLimit(car.NextId(), wanted), CancellationToken.None);
+            if (!r.Ok) { _vm.AddLog("自動の最大出力: 拒否 (" + r.Error + ")"); return; }
+            if (r.Result is JsonElement res && res.TryGetProperty("auto_limit", out var v) && v.TryGetInt32(out var applied))
+            {
+                _vm.AddLog($"自動の最大出力を {applied / 10.0:F0}% にしました");
+                if (applied != _vm.AutoLimit && !_autoLimitTimer.IsEnabled)
+                {
+                    _applyingAutoLimit = true;
+                    try { _vm.AutoLimit = applied; }   // clamped by the car (max_drive_permille)
+                    finally { _applyingAutoLimit = false; }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _vm.AddLog("自動の最大出力を送れません: " + ex.Message);
+        }
+    }
+
+    private async Task RefreshWifiAsync()
+    {
+        if (_wifiQuerying) return;
+        _wifiQuerying = true;
+        try
+        {
+            var before = _wifi;
+            var now = await Task.Run(() => PcWifi.Query());
+            _wifi = now;
+            if (before is not null && _carNetwork is not null && _car is not null
+                && (before.Kind != now.Kind || before.Ssid != now.Ssid))
+            {
+                _vm.AddLog(now.Kind == PcWifi.Kind.Connected
+                    ? $"注意：PC の Wi-Fi が {_carNetwork} から {now.Ssid} に切り替わりました（車との通信が切れます）"
+                    : $"注意：PC の Wi-Fi が {_carNetwork} から外れました（{Describe(now)}）");
+            }
+            if (now.Kind == PcWifi.Kind.Hidden && !_wifiHiddenLogged)
+            {
+                _wifiHiddenLogged = true;
+                _vm.AddLog("PC の Wi-Fi の名前を読めません。Windows の 設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにすると表示されます");
+            }
+            UpdateWifiDisplay();
+        }
+        catch (Exception ex)
+        {
+            _vm.PcWifi = "PC の Wi-Fi: 読めません";
+            _vm.PcWifiHint = ex.Message;
+        }
+        finally
+        {
+            _wifiQuerying = false;
+        }
+    }
+
+    private static string Describe(PcWifi.Status s) => s.Kind switch
+    {
+        PcWifi.Kind.Connected => s.Ssid,
+        PcWifi.Kind.Disconnected => "未接続",
+        PcWifi.Kind.NoWifi => "Wi-Fi なし",
+        PcWifi.Kind.Hidden => "名前を読めません",
+        _ => "読めません",
+    };
+
+    private void UpdateWifiDisplay()
+    {
+        var w = _wifi;
+        if (w is null) return;
+        var off = _carNetwork is not null && _car is not null && (w.Kind != PcWifi.Kind.Connected || w.Ssid != _carNetwork);
+        _vm.PcWifiWarning = off;
+        _vm.PcWifi = "PC の Wi-Fi: " + Describe(w) + (off ? $"（車の {_carNetwork} から外れています）" : "");
+        _vm.PcWifiHint = w.Kind == PcWifi.Kind.Hidden
+            ? "Windows 11 24H2 以降は、設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにすると名前が読めます"
+            : "この PC がいまつながっている Wi-Fi。車の AP（既定 RumiCar）から外れると赤くなります。"
+              + "\nWindows はインターネットにつながらない AP から自動で別のネットワークへ移ることがあります（README 10 章）"
+              + (w.Detail.Length > 0 ? "\n" + w.Detail : "");
     }
 
     private static List<string> GetStringList(JsonElement data, string key)
@@ -742,23 +881,39 @@ public partial class MainWindow : Window
             }
             var selected = _vm.SelectedVersion?.Name;
             _vm.InstalledVersions.Clear();
+            _installed = new List<InstalledVersion>();
+            _currentLogic = GetNested(result, "current", "logic") ?? "";
+            _currentPack = GetNested(result, "current", "pack") ?? "";
+            _previousLogic = GetNested(result, "previous", "logic") ?? "";
+            _previousPack = GetNested(result, "previous", "pack") ?? "";
             foreach (var (kind, key) in new[] { ("logic", "logic"), ("pack", "packs") })
             {
-                var current = GetNested(result, "current", kind);
-                var previous = GetNested(result, "previous", kind);
+                var current = kind == "logic" ? _currentLogic : _currentPack;
+                var previous = kind == "logic" ? _previousLogic : _previousPack;
                 if (!result.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array) continue;
                 foreach (var v in arr.EnumerateArray())
                 {
                     var name = CarConnection.GetString(v, "name") ?? "";
+                    var verified = v.TryGetProperty("verified", out var ok) && ok.ValueKind == JsonValueKind.True;
+                    var id = CarConnection.GetString(v, "id") ?? "";
+                    var version = CarConnection.GetString(v, "version") ?? "";
+                    var logic = kind == "pack" ? CarConnection.GetString(v, "logic") ?? "" : "";
+                    _installed.Add(new InstalledVersion(kind, name, id, version, verified, logic));
                     _vm.InstalledVersions.Add(new VersionRow
                     {
                         Kind = kind,
                         Name = name,
-                        Version = CarConnection.GetString(v, "version") ?? "",
-                        Verified = v.TryGetProperty("verified", out var ok) && ok.ValueKind == JsonValueKind.True,
+                        Id = id,
+                        Logic = logic,
+                        Version = version,
+                        Verified = verified,
                         Error = CarConnection.GetString(v, "error") ?? "",
                         IsCurrent = name == current,
                         IsPrevious = name == previous,
+                        Description = CarConnection.GetString(v, "description") ?? "",
+                        Capabilities = GetStringList(v, "capabilities"),
+                        Scenarios = GetStringList(v, "scenarios"),
+                        Parent = CarConnection.GetString(v, "parent") ?? "",
                     });
                 }
             }
@@ -821,20 +976,89 @@ public partial class MainWindow : Window
         var v = _vm.SelectedVersion;
         if (v is null) { _vm.AddLog("有効化: 一覧から版を選んでください"); return; }
         if (v.IsCurrent) { _vm.AddLog("有効化: " + v.Name + " は使用中です"); return; }
-        await SendAsync(car => ControlCodec.Activate(car.NextId(), v.Kind, v.Name), "有効化 " + v.Name);
+        await ActivateAsync(v.Kind, v.Name);
+    }
+
+    /// <summary>Activates one version, bringing the other half along when it belongs to another logic (docs 6.2).</summary>
+    private async Task ActivateAsync(string kind, string name)
+    {
+        var selected = _installed.FirstOrDefault(x => x.Kind == kind && x.DirectoryName == name);
+        if (selected is null) { _vm.AddLog("有効化: " + name + " が一覧にありません（一覧更新）"); return; }
+        var step = ActivationPlanner.Plan(selected, _installed, _currentLogic, _currentPack);
+        if (step.Error is not null) { _vm.AddLog("有効化: " + step.Error); return; }
+        if (step.IsPair)
+        {
+            _vm.AddLog("有効化: " + step.Note);
+            await SendAsync(car => ControlCodec.ActivatePair(car.NextId(), step.Logic!, step.Pack!), $"有効化 {step.Logic} + {step.Pack}");
+        }
+        else
+        {
+            await SendAsync(car => ControlCodec.Activate(car.NextId(), step.Kind!, step.Name!), "有効化 " + step.Name);
+        }
         await RefreshVersionsAsync();
     }
 
-    private async void OnRollbackLogicClick(object sender, RoutedEventArgs e)
+    private async void OnRollbackLogicClick(object sender, RoutedEventArgs e) => await RollbackAsync("logic", "ロジックを戻す");
+
+    private async void OnRollbackPackClick(object sender, RoutedEventArgs e) => await RollbackAsync("pack", "データを戻す");
+
+    private async Task RollbackAsync(string kind, string what)
     {
-        await SendAsync(car => ControlCodec.Rollback(car.NextId(), "logic"), "ロジックを戻す");
+        if (ActivationPlanner.RollbackNeedsBoth(kind, _installed, _currentLogic, _currentPack, _previousLogic, _previousPack))
+        {
+            _vm.AddLog($"{what}: 直前の版は別のロジック用なので、ロジックとデータの両方を直前の版（{_previousLogic} + {_previousPack}）に戻します");
+            await SendAsync(car => ControlCodec.RollbackBoth(car.NextId()), "ロジックとデータを戻す");
+        }
+        else
+        {
+            await SendAsync(car => ControlCodec.Rollback(car.NextId(), kind), what);
+        }
         await RefreshVersionsAsync();
     }
 
-    private async void OnRollbackPackClick(object sender, RoutedEventArgs e)
+    // "Send my program": a folder with drive.py becomes a pack for py_drive, is sent and activated (docs 3.12).
+    private async void OnPushProgramClick(object sender, RoutedEventArgs e)
     {
-        await SendAsync(car => ControlCodec.Rollback(car.NextId(), "pack"), "データを戻す");
-        await RefreshVersionsAsync();
+        var car = _car;
+        if (car is null || _pushing) return;
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "自分の走行プログラム（drive.py）のあるフォルダ" };
+        if (dialog.ShowDialog(this) != true) return;
+        var folder = dialog.FolderName;
+        ProgramPack.Result prepared;
+        VersionPush.Plan plan;
+        try
+        {
+            var staging = Path.Combine(Path.GetTempPath(), "RumiCarDriveManager", "programs");
+            prepared = ProgramPack.Prepare(folder, staging, DateTime.Now);
+            plan = VersionPush.Prepare(prepared.StagingDirectory);
+        }
+        catch (Exception ex)
+        {
+            _vm.AddLog("プログラムを送れません: " + ex.Message);
+            _vm.PushStatus = "送れません: " + ex.Message;
+            return;
+        }
+        _pushing = true;
+        _vm.PushStatus = $"送信中 {plan.DirectoryName}";
+        _vm.AddLog($"プログラムを送ります: {folder} → {plan.DirectoryName}（{string.Join(", ", prepared.Files)}）");
+        try
+        {
+            await VersionPush.PushAsync(prepared.StagingDirectory, plan, car.RequestAsync, car.NextId, null, CancellationToken.None);
+            _vm.PushStatus = $"送信完了: {plan.DirectoryName}";
+            await RefreshVersionsAsync();
+            _vm.SelectedVersion = _vm.InstalledVersions.FirstOrDefault(x => x.Name == plan.DirectoryName);
+            await ActivateAsync("pack", plan.DirectoryName);
+            _vm.AddLog("プログラムの print() とエラーは車のログに出ます（ssh で sudo journalctl -u rumicar-core -f）。「自動」で走り出します");
+        }
+        catch (Exception ex)
+        {
+            _vm.PushStatus = "送信失敗: " + ex.Message;
+            _vm.AddLog("プログラムの送信失敗: " + ex.Message);
+        }
+        finally
+        {
+            _pushing = false;
+        }
     }
 
     private async void OnDeleteClick(object sender, RoutedEventArgs e)

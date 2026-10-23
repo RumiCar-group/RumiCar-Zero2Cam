@@ -40,7 +40,7 @@ json versions_json(const std::vector<InstalledVersion>& list) {
     for (const auto& v : list) {
         arr.push_back({{"name", v.dir_name}, {"id", v.id}, {"version", v.version}, {"verified", v.verified}, {"error", v.error},
                        {"description", v.description}, {"capabilities", v.capabilities}, {"scenarios", v.scenarios},
-                       {"parent", v.parent}});
+                       {"parent", v.parent}, {"logic", v.logic_name}});
     }
     return arr;
 }
@@ -97,6 +97,12 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         if (!state_.set_manual(static_cast<int8_t>(steer), drive)) throw RequestError("not in manual mode");
         return nullptr;
     }
+    if (type == "set_auto_limit") {
+        // Cap of the drive in auto mode (docs 5.2); clamped to max_drive_permille.
+        const int limit = require_int(params, "drive_permille", 0, 1000);
+        if (state_.set_auto_limit(limit)) log::info("auto limit set to " + std::to_string(state_.auto_limit()) + " by the PC");
+        return json{{"auto_limit", state_.auto_limit()}};
+    }
     if (type == "heartbeat") {
         state_.heartbeat(now);
         return nullptr;
@@ -128,10 +134,25 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         log::info("activation requested by the PC: " + kind + " " + name);
         return activation_outcome("activate");
     }
-    if (type == "rollback") {
-        const std::string kind = require_kind(params);
+    if (type == "activate_pair") {
+        // A logic and a pack for it together (switching between logics, docs 5.2).
+        const std::string logic = require_string(params, "logic");
+        const std::string pack = require_string(params, "pack");
         try {
-            store_.rollback(kind);
+            store_.activate_pair(logic, pack);
+        } catch (const std::exception& e) {
+            throw RequestError(e.what());
+        }
+        log::info("activation requested by the PC: logic " + logic + " with pack " + pack);
+        return activation_outcome("activate_pair");
+    }
+    if (type == "rollback") {
+        const auto it = params.is_object() ? params.find("kind") : params.end();
+        const bool both = it != params.end() && it->is_string() && it->get<std::string>() == "both";
+        const std::string kind = both ? "both" : require_kind(params);
+        try {
+            if (both) store_.rollback_pair();
+            else store_.rollback(kind);
         } catch (const std::exception& e) {
             throw RequestError(e.what());
         }

@@ -14,6 +14,7 @@
 // rollback requests); both do exactly the same thing.
 #pragma once
 
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,6 +39,7 @@ struct InstalledVersion {
     std::vector<std::string> capabilities;
     std::vector<std::string> scenarios;
     std::string parent;
+    std::string logic_name;   // pack: the logic it is for (manifest logic.name)
 };
 
 class VersionStore {
@@ -61,8 +63,16 @@ public:
     // target in previous/<kind>.  Throws std::runtime_error.
     void activate(const std::string& kind, const std::string& dir_name) const;
 
+    // Point current/logic and current/pack at a matching pair in one step:
+    // switching between logics (tof_drive, cam_drive, py_drive) needs both,
+    // and the control loop never sees one without the other (both links are
+    // written under the store's lock, which read_current also takes).
+    void activate_pair(const std::string& logic_dir_name, const std::string& pack_dir_name) const;
+
     // Swap current/<kind> and previous/<kind>.  Throws std::runtime_error.
     void rollback(const std::string& kind) const;
+    // Swap both current/ and previous/ links in one step (undoes activate_pair).
+    void rollback_pair() const;
 
     // Point current/<kind> back at the directory that is actually running
     // (absolute path) without touching previous/<kind>.  Used by the core
@@ -93,7 +103,11 @@ public:
 private:
     void link_atomic(const std::string& kind, const std::string& relative_target, bool keep_previous) const;
     void write_atomic(const std::string& relative_path, const std::string& content) const;
+    std::string checked_target(const std::string& kind, const std::string& dir_name) const;
+    std::string previous_target(const std::string& kind) const;
     std::string state_dir_;
+    // Link changes and read_current are serialised, so a pair is never seen half-written.
+    mutable std::mutex mutex_;
 };
 
 } // namespace rumicar

@@ -11,7 +11,7 @@
     <RootNamespace>RumiCar.DriveManager</RootNamespace>
     <!-- Product version = the release tag without the v (docs 7.3); CI checks the tag against it.
          The commit is not appended automatically: builds that are not a release get +g<commit> from CI. -->
-    <Version>0.2.1</Version>
+    <Version>0.3.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

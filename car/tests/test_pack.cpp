@@ -243,13 +243,39 @@ void test_core_config() {
     CHECK(throws([] { parse_core_config("{\"network\": {\"ap_start\": \"later\"}}"); }));
     CHECK(throws([] { parse_core_config("{\"network\": {\"wifi_txpower_dbm\": 31}}"); }));
     CHECK(throws([] { parse_core_config("{\"power\": {\"unknown\": 1}}"); }));
+    // Start ramp of auto mode (docs 3.5).
+    CHECK(parse_core_config("{}").auto_accel_permille_per_s == 1125);
+    CHECK(parse_core_config("{\"auto_accel_permille_per_s\": 0}").auto_accel_permille_per_s == 0);
+    CHECK(throws([] { parse_core_config("{\"auto_accel_permille_per_s\": -1}"); }));
+}
+
+void test_py_drive_loads(const fs::path& staged_logic_dir, const fs::path& py_pack_dir, const fs::path& tof_pack_dir) {
+    // The staged py_drive directory as installed (library + runner.py + manifest), through the core's loader.
+    auto lib = std::make_shared<LogicLibrary>(staged_logic_dir.string());
+    CHECK(std::string(lib->api().name) == "py_drive" && lib->manifest().id == "py_drive");
+    bool lists_runner = false;
+    for (const auto& f : lib->manifest().files) lists_runner = lists_runner || f.path == "runner.py";
+    CHECK_MSG(lists_runner, "runner.py must be listed (and so verified) in the py_drive manifest");
+    const Manifest pm = load_and_verify_manifest(py_pack_dir.string());
+    CHECK(pm.id == "py-sample" && pm.logic_name == "py_drive" && pm.logic_min_abi == 2);
+    {
+        LogicInstance inst(lib, py_pack_dir.string());   // starts drive.py, self-test (ping)
+        rumi_sensor_frame f{};
+        f.size = sizeof(f);
+        f.t_us = 1000000;
+        f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_NO_TARGET;
+        rumi_command c{};
+        CHECK(inst.step(f, c) == 0);
+        CHECK(c.drive_permille == 600 && std::string(inst.state_name(c.state)) == "RUN");
+    }
+    CHECK_MSG(throws([&] { LogicInstance x(lib, tof_pack_dir.string()); }), "a tof_drive pack must be refused by py_drive");
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 5) {
-        std::fprintf(stderr, "usage: test_pack <base pack dir> <libtof_drive.so> <cam-base pack dir> <libcam_drive.so>\n");
+    if (argc < 7) {
+        std::fprintf(stderr, "usage: test_pack <base pack dir> <libtof_drive.so> <cam-base pack dir> <libcam_drive.so> <py_drive logic dir> <py-sample pack dir>\n");
         return 2;
     }
     const fs::path pack_dir = fs::absolute(argv[1]);
@@ -265,6 +291,7 @@ int main(int argc, char** argv) {
     test_manifest_metadata();
     test_logic_library_loads(tmp, so, pack_dir);
     test_cam_drive_library_loads(tmp, cam_so, cam_pack_dir, pack_dir);
+    test_py_drive_loads(fs::absolute(argv[5]), fs::absolute(argv[6]), pack_dir);
     test_core_config();
     return check::summary("test_pack");
 }

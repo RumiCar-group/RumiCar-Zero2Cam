@@ -1,5 +1,7 @@
 #include "car_state.hpp"
 
+#include <algorithm>
+
 namespace rumicar {
 
 using json = nlohmann::json;
@@ -100,6 +102,28 @@ bool CarState::client_is_connected() const {
     return client_connected_;
 }
 
+void CarState::set_max_drive(int permille) {
+    std::lock_guard<std::mutex> lock(m_);
+    max_drive_ = std::clamp(permille, 0, 1000);
+    auto_limit_ = max_drive_;
+}
+
+bool CarState::set_auto_limit(int permille) {
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        const int v = std::clamp(permille, 0, max_drive_);
+        if (v == auto_limit_) return false;
+        auto_limit_ = v;
+    }
+    emit_status();
+    return true;
+}
+
+int CarState::auto_limit() const {
+    std::lock_guard<std::mutex> lock(m_);
+    return auto_limit_;
+}
+
 CarState::FrameInputs CarState::frame_inputs(Clock::time_point now) const {
     std::lock_guard<std::mutex> lock(m_);
     FrameInputs in;
@@ -108,6 +132,7 @@ CarState::FrameInputs CarState::frame_inputs(Clock::time_point now) const {
     in.manual_steer = manual_steer_;
     in.manual_drive = manual_drive_;
     in.manual_timed_out = mode_ == DriveMode::Manual && (now - last_heartbeat_) > heartbeat_timeout_;
+    in.auto_limit = auto_limit_;
     return in;
 }
 
@@ -155,6 +180,8 @@ json CarState::status_json() const {
         {"state_name", running_.state_name},
         {"battery_mv", 0},
         {"throttled", throttled_},
+        {"auto_limit", auto_limit_},
+        {"max_drive_permille", max_drive_},
     };
 }
 

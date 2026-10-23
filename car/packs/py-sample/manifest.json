@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "kind": "pack",
+  "id": "py-sample",
+  "version": "0.1.0",
+  "created": "2026-10-22T23:23:53Z",
+  "logic": {
+    "name": "py_drive",
+    "min_abi": 2
+  },
+  "description": "自作の走行プログラム（Python）の見本：前が近ければ開いている側へ曲がり、とても近ければ下がる。drive.py と params.json を書き換えて自分の走り方にする",
+  "capabilities": [
+    "walls"
+  ],
+  "files": [
+    {
+      "path": "drive.py",
+      "sha256": "017af5d98cc7dbb9c79f8b7bbef213ea3a15fa42b3d7cf91dfadd1e96e99f09d",
+      "bytes": 3658
+    },
+    {
+      "path": "params.json",
+      "sha256": "af05b113193a6f48fbe7eaacacf79b3ee26662f672a0f225770249e5694442e9",
+      "bytes": 114
+    }
+  ]
+}

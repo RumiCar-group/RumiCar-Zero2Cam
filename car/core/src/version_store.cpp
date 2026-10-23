@@ -55,6 +55,7 @@ bool VersionStore::is_plain_dir_name(const std::string& name) {
 }
 
 std::optional<ActiveSelection> VersionStore::read_current(std::string& reason) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     ActiveSelection sel;
     std::error_code ec;
     for (const char* kind : {"logic", "pack"}) {
@@ -122,27 +123,55 @@ void VersionStore::link_atomic(const std::string& kind, const std::string& relat
     fsync_dir(previous_dir);
 }
 
-void VersionStore::activate(const std::string& kind, const std::string& dir_name) const {
+std::string VersionStore::checked_target(const std::string& kind, const std::string& dir_name) const {
     const std::string sub = subdir_for(kind);
     if (!is_plain_dir_name(dir_name)) throw std::runtime_error("bad directory name '" + dir_name + "'");
     const fs::path dir = fs::path(state_dir_) / sub / dir_name;
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) throw std::runtime_error(dir.string() + " does not exist");
     if (!fs::is_regular_file(dir / "manifest.json", ec)) throw std::runtime_error(dir.string() + " has no manifest.json");
-    link_atomic(kind, "../" + sub + "/" + dir_name, true);
+    return "../" + sub + "/" + dir_name;
 }
 
-void VersionStore::rollback(const std::string& kind) const {
+void VersionStore::activate(const std::string& kind, const std::string& dir_name) const {
+    const std::string target = checked_target(kind, dir_name);
+    std::lock_guard<std::mutex> lock(mutex_);
+    link_atomic(kind, target, true);
+}
+
+void VersionStore::activate_pair(const std::string& logic_dir_name, const std::string& pack_dir_name) const {
+    const std::string logic_target = checked_target("logic", logic_dir_name);
+    const std::string pack_target = checked_target("pack", pack_dir_name);
+    std::lock_guard<std::mutex> lock(mutex_);
+    link_atomic("logic", logic_target, true);
+    link_atomic("pack", pack_target, true);
+}
+
+std::string VersionStore::previous_target(const std::string& kind) const {
     subdir_for(kind); // validates kind
     const fs::path previous = fs::path(state_dir_) / "previous" / kind;
     std::error_code ec;
     if (!fs::is_symlink(previous, ec)) throw std::runtime_error("no previous " + kind);
     const fs::path target = fs::read_symlink(previous, ec);
     if (ec) throw std::runtime_error("cannot read previous/" + kind + ": " + ec.message());
-    link_atomic(kind, target.string(), true);
+    return target.string();
+}
+
+void VersionStore::rollback(const std::string& kind) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    link_atomic(kind, previous_target(kind), true);
+}
+
+void VersionStore::rollback_pair() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string logic = previous_target("logic");
+    const std::string pack = previous_target("pack");
+    link_atomic("logic", logic, true);
+    link_atomic("pack", pack, true);
 }
 
 void VersionStore::restore_current(const std::string& kind, const std::string& running_dir) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     const std::string sub = subdir_for(kind);
     const fs::path dir(running_dir);
     const std::string name = dir.filename().string();
@@ -154,6 +183,7 @@ void VersionStore::restore_current(const std::string& kind, const std::string& r
 }
 
 void VersionStore::remove(const std::string& kind, const std::string& dir_name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     const std::string sub = subdir_for(kind);
     if (!is_plain_dir_name(dir_name)) throw std::runtime_error("bad directory name '" + dir_name + "'");
     if (link_target("current", kind.c_str()) == dir_name) throw std::runtime_error(dir_name + " is the current " + kind);
@@ -184,6 +214,7 @@ std::vector<InstalledVersion> VersionStore::list(const std::string& kind) const 
             v.capabilities = m.capabilities;
             v.scenarios = m.scenarios;
             v.parent = m.parent;
+            v.logic_name = m.logic_name;
             if (!kind_matches) {
                 v.error = "manifest kind does not match the directory";
             } else if (m.dir_name() != v.dir_name) {
