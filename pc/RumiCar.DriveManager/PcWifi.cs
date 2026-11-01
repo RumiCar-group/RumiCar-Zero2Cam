@@ -49,7 +49,7 @@ public static class PcWifi
         {
             return new Status(Kind.NoWifi, "", "wlanapi.dll がありません");
         }
-        if (err == ErrorServiceNotActive) return new Status(Kind.NoWifi, "", "WLAN AutoConfig サービスが動いていません");
+        if (err == ErrorServiceNotActive) return new Status(Kind.NoWifi, "", "WLAN AutoConfig サービスが停止しています");
         if (err != 0) return new Status(Kind.Error, "", $"WlanOpenHandle: {err}");
         try
         {
@@ -88,7 +88,7 @@ public static class PcWifi
                     }
                 }
                 return hidden
-                    ? new Status(Kind.Hidden, "", "Windows がネットワーク名を渡しません（位置情報の許可）")
+                    ? new Status(Kind.Hidden, "", "Windows がネットワーク名を返しません（位置情報の許可が必要）")
                     : new Status(Kind.Disconnected, "", "");
             }
             finally

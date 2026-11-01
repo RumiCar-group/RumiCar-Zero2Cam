@@ -77,7 +77,7 @@ public partial class MainWindow : Window
         Title = "RumiCar 走行管理 " + AppVersion;
         PreviewKeyDown += OnKey;
         PreviewKeyUp += OnKey;
-        Deactivated += (_, _) => StopManual("ウィンドウを離れたので停止");
+        Deactivated += (_, _) => StopManual("ウィンドウが非アクティブになったため停止");
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainViewModel.ManualMaxDrive)) _manual.MaxDrive = _vm.ManualMaxDrive;
@@ -168,13 +168,13 @@ public partial class MainWindow : Window
             await RefreshWifiAsync();
             var wifi = _wifi;
             _carNetwork = wifi is { Kind: PcWifi.Kind.Connected } ? wifi.Ssid : null;
-            if (_carNetwork is not null) _vm.AddLog($"PC の Wi-Fi: {_carNetwork}（この接続中に変わったら知らせます）");
+            if (_carNetwork is not null) _vm.AddLog($"PC の Wi-Fi: {_carNetwork}（接続中に変化した場合は警告を記録します）");
             UpdateWifiDisplay();
             var carName = CarConnection.GetString(car.HelloResult, "car");
             var coreVersion = CarConnection.GetString(car.HelloResult, "core_version");
             if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}, このアプリ {AppVersion}");
             if (coreVersion is not null && !ProductVersion.SameRelease(coreVersion, AppVersion))
-                _vm.AddLog($"注意：車の本体（{coreVersion}）とこのアプリ（{AppVersion}）の版が違います。同じ Release の SD カードイメージ（または .deb）とアプリを使ってください");
+                _vm.AddLog($"警告：車の本体（{coreVersion}）とこのアプリ（{AppVersion}）の版が異なります。同じ Release の SD カードイメージ（または .deb）とアプリを使用してください");
             var status = await car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None);
             if (status.Ok && status.Result is JsonElement result)
             {
@@ -187,7 +187,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _vm.AddLog("接続できません: " + ex.Message);
+            _vm.AddLog("接続失敗: " + ex.Message);
             _vm.ConnectionState = "切断";
             await car.DisposeAsync();
         }
@@ -207,7 +207,7 @@ public partial class MainWindow : Window
         SetManualMode(false);
         _carNetwork = null;
         _vm.AutoLimitEnabled = false;
-        _vm.AutoLimitNote = "接続すると車の値を読みます";
+        _vm.AutoLimitNote = "接続時に車の設定値を取得します";
         UpdateWifiDisplay();
         ConnectButton.Content = "接続";
         _vm.InstalledVersions.Clear();
@@ -229,7 +229,7 @@ public partial class MainWindow : Window
     private void OnDisconnected(CarConnection source, Exception? ex)
     {
         if (!ReferenceEquals(source, _car)) return;   // already disconnected by the user
-        _vm.AddLog(ex is null ? "車両との接続が閉じられました" : "接続が切れました: " + ex.Message);
+        _vm.AddLog(ex is null ? "車両側から接続が切断されました" : "接続が切断されました: " + ex.Message);
         _ = DisconnectAsync();
     }
 
@@ -312,7 +312,7 @@ public partial class MainWindow : Window
             var names = GetStringList(data, "aux_names");
             if (!names.SequenceEqual(_auxNames)) _localDetectors.Clear();   // another logic or pack: learn the kinds afresh
             _auxNames = names;
-            if (_auxNames.Count == 0) { _vm.Detections = "（このロジックは検出結果を出しません）"; Overlay.Children.Clear(); }
+            if (_auxNames.Count == 0) { _vm.Detections = "（このロジックは検出結果を出力しません）"; Overlay.Children.Clear(); }
         }
         if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("battery_mv", out var mv) && mv.TryGetInt32(out var millivolts))
             _vm.Battery = FormatBattery(millivolts);
@@ -327,12 +327,12 @@ public partial class MainWindow : Window
             finally { _applyingAutoLimit = false; }
             _vm.AutoLimitEnabled = _car is not null;
             var max = data.TryGetProperty("max_drive_permille", out var mx) && mx.TryGetInt32(out var m) ? m : 1000;
-            _vm.AutoLimitNote = max < 1000 ? $"車の上限 {max / 10.0:F0}%（core.json の max_drive_permille）まで" : "車を再起動すると 100% に戻ります";
+            _vm.AutoLimitNote = max < 1000 ? $"車の上限 {max / 10.0:F0}%（core.json の max_drive_permille）まで" : "本体の再起動で 100% に戻ります";
         }
         else if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("mode", out _) && !data.TryGetProperty("auto_limit", out _))
         {
             _vm.AutoLimitEnabled = false;
-            _vm.AutoLimitNote = "車の本体が 0.3.0 以降で使えます";
+            _vm.AutoLimitNote = "車の本体 0.3.0 以降で使用可";
         }
     }
 
@@ -360,7 +360,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _vm.AddLog("自動の最大出力を送れません: " + ex.Message);
+            _vm.AddLog("自動の最大出力の送信失敗: " + ex.Message);
         }
     }
 
@@ -377,19 +377,19 @@ public partial class MainWindow : Window
                 && (before.Kind != now.Kind || before.Ssid != now.Ssid))
             {
                 _vm.AddLog(now.Kind == PcWifi.Kind.Connected
-                    ? $"注意：PC の Wi-Fi が {_carNetwork} から {now.Ssid} に切り替わりました（車との通信が切れます）"
-                    : $"注意：PC の Wi-Fi が {_carNetwork} から外れました（{Describe(now)}）");
+                    ? $"警告：PC の Wi-Fi が {_carNetwork} から {now.Ssid} に切り替わりました（車との通信が切断されます）"
+                    : $"警告：PC の Wi-Fi が {_carNetwork} から切断されました（{Describe(now)}）");
             }
             if (now.Kind == PcWifi.Kind.Hidden && !_wifiHiddenLogged)
             {
                 _wifiHiddenLogged = true;
-                _vm.AddLog("PC の Wi-Fi の名前を読めません。Windows の 設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにすると表示されます");
+                _vm.AddLog("PC の Wi-Fi のネットワーク名を取得できません。Windows の 設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにすると取得できます");
             }
             UpdateWifiDisplay();
         }
         catch (Exception ex)
         {
-            _vm.PcWifi = "PC の Wi-Fi: 読めません";
+            _vm.PcWifi = "PC の Wi-Fi: 取得不可";
             _vm.PcWifiHint = ex.Message;
         }
         finally
@@ -403,8 +403,8 @@ public partial class MainWindow : Window
         PcWifi.Kind.Connected => s.Ssid,
         PcWifi.Kind.Disconnected => "未接続",
         PcWifi.Kind.NoWifi => "Wi-Fi なし",
-        PcWifi.Kind.Hidden => "名前を読めません",
-        _ => "読めません",
+        PcWifi.Kind.Hidden => "名前を取得不可",
+        _ => "取得不可",
     };
 
     private void UpdateWifiDisplay()
@@ -413,11 +413,11 @@ public partial class MainWindow : Window
         if (w is null) return;
         var off = _carNetwork is not null && _car is not null && (w.Kind != PcWifi.Kind.Connected || w.Ssid != _carNetwork);
         _vm.PcWifiWarning = off;
-        _vm.PcWifi = "PC の Wi-Fi: " + Describe(w) + (off ? $"（車の {_carNetwork} から外れています）" : "");
+        _vm.PcWifi = "PC の Wi-Fi: " + Describe(w) + (off ? $"（車の {_carNetwork} から切断）" : "");
         _vm.PcWifiHint = w.Kind == PcWifi.Kind.Hidden
-            ? "Windows 11 24H2 以降は、設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにすると名前が読めます"
-            : "この PC がいまつながっている Wi-Fi。車の AP（既定 RumiCar）から外れると赤くなります。"
-              + "\nWindows はインターネットにつながらない AP から自動で別のネットワークへ移ることがあります（README 10 章）"
+            ? "Windows 11 24H2 以降は、設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにするとネットワーク名を取得できます"
+            : "この PC が現在接続している Wi-Fi。車の AP（既定 RumiCar）から切断されると赤色で表示します。"
+              + "\nWindows はインターネットに接続できない AP から自動で別のネットワークへ切り替えることがあります（README 10 章）"
               + (w.Detail.Length > 0 ? "\n" + w.Detail : "");
     }
 
@@ -448,7 +448,7 @@ public partial class MainWindow : Window
         if (nowUv && !wasUv) _vm.AddLog("電源: 車のファームウェアが低電圧を検出しました（" + text + "）");
         else if (!nowUv && wasUv) _vm.AddLog("電源: 低電圧が解消しました（" + text + "）");
         else if ((throttled & PowerFlags.UnderVoltageSinceBoot) != 0 && (_lastThrottled & PowerFlags.UnderVoltageSinceBoot) == 0 && _lastThrottled != 0)
-            _vm.AddLog("電源: 起動後に低電圧がありました（" + text + "）");
+            _vm.AddLog("電源: 起動後に低電圧が発生していました（" + text + "）");
         _lastThrottled = throttled;
     }
 
@@ -581,13 +581,13 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _vm.AddLog("画像を表示できません: " + ex.Message);
+            _vm.AddLog("画像の表示に失敗: " + ex.Message);
         }
     }
 
     private string DescribeDetections(AuxFormat1.Decoded? aux)
     {
-        if (aux is null) return _auxNames.Count == 0 ? "-" : "（このコマには検出結果がありません）";
+        if (aux is null) return _auxNames.Count == 0 ? "-" : "（このフレームには検出結果がありません）";
         NoteDetectorKinds(aux);
         var parts = new List<string>();
         foreach (var d in aux.Detections)
@@ -839,7 +839,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _vm.AddLog("手動操作を送れません: " + ex.Message);
+            _vm.AddLog("手動操作の送信失敗: " + ex.Message);
             _manualSent = (steer, drive);
         }
         finally
@@ -1034,13 +1034,13 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _vm.AddLog("プログラムを送れません: " + ex.Message);
-            _vm.PushStatus = "送れません: " + ex.Message;
+            _vm.AddLog("プログラムの送信準備に失敗: " + ex.Message);
+            _vm.PushStatus = "送信不可: " + ex.Message;
             return;
         }
         _pushing = true;
         _vm.PushStatus = $"送信中 {plan.DirectoryName}";
-        _vm.AddLog($"プログラムを送ります: {folder} → {plan.DirectoryName}（{string.Join(", ", prepared.Files)}）");
+        _vm.AddLog($"プログラムを送信します: {folder} → {plan.DirectoryName}（{string.Join(", ", prepared.Files)}）");
         try
         {
             await VersionPush.PushAsync(prepared.StagingDirectory, plan, car.RequestAsync, car.NextId, null, CancellationToken.None);
@@ -1048,7 +1048,7 @@ public partial class MainWindow : Window
             await RefreshVersionsAsync();
             _vm.SelectedVersion = _vm.InstalledVersions.FirstOrDefault(x => x.Name == plan.DirectoryName);
             await ActivateAsync("pack", plan.DirectoryName);
-            _vm.AddLog("プログラムの print() とエラーは車のログに出ます（ssh で sudo journalctl -u rumicar-core -f）。「自動」で走り出します");
+            _vm.AddLog("プログラムの print() の出力とエラーは車のログに記録されます（ssh で sudo journalctl -u rumicar-core -f）。「自動」で走行を開始します");
         }
         catch (Exception ex)
         {
@@ -1103,13 +1103,13 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                _vm.AddLog("シナリオ一覧（scenarios.json）を更新できません: " + ex.Message);
+                _vm.AddLog("シナリオ一覧（scenarios.json）の更新に失敗: " + ex.Message);
             }
         }
         catch (Exception ex)
         {
-            _vm.RecordingStatus = "収録できません: " + ex.Message;
-            _vm.AddLog("収録を開始できません: " + ex.Message);
+            _vm.RecordingStatus = "収録不可: " + ex.Message;
+            _vm.AddLog("収録の開始に失敗: " + ex.Message);
         }
     }
 
@@ -1131,9 +1131,9 @@ public partial class MainWindow : Window
             _vm.AddLog("収録の終了処理に失敗: " + ex.Message);
         }
         _vm.Recording = false;
-        _vm.RecordingStatus = $"停止（直前の収録: {s.FramesWritten} コマ、画像 {s.ImagesWritten} 枚）";
+        _vm.RecordingStatus = $"停止（直前の収録: {s.FramesWritten} フレーム、画像 {s.ImagesWritten} 枚）";
         RecordButton.Content = "収録開始";
-        _vm.AddLog($"収録停止: {s.FramesWritten} コマ（画像 {s.ImagesWritten} 枚）, 欠け {s.SequenceGaps} 回");
+        _vm.AddLog($"収録停止: {s.FramesWritten} フレーム（画像 {s.ImagesWritten} 枚）, 欠落 {s.SequenceGaps} 回");
     }
 
     // --- video from a recorded session (docs 6.4) ------------------------------
@@ -1152,7 +1152,7 @@ public partial class MainWindow : Window
         var directory = dialog.FolderName;
         if (directory == _session?.Directory)
         {
-            _vm.AddLog("動画: 収録中のフォルダは選べません。収録を止めてから作ってください");
+            _vm.AddLog("動画: 収録中のフォルダは選択不可。収録を停止してから作成してください");
             return;
         }
         _makingVideo = true;
@@ -1163,14 +1163,14 @@ public partial class MainWindow : Window
         {
             var result = await Task.Run(() => SessionVideo.Build(directory, new SessionVideo.Options(), progress));
             var files = string.Join(", ", result.Files.Select(Path.GetFileName));
-            _vm.VideoStatus = $"作成完了: {files}（{result.DurationSeconds:F1} 秒、{result.FramesUsed} コマ使用、{result.FramesRepeated} コマ保持、{result.FramesSkipped} コマ省略）";
+            _vm.VideoStatus = $"作成完了: {files}（{result.DurationSeconds:F1} 秒、{result.FramesUsed} フレーム使用、{result.FramesRepeated} フレーム保持、{result.FramesSkipped} フレーム省略）";
             _vm.AddLog($"動画作成: {result.Files[0]}" + (result.Files.Count > 1 ? $" ほか {result.Files.Count - 1} 本" : "") +
-                       $"（{result.Width}x{result.Height}、{result.DurationSeconds:F1} 秒、使用 {result.FramesUsed}、保持 {result.FramesRepeated}、省略 {result.FramesSkipped}、ファイル欠け {result.FramesMissingFile}）");
+                       $"（{result.Width}x{result.Height}、{result.DurationSeconds:F1} 秒、使用 {result.FramesUsed}、保持 {result.FramesRepeated}、省略 {result.FramesSkipped}、ファイル欠落 {result.FramesMissingFile}）");
         }
         catch (Exception ex)
         {
-            _vm.VideoStatus = "作成できません: " + ex.Message;
-            _vm.AddLog("動画を作成できません: " + ex.Message);
+            _vm.VideoStatus = "作成失敗: " + ex.Message;
+            _vm.AddLog("動画の作成に失敗: " + ex.Message);
         }
         finally
         {

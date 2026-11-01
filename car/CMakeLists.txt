@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.25)
 # release workflow refuses a tag that differs from this value.  CI builds that
 # are not a release add the commit as build metadata (RUMICAR_VERSION_SUFFIX
 # "+g<commit>"), so their core_version and .deb never pass for the release.
-set(RUMICAR_VERSION "0.3.0" CACHE STRING "Product version X.Y.Z (the release tag without the v)")
+set(RUMICAR_VERSION "0.3.1" CACHE STRING "Product version X.Y.Z (the release tag without the v)")
 set(RUMICAR_VERSION_SUFFIX "" CACHE STRING "Build metadata for builds that are not a release, e.g. +g1a2b3c4 (empty for a release)")
 if(NOT RUMICAR_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "RUMICAR_VERSION must be X.Y.Z, got '${RUMICAR_VERSION}'")
@@ -46,7 +46,7 @@ add_compile_options(-Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsig
 
 set(TOF_DRIVE_VERSION "0.2.0")   # version of the shipped driving logic (logic/tof_drive); 0.2.0 = ABI 2
 set(CAM_DRIVE_VERSION "0.2.0")   # version of the shipped camera driving logic (logic/cam_drive); 0.2.0 = vehicles and intersections
-set(PY_DRIVE_VERSION "0.1.0")    # version of the shipped logic that runs your own Python program (logic/py_drive)
+set(PY_DRIVE_VERSION "0.1.1")    # version of the shipped logic that runs your own Python program (logic/py_drive)
 
 find_package(nlohmann_json 3.11 REQUIRED)
 

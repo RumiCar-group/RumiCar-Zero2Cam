@@ -62,18 +62,18 @@ class Car:
         """Steering: car.LEFT / car.CENTER / car.RIGHT (or -1 / 0 / 1, or "left" / "center" / "right")."""
         if isinstance(direction, str):
             if direction.lower() not in _STEER_NAMES:
-                raise DriveError(f"steer() に {direction!r} は使えません（\"left\" / \"center\" / \"right\"）")
+                raise DriveError(f"steer() に {direction!r} は使用不可（\"left\" / \"center\" / \"right\"）")
             direction = _STEER_NAMES[direction.lower()]
         if isinstance(direction, bool) or direction not in (LEFT, CENTER, RIGHT):
-            raise DriveError(f"steer() に {direction!r} は使えません（car.LEFT / car.CENTER / car.RIGHT）")
+            raise DriveError(f"steer() に {direction!r} は使用不可（car.LEFT / car.CENTER / car.RIGHT）")
         self._steer = int(direction)
 
     def drive(self, permille):
         """Drive motor: -1000 (full reverse) .. 0 (stop) .. 1000 (full forward)."""
         if isinstance(permille, bool) or not isinstance(permille, (int, float)):
-            raise DriveError(f"drive() には数を渡します（{permille!r} は使えません）")
+            raise DriveError(f"drive() の引数は数値です（{permille!r} は使用不可）")
         if not -1000 <= permille <= 1000:
-            raise DriveError(f"drive() は -1000〜1000 です（{permille} は範囲外）")
+            raise DriveError(f"drive() の引数の範囲は -1000〜1000 です（{permille} は範囲外）")
         self._drive = int(round(permille))
         self._brake = False
 
@@ -134,7 +134,7 @@ def main():
             with open(params_path, encoding="utf-8") as f:
                 params = json.load(f)
             if not isinstance(params, dict):
-                raise DriveError("params.json は { ... } の形（名前と値の組）にします")
+                raise DriveError("params.json は JSON オブジェクト（{ ... }、名前と値の組）で記述してください")
         sys.path.insert(0, pack_dir)          # drive.py may import its own modules from the pack
         spec = importlib.util.spec_from_file_location("drive", os.path.join(pack_dir, "drive.py"))
         module = importlib.util.module_from_spec(spec)
@@ -148,10 +148,10 @@ def main():
             setup(car)
     except SyntaxError as e:
         traceback.print_exc()
-        reply(f"ERROR drive.py の {e.lineno} 行目に書き方の誤りがあります: {e.msg}")
+        reply(f"ERROR drive.py の {e.lineno} 行目に構文エラーがあります: {e.msg}")
         return 1
     except json.JSONDecodeError as e:
-        reply(f"ERROR params.json の {e.lineno} 行目が JSON として読めません: {e.msg}")
+        reply(f"ERROR params.json の {e.lineno} 行目が JSON として解析できません: {e.msg}")
         return 1
     except Exception as e:   # noqa: BLE001 — any error while loading is reported, not raised
         traceback.print_exc()
