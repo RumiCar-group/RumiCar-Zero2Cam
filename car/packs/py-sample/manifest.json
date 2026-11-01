@@ -2,21 +2,21 @@
   "schema": 1,
   "kind": "pack",
   "id": "py-sample",
-  "version": "0.1.0",
-  "created": "2026-10-22T23:23:53Z",
+  "version": "0.1.1",
+  "created": "2026-11-01T00:16:48Z",
   "logic": {
     "name": "py_drive",
     "min_abi": 2
   },
-  "description": "自作の走行プログラム（Python）の見本：前が近ければ開いている側へ曲がり、とても近ければ下がる。drive.py と params.json を書き換えて自分の走り方にする",
+  "description": "自作の走行プログラム（Python）の見本：前方が近ければ距離の大きい側へ旋回し、非常に近ければ後退する。drive.py と params.json を書き換えて独自の走行方法を実装する",
   "capabilities": [
     "walls"
   ],
   "files": [
     {
       "path": "drive.py",
-      "sha256": "017af5d98cc7dbb9c79f8b7bbef213ea3a15fa42b3d7cf91dfadd1e96e99f09d",
-      "bytes": 3658
+      "sha256": "441b34db680ff6b388cb798f92968602200c68cf5f08b1b358703947a121a081",
+      "bytes": 3905
     },
     {
       "path": "params.json",

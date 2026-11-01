@@ -25,7 +25,7 @@ public static class ActivationPlanner
     /// <summary>The step for activating <paramref name="selected"/> while <paramref name="currentLogic"/>/<paramref name="currentPack"/> (directory names) run.</summary>
     public static ActivationStep Plan(InstalledVersion selected, IReadOnlyList<InstalledVersion> installed, string currentLogic, string currentPack)
     {
-        if (!selected.Verified) return ActivationStep.Fail($"{selected.DirectoryName} は検証に失敗しているので使えません");
+        if (!selected.Verified) return ActivationStep.Fail($"{selected.DirectoryName} は検証に失敗しているため使用不可");
         var logic = installed.FirstOrDefault(v => v.Kind == "logic" && v.DirectoryName == currentLogic);
         var pack = installed.FirstOrDefault(v => v.Kind == "pack" && v.DirectoryName == currentPack);
         if (selected.Kind == "pack")

@@ -75,23 +75,23 @@ public static class Capability
     public static string DescribeState(string name) => name switch
     {
         "CRUISE" => "巡航",
-        "TURN_LEFT" => "左へ",
-        "TURN_RIGHT" => "右へ",
+        "TURN_LEFT" => "左旋回",
+        "TURN_RIGHT" => "右旋回",
         "EMERGENCY_BRAKE" => "非常ブレーキ",
-        "RECOVER_REVERSE" => "後退して立て直し",
+        "RECOVER_REVERSE" => "後退による回復",
         "SENSOR_FAULT" => "センサー異常",
         "SIGNAL_APPROACH" => "赤信号に接近",
         "SIGNAL_STOP" => "赤信号で停止",
-        "SIGNAL_RESUME" => "信号から発進",
-        "FOLLOW" => "前の車両に追従",
-        "FOLLOW_WAIT" => "駐車車両の後ろで待機",
-        "OVERTAKE_OUT" => "追い越し：はみ出す",
-        "OVERTAKE_PASS" => "追い越し：横を通る",
-        "OVERTAKE_IN" => "追い越し：戻る",
+        "SIGNAL_RESUME" => "赤信号からの発進",
+        "FOLLOW" => "前方車両に追従",
+        "FOLLOW_WAIT" => "駐車車両の後方で待機",
+        "OVERTAKE_OUT" => "追い越し：進路変更",
+        "OVERTAKE_PASS" => "追い越し：並走",
+        "OVERTAKE_IN" => "追い越し：車線へ復帰",
         "INTERSECTION_APPROACH" => "交差点に接近",
         "INTERSECTION_STOP" => "交差点で停止",
         "INTERSECTION_CROSS" => "交差点を直進",
-        "INTERSECTION_TURN" => "交差点で曲がる",
+        "INTERSECTION_TURN" => "交差点で右左折",
         _ => "",
     };
 }
@@ -150,17 +150,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _showOverlay = true;
     private string _detections = "-";
     private bool _autoRecord = true;
-    private string _recordingStatus = "停止（接続すると自動で始まります）";
+    private string _recordingStatus = "停止（接続時に自動で開始）";
     private string _pushStatus = "-";
     private VersionRow? _selectedVersion;
     private BitmapImage? _image;
     private int _manualMaxDrive = 600;
     private bool _invertHorizontal;
     private bool _manualEnabled;
-    private string _manualStatus = "手動モードにすると操作できます";
+    private string _manualStatus = "手動モードで操作可能";
     private int _autoLimit = 1000;
     private bool _autoLimitEnabled;
-    private string _autoLimitNote = "接続すると車の値を読みます";
+    private string _autoLimitNote = "接続時に車の設定値を取得します";
     private string _pcWifi = "PC の Wi-Fi: -";
     private bool _pcWifiWarning;
     private string _pcWifiHint = "";
@@ -211,7 +211,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool AutoRecord
     {
         get => _autoRecord;
-        set { if (Set(ref _autoRecord, value) && !_recording) RecordingStatus = value ? "停止（接続すると自動で始まります）" : "停止"; }
+        set { if (Set(ref _autoRecord, value) && !_recording) RecordingStatus = value ? "停止（接続時に自動で開始）" : "停止"; }
     }
     public string RecordingStatus { get => _recordingStatus; set => Set(ref _recordingStatus, value); }
     public string PushStatus { get => _pushStatus; set => Set(ref _pushStatus, value); }

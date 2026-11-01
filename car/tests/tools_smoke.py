@@ -139,7 +139,7 @@ def main() -> int:
     with open(os.path.join(pack, "manifest.json"), encoding="utf-8") as f:
         manifest = json.load(f)
     assert manifest["capabilities"] == ["walls", "traffic_light"], manifest["capabilities"]
-    assert manifest["parent"] == "cam-base-0.1.0" and "信号機ありケース1" in manifest["scenarios"]
+    assert manifest["parent"] == "cam-base-0.1.1" and "信号機ありケース1" in manifest["scenarios"]
     with open(os.path.join(pack, "training.json"), encoding="utf-8") as f:
         report = json.load(f)
     for name in ("traffic_light_red", "traffic_light_green"):

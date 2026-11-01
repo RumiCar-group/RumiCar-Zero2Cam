@@ -31,7 +31,7 @@ public static class ProgramPack
     {
         if (!Directory.Exists(sourceFolder)) throw new InvalidDataException($"フォルダ {sourceFolder} がありません");
         if (!File.Exists(Path.Combine(sourceFolder, "drive.py")))
-            throw new InvalidDataException("選んだフォルダに drive.py がありません（見本は README「自分の走行プログラムを書く」）");
+            throw new InvalidDataException("選択したフォルダに drive.py がありません（見本は README 11 章「自作の走行プログラム（Python）」）");
 
         var paramsPath = Path.Combine(sourceFolder, "params.json");
         if (File.Exists(paramsPath))
@@ -41,11 +41,11 @@ public static class ProgramPack
                 using var doc = JsonDocument.Parse(File.ReadAllText(paramsPath, Encoding.UTF8),
                     new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow });
                 if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                    throw new InvalidDataException("params.json は { ... } の形（名前と値の組）にします");
+                    throw new InvalidDataException("params.json は JSON オブジェクト（{ ... }、名前と値の組）で記述してください");
             }
             catch (JsonException e)
             {
-                throw new InvalidDataException($"params.json の {e.LineNumber + 1} 行目が JSON として読めません: {e.Message}");
+                throw new InvalidDataException($"params.json の {e.LineNumber + 1} 行目が JSON として解析できません: {e.Message}");
             }
         }
 
