@@ -68,6 +68,14 @@ The car **does not start driving on power-on**: it boots into record-only mode (
 
 Optional verification of the download: the values in the Release's `SHA256SUMS.txt` must match the output of `Get-FileHash <file>` in PowerShell.
 
+**Choosing it from Imager's list** (Raspberry Pi Imager 2.0 or later; Imager then downloads and verifies the image itself): in Imager open **App Options → Content Repository → EDIT** (bottom left), enter the URL below and press **APPLY & RESTART**. The OS list for the device "Raspberry Pi Zero 2 W" then shows "RumiCar Zero2Cam <version>": pick it, choose the storage and write (no OS customisation step is shown).
+
+```
+https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/latest/download/rumicar-zero2cam.rpi-imager-manifest
+```
+
+This list (`rumicar-zero2cam.rpi-imager-manifest` of the Release) always points at the latest Release; Imager checks the image's SHA-256 before writing and verifies the card afterwards. Downloading the file and double-clicking it opens Imager with the same list. The same screen takes you back to the official Raspberry Pi list.
+
 ## 3. First boot
 
 1. Place the car on a stand and switch it on.
