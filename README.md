@@ -140,7 +140,7 @@ flowchart TD
     R["VL53L0X の読み取り"] --> Q{"i2c.tof_read_timeout_ms 以内に<br/>測定結果が得られた？<br/>I2C 通信は正常？"}
     Q -->|"いいえ"| F["読み取り失敗 → −1（タイムアウト）<br/>表示 -1 タイムアウト、RC_read() も −1"]
     Q -->|"はい"| V{"測距値が 200 mm を超える？<br/>（対象物未検出 8190 を含む）"}
-    V -->|"はい"| O["範囲外 → −3<br/>表示 -3 範囲外、RC_read() も −3<br/>（20 cm 以内に何もない。この搭載位置では<br/>20 cm より先は地面を捉えることがあるため信用しない）"]
+    V -->|"はい"| O["範囲外 → −3<br/>表示 -3 範囲外、RC_read() も −3<br/>（20 cm 以内に何もない。この搭載位置では<br/>20 cm より先は地面を捉えることがあるため<br/>信用しない）"]
     V -->|"いいえ"| D["測距値 0〜200 [mm]"]
     D --> T{"tof_drive：<br/>conf_max_mm（既定 200）以上？"}
     T -->|"はい"| OPEN["tof_drive：開放<br/>（判断対象の距離内に障害物なし）"]
@@ -593,12 +593,12 @@ sequenceDiagram
     participant R as runner.py（別プロセス）
     Note over C,R: 有効化（create）
     C->>R: 起動：python3 -I -B -u runner.py パック
-    R->>R: params.json と drive.py の読み込み、setup(car)
+    R->>R: params.json と drive.py の読み込み、setup()
     R-->>C: READY（最長 15 秒）または ERROR メッセージ
     loop 50 ms ごと
         C->>R: F seq t_ms 左 中央 右
         alt 30 ms 以内に応答
-            R-->>C: C seq steer drive brake state
+            R-->>C: C seq steer drive_dir drive_pwm state
             C->>C: 指令を出力（本体の制限を適用）
         else loop() で例外
             R-->>C: X seq メッセージ
@@ -645,7 +645,7 @@ libcamera の無い環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドでき�
 <!-- figure: ja/10-frame.mmd -->
 ```mermaid
 flowchart TD
-    A["ToF ×3 を読み取り（各 i2c.tof_read_timeout_ms、既定 100 ms 以内）<br/>RC_read の値：0〜200 [mm] / −3 = 範囲外（20 cm 以内に何もない）/ −1 = 読み取り失敗"] --> B["カメラの最新画像を添付<br/>（新しい画像があるフレームのみ）"]
+    A["ToF ×3 を読み取り<br/>（各 i2c.tof_read_timeout_ms、既定 100 ms 以内）<br/>RC_read の値：0〜200 [mm]<br/>−3 = 範囲外（20 cm 以内に何もない）<br/>−1 = 読み取り失敗"] --> B["カメラの最新画像を添付<br/>（新しい画像があるフレームのみ）"]
     B --> C["ロジック step()<br/>（どのモードでも毎フレーム実行）"]
     C --> E{"非常停止中？<br/>走行モードは？"}
     E -->|"非常停止中"| B1["ブレーキ"]
