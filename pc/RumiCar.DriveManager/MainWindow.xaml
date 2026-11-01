@@ -327,6 +327,17 @@
                         <TextBlock Text="{Binding PushStatus}" Style="{StaticResource Text.Muted}"/>
                     </StackPanel>
                 </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,10,0,0">
+                    <StackPanel>
+                        <TextBlock Text="SD カード（車の本体の更新）" Style="{StaticResource Text.Section}"/>
+                        <TextBlock Text="{Binding SdCardStatus}" Style="{StaticResource Text.Muted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        <WrapPanel Margin="0,8,0,0">
+                            <Button Content="SD カードを作る…" Style="{StaticResource Button.Primary}" MinWidth="140" Click="OnSdCardClick" Margin="0,0,6,6"
+                                    ToolTip="Release のイメージをこの PC にダウンロードして検証し、Raspberry Pi Imager で SD カードに書き込みます（新規作成・本体の更新）。未接続でも使用可"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
 
