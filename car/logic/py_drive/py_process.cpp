@@ -34,14 +34,14 @@ bool parse_reply(const std::string& line, uint32_t seq, Reply& out) {
     long long s = -1;
     if (!(in >> tag >> s) || s != static_cast<long long>(seq)) return false;
     if (tag == "C") {
-        long long steer = 0, drive = 0, brake = 0;
+        long long steer = 0, dir = 0, pwm = 0;
         std::string state;
-        if (!(in >> steer >> drive >> brake >> state)) return false;
-        if (steer < -1 || steer > 1 || drive < -1000 || drive > 1000 || (brake != 0 && brake != 1)) return false;
+        if (!(in >> steer >> dir >> pwm >> state)) return false;
+        if (steer < 0 || steer > 2 || dir < 0 || dir > 3 || pwm < 0 || pwm > 255) return false;
         out.kind = Reply::Kind::Command;
-        out.steer = static_cast<int8_t>(steer);
-        out.drive = static_cast<int16_t>(drive);
-        out.brake = brake == 1;
+        out.steer = static_cast<uint8_t>(steer);
+        out.drive_dir = static_cast<uint8_t>(dir);
+        out.drive_pwm = static_cast<uint8_t>(pwm);
         out.state = state;
         return true;
     }

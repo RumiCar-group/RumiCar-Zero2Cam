@@ -2,11 +2,11 @@
   "schema": 1,
   "kind": "pack",
   "id": "base-tof",
-  "version": "0.1.1",
-  "created": "2026-10-21T10:33:22Z",
+  "version": "0.2.0",
+  "created": "2026-11-01T07:10:29Z",
   "logic": {
     "name": "tof_drive",
-    "min_abi": 1
+    "min_abi": 3
   },
   "description": "壁のみ：ToF センサーで壁と障害物を避けて走る基準データ。信号機・車両・交差点の判断は入っていない",
   "capabilities": [
@@ -15,8 +15,8 @@
   "files": [
     {
       "path": "params.json",
-      "sha256": "0bb483ba08646ccb7bb25455de61800193b15aa54f5f200546ab54aee6a0dce3",
-      "bytes": 549
+      "sha256": "be6761ac6129e6cea65bd603f898dfa4dd087b83453c0c2bff5c4be599274bb7",
+      "bytes": 536
     }
   ]
 }

@@ -25,7 +25,15 @@ using namespace rumicar::cam;
 namespace {
 
 constexpr unsigned W = 320, H = 240;
-constexpr int OPEN = RUMI_TOF_NO_TARGET;
+// Values are those of the RumiCar library: ToF 0..200 mm, -3 nothing within
+// 20 cm (open road); drive as FREE / REVERSE / FORWARD / BRAKE + duty 0..255.
+constexpr int OPEN = RUMI_TOF_OUT_OF_RANGE;
+
+// The drive as a signed duty: FORWARD +pwm, REVERSE -pwm, FREE / BRAKE 0.
+int drv(const rumi_command& c) {
+    return c.drive_dir == RUMI_DRIVE_FORWARD ? c.drive_pwm : c.drive_dir == RUMI_DRIVE_REVERSE ? -c.drive_pwm : 0;
+}
+bool braking(const rumi_command& c) { return c.drive_dir == RUMI_DRIVE_BRAKE; }
 
 bool throws(const std::function<void()>& f, std::string* msg = nullptr) {
     try { f(); } catch (const std::exception& e) { if (msg) *msg = e.what(); return true; }
@@ -187,7 +195,7 @@ CamParams with_intersection(const CamParams& p0, const std::string& turn = "stra
 void test_params(const std::string& pack_dir) {
     const std::string text = read_text(pack_dir + "/params.json");
     const CamParams p = parse_cam_params_json(text);
-    CHECK(p.signal.red_detector == "traffic_light_red" && p.signal.stop_min_cells == 2 && p.tof.v_max == 900);
+    CHECK(p.signal.red_detector == "traffic_light_red" && p.signal.stop_min_cells == 2 && p.tof.v_max == 230);
     CHECK(parse_cam_params_json(cam_params_to_json(p)).signal.resume_ignore_ms == p.signal.resume_ignore_ms);
     std::string msg;
     CHECK(throws([&] { parse_cam_params_json("{}"); }, &msg) && msg.find("tof") != std::string::npos);
@@ -202,7 +210,7 @@ void test_params(const std::string& pack_dir) {
         return j.substr(0, colon + 1) + " " + value + j.substr(end);
     };
     CHECK(throws([&] { parse_cam_params_json(with("stop_min_cells", "0")); }));
-    CHECK(throws([&] { parse_cam_params_json(with("approach_v", "1001")); }));
+    CHECK(throws([&] { parse_cam_params_json(with("approach_v", "256")); }));
     CHECK(throws([&] { parse_cam_params_json(with("red_detector", "\"Red!\"")); }));
     // No green detector: a time-out is required so the car cannot wait forever.
     {
@@ -234,7 +242,9 @@ void test_params(const std::string& pack_dir) {
     };
     CHECK(throws([&] { parse_cam_params_json(with_full("overtake_side", "\"up\"")); }, &msg) && msg.find("overtake_side") != std::string::npos);
     CHECK(throws([&] { parse_cam_params_json(with_full("follow_gap_mm", "100")); }, &msg) && msg.find("d_emergency_mm") != std::string::npos);
-    CHECK(throws([&] { parse_cam_params_json(with_full("follow_gap_mm", "250")); }, &msg) && msg.find("conf_max_mm") != std::string::npos);
+    CHECK(throws([&] { parse_cam_params_json(with_full("follow_gap_mm", "200")); }, &msg) && msg.find("conf_max_mm") != std::string::npos);
+    CHECK(throws([&] { parse_cam_params_json(with_full("follow_band_mm", "60")); }, &msg) && msg.find("conf_max_mm") != std::string::npos);   // 150 + 60 > 200
+    CHECK(throws([&] { parse_cam_params_json(with_full("open_mm", "250")); }));   // RC_read never returns more than 200
     CHECK(throws([&] { parse_cam_params_json(with_full("pass_min_ms", "5000")); }));
     CHECK(throws([&] { parse_cam_params_json(with_full("turn", "\"around\"")); }, &msg) && msg.find("intersection.turn") != std::string::npos);
     CHECK(throws([&] { parse_cam_params_json(with_full("stop_trigger", "\"now\"")); }));
@@ -292,7 +302,7 @@ void test_tof_only_without_vision(const CamParams& p) {
     Scene s;
     s.disc(160, 100, 30, 230, 20, 20);   // a red light nobody detects
     for (int i = 0; i < 60; ++i) CHECK(r.step(&s) == 0);
-    CHECK(r.last.drive_permille == p.tof.v_max);
+    CHECK(drv(r.last) == p.tof.v_max);
     CHECK(r.last.state == static_cast<uint8_t>(tof::State::Cruise));
     CHECK(r.last.aux_len == 0 && r.last.aux_format == 0);
     CHECK(r.logic.aux_name(0) == nullptr);
@@ -307,7 +317,7 @@ void test_red_light_stop_and_green_resume(const CamParams& p) {
           r.logic.aux_name(2) == nullptr);
     Scene road;
     for (int i = 0; i < 60; ++i) CHECK(r.step(&road) == 0);
-    CHECK(r.last.drive_permille == p.tof.v_max);
+    CHECK(drv(r.last) == p.tof.v_max);
     CHECK(r.last.aux_format == kAuxFormat && r.last.aux_len == 2 + 2 * kAuxDetectorBytes);
     CHECK(r.last.aux[0] == 8 && r.last.aux[1] == 6);
     CHECK((r.last.aux[2 + 4] & 0x3) == 0);   // red: not present, not active
@@ -320,40 +330,40 @@ void test_red_light_stop_and_green_resume(const CamParams& p) {
     CHECK((r.last.aux[2 + 4] & 0x2) != 0);   // red active
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalApproach));
     for (int i = 0; i < 30; ++i) r.step(&far);
-    CHECK(r.last.drive_permille == p.signal.approach_v);
+    CHECK(drv(r.last) == p.signal.approach_v);
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalApproach));
 
     // The light grows (closer): several cells -> stop, decelerating smoothly to 0 and braking.
     Scene near;
     near.disc(180, 100, 40, 230, 20, 20);
-    int prev = r.last.drive_permille;
+    int prev = drv(r.last);
     r.step(&near);
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop));
     bool monotone = true;
     for (int i = 0; i < 20; ++i) {
         r.step(&near);
-        if (r.last.drive_permille > prev) monotone = false;
-        prev = r.last.drive_permille;
+        if (drv(r.last) > prev) monotone = false;
+        prev = drv(r.last);
     }
     CHECK(monotone);
-    CHECK(r.last.drive_permille == 0);
-    CHECK((r.last.flags & RUMI_CMD_FLAG_BRAKE) != 0);
+    CHECK(drv(r.last) == 0);
+    CHECK(braking(r.last));
     CHECK(r.last.steer == RUMI_STEER_CENTER);
     CHECK(r.last.aux[2 + 3] >= 2);   // cells
     // Red disappears but no green and the time-out (3 s) has not passed: still stopped.
     for (int i = 0; i < 30; ++i) r.step(&road);   // 1.5 s
-    CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop) && r.last.drive_permille == 0);
+    CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop) && drv(r.last) == 0);
     // Green: resume at once (min_stop_ms long passed), then back to normal after resume_ignore_ms.
     Scene green;
     green.disc(180, 100, 40, 20, 230, 40);
     r.run(&green, 2);
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalResume));
-    prev = r.last.drive_permille;
+    prev = drv(r.last);
     for (int i = 0; i < 10; ++i) {
         r.step(&green);
-        CHECK(r.last.drive_permille >= prev);
-        CHECK(r.last.drive_permille - prev <= 57);   // normal acceleration
-        prev = r.last.drive_permille;
+        CHECK(drv(r.last) >= prev);
+        CHECK(drv(r.last) - prev <= 15);   // normal acceleration
+        prev = drv(r.last);
     }
     CHECK(prev > 0);
     // While resuming, a red light is ignored (the one just passed).
@@ -362,7 +372,7 @@ void test_red_light_stop_and_green_resume(const CamParams& p) {
     for (int i = 0; i < 30; ++i) r.step(&road);   // resume_ignore_ms (1.5 s) elapses
     CHECK(r.last.state == static_cast<uint8_t>(tof::State::Cruise));
     for (int i = 0; i < 30; ++i) r.step(&road);
-    CHECK(r.last.drive_permille == p.tof.v_max);
+    CHECK(drv(r.last) == p.tof.v_max);
     // And a red light seen again stops the car again.
     r.run(&near, 3);
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop));
@@ -378,14 +388,14 @@ void test_red_light_timeout_resume(const CamParams& p0) {
     near.disc(180, 100, 40, 230, 20, 20);
     r.run(&road, 60);
     r.run(&near, 25);
-    CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop) && r.last.drive_permille == 0);
+    CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop) && drv(r.last) == 0);
     // Red stays visible: no resume however long.
     r.run(&near, 100);
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop));
     // Red gone (release 3 frames), then 2 s without red -> resume.
     r.run(&road, 3 + 41);   // release (3 frames), then 2 s without red
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalResume));
-    CHECK(r.last.drive_permille > 0);
+    CHECK(drv(r.last) > 0);
 }
 
 void test_frames_without_image_keep_the_decision(const CamParams& p) {
@@ -397,7 +407,7 @@ void test_frames_without_image_keep_the_decision(const CamParams& p) {
     CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop));
     // The camera is slower than the loop: frames without an image keep the last detections.
     for (int i = 0; i < 20; ++i) CHECK(r.step(nullptr) == 0);
-    CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop) && r.last.drive_permille == 0);
+    CHECK(r.last.state == static_cast<uint8_t>(State::SignalStop) && drv(r.last) == 0);
     // An obstacle in front while stopped: the ToF logic's emergency behaviour is reported and acts.
     for (int i = 0; i < 4; ++i) r.step(&near, 200, 50, 50);
     CHECK(r.last.state == static_cast<uint8_t>(tof::State::EmergencyBrake));
@@ -422,11 +432,11 @@ void test_follow_keeps_the_gap(const CamParams& p0) {
     Run r(p, make_full_pack());
     const Scene road, car = scene_with(true), car_aside = [] { Scene s; s.disc(30, 180, 15, 30, 30, 230); return s; }();
     r.run(&road, 60);
-    CHECK(r.in(tof::State::Cruise) && r.last.drive_permille == p.tof.v_max);
+    CHECK(r.in(tof::State::Cruise) && drv(r.last) == p.tof.v_max);
     // A vehicle in our lane, seen by the camera only (ToF open): follow at follow_v, steering untouched.
     CHECK(r.until(static_cast<uint8_t>(State::Follow), 4, &car));
     r.run(&car, 20);
-    CHECK(r.last.drive_permille == vp.follow_v);
+    CHECK(drv(r.last) == vp.follow_v);
     CHECK(r.logic.tof().steer_mode() == tof::TofDriveLogic::SteerMode::Auto);
     // A vehicle beside the lane is not followed.
     r.run(&car_aside, 10);
@@ -434,39 +444,39 @@ void test_follow_keeps_the_gap(const CamParams& p0) {
     r.run(&car, 10);
     CHECK(r.in(State::Follow));
     // The ToF sees it: hold the lane (no turning around it), speed from the gap.
-    r.run(&car, 10, OPEN, 240, OPEN);
+    r.run(&car, 10, OPEN, 195, OPEN);
     CHECK(r.in(State::Follow) && r.logic.tof().steer_mode() == tof::TofDriveLogic::SteerMode::HoldLane);
-    CHECK(r.last.drive_permille == vp.follow_v && r.last.steer == RUMI_STEER_CENTER);   // 240 >= gap + band
-    r.run(&car, 20, OPEN, 190, OPEN);
-    CHECK(r.in(State::Follow) && r.last.drive_permille == 350);   // 700 * (190 - 150) / 80
-    int prev = r.last.drive_permille;
+    CHECK(drv(r.last) == vp.follow_v && r.last.steer == RUMI_STEER_CENTER);   // 195 >= gap + band (190)
+    r.run(&car, 20, OPEN, 170, OPEN);
+    CHECK(r.in(State::Follow) && drv(r.last) == 90);   // 179 * (170 - 150) / 40, rounded
+    int prev = drv(r.last);
     bool monotone = true;
     for (int i = 0; i < 20; ++i) {
         r.step(&car, OPEN, 150, OPEN);
-        if (r.last.drive_permille > prev) monotone = false;
-        prev = r.last.drive_permille;
+        if (drv(r.last) > prev) monotone = false;
+        prev = drv(r.last);
     }
-    CHECK(monotone && r.last.drive_permille == 0 && (r.last.flags & RUMI_CMD_FLAG_BRAKE) != 0);
+    CHECK(monotone && drv(r.last) == 0 && braking(r.last));
     CHECK(r.in(State::Follow) && r.last.steer == RUMI_STEER_CENTER);
-    // It moves off: the gap opens, we move again, at most follow_v.
-    r.run(&car, 30, OPEN, 230, OPEN);
-    CHECK(r.in(State::Follow) && r.last.drive_permille == vp.follow_v && (r.last.flags & RUMI_CMD_FLAG_BRAKE) == 0);
+    // It moves off: the gap opens (beyond 20 cm), we move again, at most follow_v.
+    r.run(&car, 30, OPEN, OPEN, OPEN);
+    CHECK(r.in(State::Follow) && drv(r.last) == vp.follow_v && !braking(r.last));
     // Gone (camera and ToF): the ToF logic's own driving again.
     r.run(&road, 10);
     CHECK(r.in(tof::State::Cruise));
     r.run(&road, 30);
-    CHECK(r.last.drive_permille == p.tof.v_max);
+    CHECK(drv(r.last) == p.tof.v_max);
     // Lost from the camera while something is still close ahead: no "parked"
     // decision without seeing a vehicle; after ignore_ms the ToF logic turns around it.
     r.run(&car, 10, OPEN, 150, OPEN);
     r.run(&car, 20, OPEN, 150, OPEN);
-    CHECK(r.in(State::Follow) && r.last.drive_permille == 0);
+    CHECK(r.in(State::Follow) && drv(r.last) == 0);
     r.run(&road, 20, OPEN, 150, 100);   // 1 s: still following
-    CHECK(r.in(State::Follow) && r.last.drive_permille == 0);
+    CHECK(r.in(State::Follow) && drv(r.last) == 0);
     r.run(&road, 12, OPEN, 150, 100);   // ignore_ms (1.5 s) without the vehicle in view
     CHECK(r.in(tof::State::TurnLeft) || r.in(tof::State::Cruise));
     r.run(&road, 10, OPEN, 150, 100);
-    CHECK(r.in(tof::State::TurnLeft) && r.last.drive_permille > 0);   // the ToF logic turns towards the open side
+    CHECK(r.in(tof::State::TurnLeft) && drv(r.last) > 0);   // the ToF logic turns towards the open side
 }
 
 void test_parked_vehicle_is_passed(const CamParams& p0) {
@@ -475,10 +485,10 @@ void test_parked_vehicle_is_passed(const CamParams& p0) {
     Run r(p, make_full_pack());
     const Scene road, car = scene_with(true);
     r.run(&road, 60);
-    r.run(&car, 10, OPEN, 240, OPEN);
-    CHECK(r.until(static_cast<uint8_t>(State::Follow), 2, &car, OPEN, 240, OPEN));
-    for (int i = 0; i < 40 && r.last.drive_permille > 0; ++i) r.step(&car, OPEN, 150, OPEN);
-    CHECK(r.in(State::Follow) && r.last.drive_permille == 0);
+    r.run(&car, 10, OPEN, 195, OPEN);
+    CHECK(r.until(static_cast<uint8_t>(State::Follow), 2, &car, OPEN, 195, OPEN));
+    for (int i = 0; i < 40 && drv(r.last) > 0; ++i) r.step(&car, OPEN, 150, OPEN);
+    CHECK(r.in(State::Follow) && drv(r.last) == 0);
     // It does not move for parked_confirm_ms (2 s): parked.  Both sides open -> pass on the right.
     int stopped_frames = 0;
     for (int i = 0; i < 100 && !r.in(State::OvertakeOut); ++i) {
@@ -490,19 +500,21 @@ void test_parked_vehicle_is_passed(const CamParams& p0) {
     CHECK(r.last.steer == RUMI_STEER_RIGHT);
     for (int i = 0; i < 9; ++i) {   // out_ms = 500 ms = 10 frames
         r.step(&car, OPEN, 150, OPEN);
-        CHECK(r.in(State::OvertakeOut) && r.last.steer == RUMI_STEER_RIGHT && r.last.drive_permille <= vp.overtake_v);
+        CHECK(r.in(State::OvertakeOut) && r.last.steer == RUMI_STEER_RIGHT && drv(r.last) <= vp.overtake_v);
     }
-    CHECK(r.last.drive_permille > 0);
+    CHECK(drv(r.last) > 0);
     // Alongside: lane held, the vehicle appears on the inner (left) side, then the side clears.
     CHECK(r.until(static_cast<uint8_t>(State::OvertakePass), 2, &road, OPEN, OPEN, OPEN));
     CHECK(r.logic.tof().steer_mode() == tof::TofDriveLogic::SteerMode::HoldLane);
     r.run(&road, 5, OPEN, OPEN, OPEN);
-    CHECK(r.in(State::OvertakePass) && r.last.steer == RUMI_STEER_CENTER && r.last.drive_permille == vp.overtake_v);
+    CHECK(r.in(State::OvertakePass) && r.last.steer == RUMI_STEER_CENTER && drv(r.last) == vp.overtake_v);
     r.run(&road, 10, 60, OPEN, OPEN);    // the vehicle beside us on the left
     CHECK(r.in(State::OvertakePass));
-    r.run(&road, 3, OPEN, OPEN, OPEN);   // clear, but not yet for pass_clear_ms
+    r.run(&road, 3, OPEN, OPEN, OPEN);   // clear, but not yet for pass_clear_ms (700 ms = 14 frames)
     CHECK(r.in(State::OvertakePass));
-    CHECK(r.until(static_cast<uint8_t>(State::OvertakeIn), 6, &road, OPEN, OPEN, OPEN));
+    r.run(&road, 8, OPEN, OPEN, OPEN);   // 11 frames clear (the filter sees it 2-3 frames later): still not
+    CHECK(r.in(State::OvertakePass));
+    CHECK(r.until(static_cast<uint8_t>(State::OvertakeIn), 7, &road, OPEN, OPEN, OPEN));
     CHECK(r.last.steer == RUMI_STEER_LEFT);
     for (int i = 0; i < 9; ++i) {
         r.step(&road);
@@ -538,12 +550,12 @@ void test_waits_when_no_side_is_clear_and_prefers_the_chosen_side(const CamParam
     r.run(&road, 60);
     r.run(&car, 30, 80, 150, 80);    // walls close on both sides
     CHECK(r.until(static_cast<uint8_t>(State::FollowWait), 45, &car, 80, 150, 80));
-    CHECK(r.last.drive_permille == 0 && (r.last.flags & RUMI_CMD_FLAG_BRAKE) != 0 && r.last.steer == RUMI_STEER_CENTER);
+    CHECK(drv(r.last) == 0 && braking(r.last) && r.last.steer == RUMI_STEER_CENTER);
     r.run(&car, 40, 80, 150, 80);
     CHECK(r.in(State::FollowWait));
     // It moves off: follow again.
-    r.run(&car, 10, 80, 200, 80);
-    CHECK(r.in(State::Follow) && r.last.drive_permille > 0);
+    r.run(&car, 10, 80, OPEN, 80);
+    CHECK(r.in(State::Follow) && drv(r.last) > 0);
     // Parked again, the left side opens: pass on the left (the open side).
     r.run(&car, 30, 80, 150, 80);
     CHECK(r.until(static_cast<uint8_t>(State::FollowWait), 45, &car, 80, 150, 80));
@@ -569,10 +581,10 @@ void test_no_passing_at_a_red_light(const CamParams& p0) {
     car_red.disc(180, 100, 40, 230, 20, 20);   // and a red light close by
     r.run(&road, 60);
     r.run(&car, 30, OPEN, 150, OPEN);
-    CHECK(r.in(State::Follow) && r.last.drive_permille == 0);
+    CHECK(r.in(State::Follow) && drv(r.last) == 0);
     // The vehicle ahead is waiting at the light too: however long, no passing.
     r.run(&car_red, 100, OPEN, 150, OPEN);   // 5 s
-    CHECK(r.in(State::SignalStop) && r.last.drive_permille == 0);
+    CHECK(r.in(State::SignalStop) && drv(r.last) == 0);
     // Green: the light's resume phase, then the parked wait starts afresh.
     Scene car_green = scene_with(true);
     car_green.disc(180, 100, 40, 20, 230, 40);
@@ -597,10 +609,10 @@ void test_intersection_stop_and_straight(const CamParams& p0) {
     Run r(p, make_full_pack());
     const Scene road, left = scene_with(false, true);
     r.run(&road, 60, 120, OPEN, 120);   // a corridor with walls on both sides
-    CHECK(r.in(tof::State::Cruise) && r.last.drive_permille == p.tof.v_max);
+    CHECK(r.in(tof::State::Cruise) && drv(r.last) == p.tof.v_max);
     CHECK(r.until(static_cast<uint8_t>(State::IntersectionApproach), 4, &left, 120, OPEN, 120));
     r.run(&left, 20, 120, OPEN, 120);
-    CHECK(r.in(State::IntersectionApproach) && r.last.drive_permille == ip.approach_v);
+    CHECK(r.in(State::IntersectionApproach) && drv(r.last) == ip.approach_v);
     // Lost from view before any side opened: nothing happened, and it can be seen again at once.
     r.run(&road, 5, 120, OPEN, 120);
     CHECK(r.in(tof::State::Cruise));
@@ -609,11 +621,11 @@ void test_intersection_stop_and_straight(const CamParams& p0) {
     r.step(&left, OPEN, OPEN, 120);
     CHECK(r.until(static_cast<uint8_t>(State::IntersectionStop), 3, &left, OPEN, OPEN, 120));
     r.run(&left, 10, OPEN, OPEN, 120);
-    CHECK(r.in(State::IntersectionStop) && r.last.drive_permille == 0 && (r.last.flags & RUMI_CMD_FLAG_BRAKE) != 0);
+    CHECK(r.in(State::IntersectionStop) && drv(r.last) == 0 && braking(r.last));
     // stop_ms later: straight on, and the detectors are ignored for ignore_ms.
     CHECK(r.until(static_cast<uint8_t>(tof::State::Cruise), 12, &left, OPEN, OPEN, 120));
     r.run(&left, 50, OPEN, OPEN, 120);   // 2.5 s
-    CHECK(r.in(tof::State::Cruise) && r.last.drive_permille == p.tof.v_max);
+    CHECK(r.in(tof::State::Cruise) && drv(r.last) == p.tof.v_max);
     CHECK(r.until(static_cast<uint8_t>(State::IntersectionApproach), 15, &left, 120, OPEN, 120));
 }
 
@@ -630,9 +642,9 @@ void test_intersection_turns(const CamParams& p0) {
         CHECK(r.last.steer == RUMI_STEER_LEFT);
         for (int i = 0; i < 16; ++i) {   // turn_ms = 900 ms = 18 frames
             r.step(&left, OPEN, OPEN, 120);
-            CHECK(r.in(State::IntersectionTurn) && r.last.steer == RUMI_STEER_LEFT && r.last.drive_permille <= p.intersection->turn_v);
+            CHECK(r.in(State::IntersectionTurn) && r.last.steer == RUMI_STEER_LEFT && drv(r.last) <= p.intersection->turn_v);
         }
-        CHECK(r.last.drive_permille > 0);
+        CHECK(drv(r.last) > 0);
         CHECK(r.until(static_cast<uint8_t>(tof::State::Cruise), 3, &road, 120, OPEN, 120) || r.in(tof::State::TurnLeft));
         CHECK(r.logic.tof().steer_mode() == tof::TofDriveLogic::SteerMode::Auto);
     }
@@ -647,7 +659,7 @@ void test_intersection_turns(const CamParams& p0) {
         CHECK(r.until(static_cast<uint8_t>(State::IntersectionCross), 25, &left, OPEN, OPEN, 120));
         CHECK(r.last.steer == RUMI_STEER_CENTER && r.logic.tof().steer_mode() == tof::TofDriveLogic::SteerMode::HoldLane);
         r.run(&left, 10, OPEN, OPEN, 120);
-        CHECK(r.in(State::IntersectionCross) && r.last.drive_permille == p.intersection->turn_v);
+        CHECK(r.in(State::IntersectionCross) && drv(r.last) == p.intersection->turn_v);
         CHECK(r.until(static_cast<uint8_t>(State::IntersectionTurn), 3, &left, OPEN, OPEN, OPEN));
         CHECK(r.last.steer == RUMI_STEER_RIGHT);
     }
@@ -700,9 +712,9 @@ void test_intersection_waits_for_the_light(const CamParams& p0) {
     const Scene road, left = scene_with(false, true);
     r.run(&road, 60, 120, OPEN, 120);
     r.run(&left_red, 10, OPEN, OPEN, 120);
-    CHECK(r.in(State::SignalStop) && r.last.drive_permille == 0);
+    CHECK(r.in(State::SignalStop) && drv(r.last) == 0);
     r.run(&left_red, 60, OPEN, OPEN, 120);   // 3 s at the red light: the intersection stop does not move off
-    CHECK(r.in(State::SignalStop) && r.last.drive_permille == 0);
+    CHECK(r.in(State::SignalStop) && drv(r.last) == 0);
     r.run(&left_green, 2, OPEN, OPEN, 120);   // green confirmed: resuming
     CHECK(!r.in(State::SignalStop));
     // Resuming: the turn follows at once (the stop time long passed) and is what is reported.
@@ -726,7 +738,7 @@ void test_behaviours_together(const CamParams& p0) {
     r.run(&car_left, 5, OPEN, 150, 120);
     CHECK(r.in(State::IntersectionStop));
     r.run(&car_left, 25, OPEN, 150, 120);   // stop_ms over, straight: the vehicle ahead is still there
-    CHECK(r.in(State::Follow) && r.last.drive_permille == 0);
+    CHECK(r.in(State::Follow) && drv(r.last) == 0);
     CHECK(r.last.aux_len == 2 + 5 * kAuxDetectorBytes);
     CHECK(std::string(r.logic.aux_name(3)) == "intersection_left" && (r.last.aux[2 + 3 * kAuxDetectorBytes + 4] & 0x2) != 0);
     CHECK(std::string(state_name(19)) == "FOLLOW" && std::string(state_name(27)) == "INTERSECTION_TURN");

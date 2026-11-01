@@ -11,17 +11,19 @@ public class TelemetryFrameTests
         {
             Seq = seq,
             TimestampMicroseconds = 1_000_000 + seq * 50_000UL,
-            TofMm = new[] { 120, 8190, -1 },
-            Steer = 1,
-            DrivePermille = 650,
-            Brake = seq % 3 == 0,
+            Abi = RumiCarApi.Abi,
+            TofMm = new[] { 120, -3, -1 },
+            Steer = RumiCarApi.Right,
+            DriveDir = seq % 3 == 0 ? RumiCarApi.Brake : RumiCarApi.Forward,
+            DrivePwm = seq % 3 == 0 ? 0 : 166,
             State = 2,
             StateName = "TURN_RIGHT",
             Flags = 0,
             Mode = "auto",
             EStop = seq % 2 == 0,
-            LogicSteer = -1,
-            LogicDrivePermille = 420,
+            LogicSteer = RumiCarApi.Left,
+            LogicDriveDir = RumiCarApi.Forward,
+            LogicDrivePwm = 107,
             LogicVersion = "0.1.0",
             PackVersion = "0.1.0",
             ImageWidth = jpegBytes > 0 ? 320 : 0,
@@ -41,12 +43,16 @@ public class TelemetryFrameTests
         Assert.Equal(bytes.Length, consumed);
         Assert.NotNull(frame);
         Assert.Equal(5u, frame!.Header.Seq);
-        Assert.Equal(new[] { 120, 8190, -1 }, frame.Header.TofMm);
+        Assert.Equal(3, frame.Header.Abi);
+        Assert.Equal(new[] { 120, -3, -1 }, frame.Header.TofMm);
         Assert.Equal("TURN_RIGHT", frame.Header.StateName);
         Assert.False(frame.Header.EStop);
-        Assert.False(frame.Header.Brake);
-        Assert.Equal(-1, frame.Header.LogicSteer);
-        Assert.Equal(420, frame.Header.LogicDrivePermille);
+        Assert.Equal(RumiCarApi.Right, frame.Header.Steer);
+        Assert.Equal(RumiCarApi.Forward, frame.Header.DriveDir);
+        Assert.Equal(166, frame.Header.DrivePwm);
+        Assert.Equal(RumiCarApi.Left, frame.Header.LogicSteer);
+        Assert.Equal(RumiCarApi.Forward, frame.Header.LogicDriveDir);
+        Assert.Equal(107, frame.Header.LogicDrivePwm);
         Assert.Equal(1000, frame.Jpeg.Length);
         Assert.Equal(5u, frame.Header.ImageSeq);
         Assert.Equal(777_005UL, frame.Header.ImageTimestampMicroseconds);
@@ -57,19 +63,26 @@ public class TelemetryFrameTests
     public void HeaderWrittenByTheCarDecodes()
     {
         // Exactly the key set rumicar-core writes (car/core/src/main.cpp), plus an unknown key a later version might add.
-        const string json = "{\"battery_mv\":0,\"drive_permille\":650,\"estop\":true,\"flags\":1,\"image_h\":0,\"image_w\":0," +
-                            "\"logic_drive_permille\":700,\"logic_steer\":1,\"logic_version\":\"0.1.0\",\"mode\":\"manual\"," +
-                            "\"pack_version\":\"0.1.0\",\"seq\":42,\"state\":2,\"state_name\":\"TURN_RIGHT\",\"steer\":0," +
-                            "\"t_us\":123456789,\"tof_mm\":[120,8190,-1],\"future_key\":{\"x\":1}}";
+        const string json = "{\"abi\":3,\"battery_mv\":0,\"drive_dir\":3,\"drive_pwm\":0,\"estop\":true,\"flags\":0,\"image_h\":0,\"image_w\":0," +
+                            "\"logic_drive_dir\":2,\"logic_drive_pwm\":179,\"logic_steer\":2,\"logic_version\":\"0.3.0\",\"mode\":\"manual\"," +
+                            "\"pack_version\":\"0.2.0\",\"seq\":42,\"state\":2,\"state_name\":\"TURN_RIGHT\",\"steer\":1," +
+                            "\"t_us\":123456789,\"tof_mm\":[120,-3,-1],\"future_key\":{\"x\":1}}";
         var h = TelemetryFrameCodec.HeaderFromJson(json);
         Assert.NotNull(h);
-        Assert.Equal(42u, h!.Seq);
+        Assert.Equal(3, h!.Abi);
+        Assert.Equal(42u, h.Seq);
         Assert.True(h.EStop);
         Assert.Equal("manual", h.Mode);
-        Assert.Equal(0, h.Steer);
-        Assert.Equal(1, h.LogicSteer);
-        Assert.Equal(700, h.LogicDrivePermille);
+        Assert.Equal(RumiCarApi.Center, h.Steer);
+        Assert.Equal(RumiCarApi.Brake, h.DriveDir);
+        Assert.Equal(RumiCarApi.Right, h.LogicSteer);
+        Assert.Equal(RumiCarApi.Forward, h.LogicDriveDir);
+        Assert.Equal(179, h.LogicDrivePwm);
         Assert.Equal(123456789UL, h.TimestampMicroseconds);
+        // A recording of a 0.3.x car has no "abi" and the old keys: it reads as ABI 0 (the drive manager says so).
+        var old = TelemetryFrameCodec.HeaderFromJson("{\"seq\":1,\"tof_mm\":[120,8190,-1],\"steer\":-1,\"drive_permille\":650,\"brake\":false}");
+        Assert.NotNull(old);
+        Assert.Equal(0, old!.Abi);
     }
 
     [Fact]

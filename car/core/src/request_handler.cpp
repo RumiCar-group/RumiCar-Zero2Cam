@@ -1,5 +1,7 @@
 #include "request_handler.hpp"
 
+#include "rumicar/logic_api.h"
+
 #include "log.hpp"
 #include "net/control_server.hpp"
 
@@ -91,15 +93,19 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         return nullptr;
     }
     if (type == "manual_drive") {
-        const int steer = require_int(params, "steer", -1, 1);
-        const int drive = require_int(params, "drive_permille", -1000, 1000);
+        // RC_steer / RC_drive values: steer LEFT=0 CENTER=1 RIGHT=2, drive_dir FREE=0
+        // REVERSE=1 FORWARD=2 BRAKE=3, drive_pwm 0..255.
+        const int steer = require_int(params, "steer", RUMI_STEER_LEFT, RUMI_STEER_RIGHT);
+        const int dir = require_int(params, "drive_dir", RUMI_DRIVE_FREE, RUMI_DRIVE_BRAKE);
+        const int pwm = require_int(params, "drive_pwm", 0, RUMI_PWM_MAX);
         state_.heartbeat(now);
-        if (!state_.set_manual(static_cast<int8_t>(steer), drive)) throw RequestError("not in manual mode");
+        if (!state_.set_manual(static_cast<uint8_t>(steer), static_cast<uint8_t>(dir), static_cast<uint8_t>(pwm)))
+            throw RequestError("not in manual mode");
         return nullptr;
     }
     if (type == "set_auto_limit") {
-        // Cap of the drive in auto mode (docs 5.2); clamped to max_drive_permille.
-        const int limit = require_int(params, "drive_permille", 0, 1000);
+        // Cap of the drive duty in auto mode (docs 5.2); clamped to max_drive_pwm.
+        const int limit = require_int(params, "drive_pwm", 0, RUMI_PWM_MAX);
         if (state_.set_auto_limit(limit)) log::info("auto limit set to " + std::to_string(state_.auto_limit()) + " by the PC");
         return json{{"auto_limit", state_.auto_limit()}};
     }

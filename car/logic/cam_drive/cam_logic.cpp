@@ -17,9 +17,9 @@ bool tof_is_driving_state(uint8_t s) {
            s == static_cast<uint8_t>(tof::State::TurnRight);
 }
 
-constexpr int8_t kLeft = RUMI_STEER_LEFT, kCenter = RUMI_STEER_CENTER, kRight = RUMI_STEER_RIGHT;
+constexpr uint8_t kLeft = RUMI_STEER_LEFT, kCenter = RUMI_STEER_CENTER, kRight = RUMI_STEER_RIGHT;
 
-int8_t opposite(int8_t steer) { return steer == kLeft ? kRight : steer == kRight ? kLeft : kCenter; }
+uint8_t opposite(uint8_t steer) { return steer == kLeft ? kRight : steer == kRight ? kLeft : kCenter; }
 
 } // namespace
 
@@ -167,7 +167,7 @@ void CamLogic::step_signal(const View& v, uint64_t t) {
 // ---------------------------------------------------------------------------
 // Intersections
 // ---------------------------------------------------------------------------
-int8_t CamLogic::decide_turn(const View& v) const {
+uint8_t CamLogic::decide_turn(const View& v) const {
     const std::string& turn = p_.intersection->turn;
     if (turn == "left") return kLeft;
     if (turn == "right") return kRight;
@@ -243,7 +243,7 @@ int CamLogic::follow_cap(int C) const {
     return static_cast<int>(std::lround(static_cast<double>(vp.follow_v) * (C - vp.follow_gap_mm) / vp.follow_band_mm));
 }
 
-int8_t CamLogic::choose_overtake_side(int L, int R) const {
+uint8_t CamLogic::choose_overtake_side(int L, int R) const {
     const VehicleParams& vp = *p_.vehicle;
     const bool l_ok = L >= vp.side_clear_mm;
     const bool r_ok = R >= vp.side_clear_mm;
@@ -389,7 +389,7 @@ int CamLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
     step_vehicle(v, t);
 
     // Speed: the lowest cap of the behaviours.
-    int cap = RUMI_DRIVE_MAX;
+    int cap = RUMI_PWM_MAX;
     if (sphase_ == SignalPhase::Approach) cap = std::min(cap, p_.signal.approach_v);
     else if (sphase_ == SignalPhase::Stop) cap = 0;
     if (p_.intersection) {
@@ -428,7 +428,7 @@ int CamLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
     // --- the ToF logic drives, within the cap ----------------------------------------
     if (!tof_.step(frame, out)) return 2;
     const bool driving = tof_is_driving_state(out.state);
-    if (cap == 0 && out.drive_permille == 0 && driving) out.flags |= RUMI_CMD_FLAG_BRAKE;   // hold still where a behaviour stops the car
+    if (cap == 0 && out.drive_pwm == 0 && driving) out.drive_dir = RUMI_DRIVE_BRAKE;   // hold still where a behaviour stops the car
 
     // The reported state: what explains the car's speed and steering best.  A
     // red light first; the signal's resume phase (red ignored, nothing else)

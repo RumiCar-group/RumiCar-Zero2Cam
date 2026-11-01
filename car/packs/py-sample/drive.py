@@ -4,21 +4,23 @@
 # 走行管理アプリの「自分のプログラムを送る…」でこのファイルを含むフォルダを選択すると、
 # 車に送信され、そのまま有効化されます（README 11 章「自作の走行プログラム（Python）」）。
 #
-#   setup(car)  プログラムの開始時に 1 回だけ呼び出されます（省略可）
-#   loop(car)   50 ミリ秒ごと（20 Hz）に呼び出されます。ここで操舵と駆動を決定します
+# 使うのは RumiCar ライブラリの API です。Arduino のライブラリ（RumiCar-lib）や
+# Raspberry Pi Zero W 版（RumiCar リポジトリの RasPi/RumiCar.py）と同じ名前・同じ値です。
 #
-# car の属性とメソッド
-#   car.left, car.center, car.right   左・前・右の距離センサーの値（mm）
-#                                     対象物を検出できなかった場合は car.FAR（8190）、読み取りに失敗した場合は None
-#   car.params                        params.json に記述した値（例 car.params["speed"]）
-#   car.time                          開始からの経過秒数　　car.dt  前回の loop からの経過秒数
-#   car.steer(car.LEFT / car.CENTER / car.RIGHT)   操舵（左・中央・右）
-#   car.drive(値)                      駆動。-1000（最大出力で後退）〜 0（停止）〜 1000（最大出力で前進）
-#   car.brake()                        ブレーキ　　car.stop()  駆動を 0 にする（惰行で停止）
-#   car.state("名前")                  現在の処理状態の名前（走行管理アプリの「判断状態」に表示されます）
-#   print(...)                         車のログに記録されます（ssh で sudo journalctl -u rumicar-core -f）
+#   setup()   プログラムの開始時に 1 回だけ呼び出されます（省略可）
+#   loop()    50 ミリ秒ごと（20 Hz）に呼び出されます。ここで操舵と駆動を決定します
 #
-# steer() と drive() で設定した値は、次に変更するまで保持されます（Arduino と同じ）。
+#   RC_read(LEFT / CENTER / RIGHT)   左・前・右の距離センサーの値（mm）
+#                                    0〜200 = 距離、-1 = 読み取りに失敗、-3 = 20 cm 以内に何もない（範囲外）
+#                                    -3 は数としては最も小さいので、比較の前に大きな値に置き換えます
+#   RC_steer(LEFT / CENTER / RIGHT)  操舵（左・中央・右）
+#   RC_drive(方向, 値)                駆動。方向は FREE（惰行）/ REVERSE（後退）/ FORWARD（前進）/ BRAKE（ブレーキ）、
+#                                    値は 0〜255 の PWM のデューティ（150 なら全開の 150/255 ≒ 59 % の信号）
+#   RC_params()                      params.json に記述した値（例 RC_params()["speed"]）
+#   RC_state("名前")                 現在の処理状態の名前（走行管理アプリの「判断状態」に表示されます）
+#   print(...)                       車のログに記録されます（ssh で sudo journalctl -u rumicar-core -f）
+#
+# RC_steer() と RC_drive() で設定した値は、次に変更するまで保持されます（Arduino と同じ）。
 # 安全のため、本体が次の制御を必ず行います。
 #   ・自動モードへの切り替え時は、駆動の許容値を 0 から徐々に増加させる（急発進しない）
 #   ・走行管理アプリの「自動の最大出力」を超えて走行しない
@@ -26,45 +28,60 @@
 #     1 秒以上応答が無ければプログラムを停止する
 #   ・例外が発生したフレームはブレーキする（例外の内容はログに記録される）
 
+from RumiCar import *
 
-def setup(car):
-    car.state("START")
-    print("見本のプログラムを始めます。設定:", car.params)
+FAR = 999        # -3（20 cm 以内に何もない）を比較で「遠い」として扱うための値
 
 
-def loop(car):
-    p = car.params                       # params.json の値（車ごとに変更可能）
-    left, center, right = car.left, car.center, car.right
+def setup():
+    RC_setup()
+    RC_state("START")
+    print("見本のプログラムを始めます。設定:", RC_params())
+
+
+def loop():
+    p = RC_params()                      # params.json の値（車ごとに変更可能）
+    left = RC_read(LEFT)
+    center = RC_read(CENTER)
+    right = RC_read(RIGHT)
 
     # センサーの読み取りに失敗した場合は停止する
-    if left is None or center is None or right is None:
-        car.brake()
-        car.state("NO_SENSOR")
+    if left == -1 or center == -1 or right == -1:
+        RC_drive(BRAKE, 0)
+        RC_state("NO_SENSOR")
         return
+
+    # 20 cm 以内に何もない（-3）は「遠い」
+    if left == -3:
+        left = FAR
+    if center == -3:
+        center = FAR
+    if right == -3:
+        right = FAR
 
     if center < p["stop_mm"]:
         # 前方が非常に近い：距離の大きい側と反対へ操舵して後退する（車体の前部が距離の大きい側を向く）
         if left > right:
-            car.steer(car.RIGHT)
+            RC_steer(RIGHT)
         else:
-            car.steer(car.LEFT)
-        car.drive(-p["back_speed"])
-        car.state("BACK")
+            RC_steer(LEFT)
+        RC_drive(REVERSE, p["back_speed"])
+        RC_state("BACK")
     elif center < p["turn_mm"]:
         # 前方が近い：距離の大きい側へ操舵し、低速で前進する
         if left > right:
-            car.steer(car.LEFT)
+            RC_steer(LEFT)
         else:
-            car.steer(car.RIGHT)
-        car.drive(p["slow_speed"])
-        car.state("TURN")
+            RC_steer(RIGHT)
+        RC_drive(FORWARD, p["slow_speed"])
+        RC_state("TURN")
     else:
-        # 前方に余裕がある：側方の壁が近ければ反対側へ操舵し、そうでなければ直進する
+        # 前方に余裕がある：左右の壁が近ければ反対側へ操舵し、そうでなければ直進する
         if left < p["side_mm"]:
-            car.steer(car.RIGHT)
+            RC_steer(RIGHT)
         elif right < p["side_mm"]:
-            car.steer(car.LEFT)
+            RC_steer(LEFT)
         else:
-            car.steer(car.CENTER)
-        car.drive(p["speed"])
-        car.state("RUN")
+            RC_steer(CENTER)
+        RC_drive(FORWARD, p["speed"])
+        RC_state("RUN")

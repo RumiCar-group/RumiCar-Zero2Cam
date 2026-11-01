@@ -117,10 +117,10 @@ The drive manager's user interface is in Japanese; the table below gives the mea
 | 非常停止 / 非常停止解除 | Emergency stop / clear. The e-stop brakes in every drive mode, and the car does not drive until it is cleared. It is also latched automatically when, in manual mode, the heartbeat is lost for 1 s (`network.heartbeat_timeout_ms`) or the PC disconnects |
 | Image | Latest camera image (320×240, about 20 frames/s). Unticking 「画像を表示」 stops only the display (reception and recording continue; use it to reduce the PC load) |
 | 状態 (status) | モード = drive mode; 非常停止 = e-stop (green = none, red = active, with reason); 判断状態 = logic state (CRUISE / TURN_LEFT / TURN_RIGHT / EMERGENCY_BRAKE / RECOVER_REVERSE / SENSOR_FAULT, etc.); ToF 左/中/右 = left/centre/right distance [mm] (see the table below); モーター出力 = motor output; ロジックの判断 = logic decision; 版 = logic / pack versions; **判断データ** = the active pack's name, version and description; **対応機能** = supported scenes (壁 walls / 信号機 traffic light / 車両 vehicle / 交差点 intersection); **学習元** = the recorded scenarios used to build the pack and its parent version; **電源** = under-voltage / throttling reported by the car's firmware (「正常（低電圧なし）」 is normal) |
-| モーター出力 / ロジックの判断 | Displayed as 「操舵 左/中央/右 / 前進 74.8% (191/255)」: steering left/centre/right, then 前進 forward / 後退 reverse / 停止 coast / ブレーキ brake (both inputs high). The percentage is the **PWM duty cycle** of the drive motor (the car uses per mille 0–1000, 1000 = 100 %); the bracketed value is the same duty on the Arduino `analogWrite` scale 0–255 (748 × 255 ÷ 1000 ≈ 191). モーター出力 is the value actually output to the motors; ロジックの判断 is the value computed by the logic for that frame (displayed in manual, record-only and e-stop as well) |
+| モーター出力 / ロジックの判断 | Displayed as `RC_steer(LEFT) / RC_drive(FORWARD, 191)`: the calls of the RumiCar library (Arduino RumiCar-lib, RumiCar.py for the Raspberry Pi, `drive.py`) that would give that command, with the same words and numbers. The drive value is the **PWM duty** 0–255 (255 = 100 %; 150 means a signal of 150/255 ≈ 59 %), the direction `FREE` (coast) / `REVERSE` / `FORWARD` / `BRAKE` (both inputs high). モーター出力 is the value actually output to the motors; ロジックの判断 is the value computed by the logic for that frame (displayed in manual, record-only and e-stop as well) |
 | 走行モード (drive mode) | **自動** auto: the car's logic controls driving / **手動** manual: operated from the PC (see "Manual operation" below) / **収録のみ** record-only: motors stopped, images and status still received (use it to collect data while moving the car by hand). The line below shows the start-up mode (default: record only) |
-| 操縦パッド (driving pad) | Active in manual mode (see below). Underneath: the command being sent (e.g. 「操舵 左 / 前進 45.0%（パッド）」), 最大出力 (maximum output), 停止 (stop) and 左右スクロールの向きを反転 (invert horizontal scrolling) |
-| 自動の最大出力 (auto limit) | Upper limit of the drive output by the logic in auto mode (default 100 %). Held by the car; a restart of the core resets it to `max_drive_permille` (default 1000 = 100 %). It cannot be set above `max_drive_permille`. Independent of the manual 最大出力. On entering auto mode the permitted drive increases from 0 at the rate `auto_accel_permille_per_s` and is capped at this limit (no sudden start when switching from manual, record-only or after clearing an e-stop). For a first drive or an unfamiliar course, starting at 30–50 % is recommended (as of v0.3.0; raise it while checking the behaviour) |
+| 操縦パッド (driving pad) | Active in manual mode (see below). Underneath: the command being sent (e.g. 「`RC_steer(LEFT) / RC_drive(FORWARD, 115)`（パッド）」), 最大出力 (maximum output), 停止 (stop) and 左右スクロールの向きを反転 (invert horizontal scrolling) |
+| 自動の最大出力 (auto limit) | Upper limit of the drive (the `RC_drive` value 0–255) output by the logic in auto mode (default 255). Held by the car; a restart of the core resets it to `max_drive_pwm` (default 255). It cannot be set above `max_drive_pwm`. Independent of the manual 最大出力. On entering auto mode the permitted drive increases from 0 at the rate `auto_accel_pwm_per_s` and is capped at this limit (no sudden start when switching from manual, record-only or after clearing an e-stop). For a first drive or an unfamiliar course, starting at 77–128 (30–50 %) is recommended (raise it while checking the behaviour) |
 | 収録 (recording) | Destination folder (default `C:\Users\<you>\RumiCarData`), **シナリオ** scenario (name of the recorded scene: e.g. "壁のみの走行データ" walls only, "信号機ありケース1" traffic light case 1; type a name or select one used before), **メモ** note (optional), and 収録開始 / 収録停止 (start / stop). **By default recording starts automatically on connection** (「接続したら自動で収録を開始する」) and ends on disconnection. The scenario and note at the start of the recording are written to `session.json`. Every received frame is saved. If the "(画像付き N)" count next to 受信フレーム数 increases, camera images are being received |
 | 動画を作る… (make video) | Select a session folder to create `video.avi` (Motion JPEG, real time, 20 frames/s) from its images in that folder. Usable without a connection (6.4) |
 | 版の管理 (versions) | Logic and packs installed on the car (`[使用中]` = active, `[直前]` = previous, verification failures shown; selecting one shows its description, capabilities, source scenarios and target logic). 一覧更新 refresh, 送る… send, 自分のプログラムを送る… send my program (section 11), 有効化 activate, 削除 delete, ロジックを戻す roll back the logic, データを戻す roll back the pack (section 6). A pack is built for a specific logic, so activating a pack for another logic switches the logic at the same time (and vice versa); rollback likewise restores both |
@@ -131,24 +131,24 @@ ToF readings:
 | Display | Meaning |
 |---|---|
 | number | Measured distance [mm] |
-| `open` | No target detected (sensor value 8190). Typically the laser light was not reflected back from an object, or the received signal was too weak and below the configured limit |
-| `--` | Read failure (no measurement within `i2c.tof_read_timeout_ms`, or an I2C communication error) |
+| `-3 範囲外` | Out of range: nothing within 20 cm. The range exceeded 200 mm (including "no target detected", 8190). The VL53L0X measures up to 2 m, but its beam spreads out in a cone and, where it is mounted on the RumiCar, tends to pick up the floor beyond about 20 cm, so readings above 200 mm are not trusted. Driving logic treats it as open road |
+| `-1 タイムアウト` | Read failure (no measurement within `i2c.tof_read_timeout_ms`, or an I2C communication error) |
 
 **Figure 3** Handling of ToF readings (display and tof_drive decisions)
 
 <!-- figure: en/03-tof-reading.mmd -->
 ```mermaid
 flowchart TD
-    R["Read a VL53L0X"] --> Q{"Measurement available within<br/>i2c.tof_read_timeout_ms?<br/>I2C communication OK?"}
-    Q -->|"No"| F["Read failure → −1<br/>display --, None in drive.py"]
-    Q -->|"Yes"| V{"Range ≥ 8190?"}
-    V -->|"Yes"| O["No target detected → 8190<br/>display open, car.FAR in drive.py<br/>(no reflected light, or received signal below the limit)"]
-    V -->|"No"| D["Range [mm]"]
-    D --> T{"tof_drive:<br/>at or above conf_max_mm (default 250)?"}
-    T -->|"Yes"| OPEN["tof_drive: open<br/>(no obstacle within the judged distance)"]
+    R["Read VL53L0X"] --> Q{"Measurement within<br/>i2c.tof_read_timeout_ms?<br/>I2C OK?"}
+    Q -->|"No"| F["Read failure → −1 (timeout)<br/>display -1 タイムアウト, RC_read() gives −1"]
+    Q -->|"Yes"| V{"Range beyond 200 mm?<br/>(including no target, 8190)"}
+    V -->|"Yes"| O["Out of range → −3<br/>display -3 範囲外, RC_read() gives −3<br/>(nothing within 20 cm; mounted this low, the beam<br/>tends to pick up the floor beyond that, so longer readings are not trusted)"]
+    V -->|"No"| D["Range 0..200 [mm]"]
+    D --> T{"tof_drive:<br/>≥ conf_max_mm (default 200)?"}
+    T -->|"Yes"| OPEN["tof_drive: open<br/>(no obstacle within the decision range)"]
     O --> OPEN
-    T -->|"No"| USE["tof_drive: used as a distance<br/>(median filter, exponential smoothing)"]
-    F --> HOLD["tof_drive: previous value held for invalid_hold_ms (default 300 ms)<br/>beyond that SENSOR_FAULT (stop)"]
+    T -->|"No"| USE["tof_drive: use as distance<br/>(median filter, exponential smoothing)"]
+    F --> HOLD["tof_drive: hold the previous value for invalid_hold_ms (default 300 ms)<br/>then SENSOR_FAULT (stop)"]
 ```
 
 The window title and the header show the application's version. Next to it the header shows **PC の Wi-Fi**, the name of the network this PC is currently connected to. It turns red, and the event is logged, when the PC leaves the network it was on when it connected to the car (normally `RumiCar`). Windows may automatically switch from an access point without Internet access to another network, so check this display first when communication is interrupted unexpectedly (section 10). If the network name cannot be obtained on Windows 11 24H2 or later, turn on Settings → Privacy & security → Location → "Let desktop apps access your location" (Windows treats network names as location data).
@@ -160,12 +160,12 @@ In manual mode the car is operated with the **driving pad** in the driving card,
 | Input | Steering | Drive |
 |---|---|---|
 | **Press and drag on the pad** (left mouse button; on a touchpad, click and hold, or tap-and-drag) | Left / right at \|x\| ≥ 0.33 (left / right third), back to centre at \|x\| < 0.22 (hysteresis) | Upper half forward, lower half reverse. \|y\| ≤ 0.12 is stop; beyond it the drive rises linearly to 最大出力 at the edge. **Releasing stops the car** |
-| **Vertical scroll** (wheel, two fingers up/down on a touchpad; over the pad or the image) | — | Changes a speed set-point and **keeps driving at that speed**: 5 % per wheel notch. Between forward and reverse the set-point stops at 0; scrolling again after a 0.4 s pause continues in the other direction |
+| **Vertical scroll** (wheel, two fingers up/down on a touchpad; over the pad or the image) | — | Changes a speed set-point and **keeps driving at that speed**: 13 (about 5 %) per wheel notch. Between forward and reverse the set-point stops at 0; scrolling again after a 0.4 s pause continues in the other direction |
 | **Horizontal scroll** (two fingers sideways, a tilting wheel, Shift + wheel) | Left / right while scrolling, centre 0.25 s after the last scroll event | — |
 | **Arrow keys** | ← → while held | ↑ ↓ forward / reverse at 最大出力 while held |
 | **Stop** | Space, right or middle click on the pad, the 停止 button. Also when the window is deactivated (switching to another application) | |
 
-Precedence: the pad while pressed, otherwise held keys, otherwise scrolling (← → can be combined with the scroll set-point: set a speed by scrolling and steer with ← →). Pressing the pad or ↑ ↓ resets the scroll set-point to 0, so releasing never resumes a previous speed. 最大出力 (default 60 %) limits all three inputs, and the car's `max_drive_permille` limits further. If horizontal scrolling steers in the wrong direction with your touchpad settings, tick 左右スクロールの向きを反転.
+Precedence: the pad while pressed, otherwise held keys, otherwise scrolling (← → can be combined with the scroll set-point: set a speed by scrolling and steer with ← →). Pressing the pad or ↑ ↓ resets the scroll set-point to 0, so releasing never resumes a previous speed. 最大出力 (default 153, about 60 %) limits all three inputs, and the car's `max_drive_pwm` limits further. If horizontal scrolling steers in the wrong direction with your touchpad settings, tick 左右スクロールの向きを反転.
 
 In manual mode the car makes an emergency stop when the heartbeat is lost for 1 s (table above).
 
@@ -194,15 +194,15 @@ RumiCarData/
 ### 6.2 Improving the data with the Claude desktop app
 
 1. Open the `RumiCarData` folder (or its `sessions` folder) in the Claude desktop app, let it read the recordings and instruct the improvements.
-2. The decision data of the driving logic `tof_drive` is a single parameter file, `params.json`. Spec section 3.7 lists every key with its meaning and default (for example `d_turn_enter_mm`, the forward distance at which a turn starts; `v_max`, the top speed; `accel_permille_per_s`, the rate of change when accelerating).
+2. The decision data of the driving logic `tof_drive` is a single parameter file, `params.json`. Spec section 3.7 lists every key with its meaning and default (for example `d_turn_enter_mm`, the forward distance at which a turn starts; `v_max`, the top speed as an `RC_drive` value 0–255; `accel_pwm_per_s`, the rate of change when accelerating). Distances are `RC_read` values (0–200 mm; −3 is open).
 3. Put the result in a folder with this structure (`manifest.json` can be created with `car/tools/make_manifest.py`, which needs only the Python 3 standard library):
 
 ```
 base-tof-0.2.0/            folder name is <id>-<version>
   params.json              every key is required
   manifest.json            python car/tools/make_manifest.py pack base-tof-0.2.0 --id base-tof --version 0.2.0 --logic tof_drive \
-                               --description "Walls only; turns start earlier (d_turn_enter_mm 220)" \
-                               --capability walls --scenario "壁のみの走行データ" --parent base-tof-0.1.1
+                               --description "Walls only; turns start earlier (d_turn_enter_mm 180)" \
+                               --capability walls --scenario "壁のみの走行データ" --parent base-tof-0.2.0
 ```
 
 Give the version (`0.2.0` etc.) a new number that does not duplicate a version installed on the car.
@@ -247,7 +247,7 @@ flowchart TD
 |---|---|---|
 | `signal` | red / green light (local) | When the red light is detected for the configured number of frames: decelerate; when close: stop. When the green light is detected (or a configured time has passed since the red light was last detected): start |
 | `vehicle` | vehicle (local) | When a vehicle is detected in the own lane (the centre columns of the image): follow at a gap without turning. If the gap stays unchanged while stopped, classify it as a parked vehicle and overtake on the side with more clearance on the left/right ToF (lane change to the passing side → alongside → return to the lane) |
-| `intersection` | intersection with a road to the left / right (global) | When an intersection is detected: decelerate, stop where the side wall ends (a side ToF becomes open), then go straight, turn left or turn right as configured |
+| `intersection` | intersection with a road to the left / right (global) | When an intersection is detected: decelerate, stop where a left/right ToF (which looks 65° forward) catches the end of the wall (reads −3), i.e. with the car's front just before the corner, then go straight, turn left or turn right as configured |
 
 The three behaviours operate independently; where they overlap, the **lowest speed cap applies**. If a red light is detected during overtaking or turning, that manoeuvre is aborted and the car stops. The ToF logic's emergency brake, reversing recovery and sensor fault always take precedence (the image-based decisions only add constraints to the ToF driving and never disable its safe-side actions).
 
@@ -287,20 +287,20 @@ flowchart TD
 {"index": 200, "negative": true}                                                         <- explicitly no target in view
 ```
 
-   `--detector vehicle` proposes vehicle candidates (frames in which the centre ToF reading was close; the box only marks the lane position, so adjust it to the vehicle's body). `--detector intersection_left` (or `_right`) proposes intersection candidates: counting back from the moment a side ToF reading changes from "wall" to "open" — the moment the car passes the intersection — the preceding 2 s (`--before-ms`) are proposed as "intersection visible ahead"; check the first and last frames and adjust the interval. Unlabelled frames are not used for learning. Checking about one frame in twenty is sufficient (frames in intervals with similar features are filled in by the `propose` candidates). A labelled frame becomes a negative example for every detector not named on it (this is how the red tail lights of a vehicle are learned not to be a red light).
+   `--detector vehicle` proposes vehicle candidates (frames in which the centre ToF reading was close; the box only marks the lane position, so adjust it to the vehicle's body). `--detector intersection_left` (or `_right`) proposes intersection candidates: counting back from the moment a left/right ToF reading (65° forward) changes from "wall" to "open" (−3) — the moment the car's front reaches the corner of the intersection — the preceding 2 s (`--before-ms`) are proposed as "intersection visible ahead"; check the first and last frames and adjust the interval. Unlabelled frames are not used for learning. Checking about one frame in twenty is sufficient (frames in intervals with similar features are filled in by the `propose` candidates). A labelled frame becomes a negative example for every detector not named on it (this is how the red tail lights of a vehicle are learned not to be a red light).
 
 3. **Learn**:
 
 ```
 python car/tools/train_pack.py train cam-signal-0.1.0 \
-    --parent <the cam-base-0.1.1 folder taken from the car, or the previous version> \
+    --parent <the cam-base-0.2.0 folder taken from the car, or the previous version> \
     --sessions <recordings for learning>... --validate <recordings for validation>... \
     --negatives-from-scenario "壁のみの走行データ" \
     --detector traffic_light_red --detector traffic_light_green \
     --id cam-signal --version 0.1.0 --description "traffic light, case 1"
 ```
 
-   `cam-base-0.1.1` is also in the repository at `car/packs/cam-base`. On completion `cam-signal-0.1.0/` contains `params.json`, `vision.bin`, `training.json` (learning record) and `manifest.json`, and the precision and recall of the detections on the validation recordings are displayed. If recall is low, add labels; if there are many false detections, add negatives (walls only). To add vehicles and intersections, learn all detectors together (`:global` marks a global detector):
+   `cam-base-0.2.0` is also in the repository at `car/packs/cam-base`. On completion `cam-signal-0.1.0/` contains `params.json`, `vision.bin`, `training.json` (learning record) and `manifest.json`, and the precision and recall of the detections on the validation recordings are displayed. If recall is low, add labels; if there are many false detections, add negatives (walls only). To add vehicles and intersections, learn all detectors together (`:global` marks a global detector):
 
 ```
 python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
@@ -323,7 +323,7 @@ python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
 |---|---|---|
 | `red_detector` / `green_detector` | `traffic_light_red` / `traffic_light_green` | Detector names. On a course without a green light set `green_detector` to `""` and start with `resume_without_green_ms` |
 | `stop_min_cells` | 2 | When the red light is detected in at least this many cells it is judged "close" and the car stops (before that it only decelerates) |
-| `approach_v` | 500 | Speed cap (per mille) from detecting the red light until stopping |
+| `approach_v` | 128 | Speed cap (`RC_drive` value 0–255) from detecting the red light until stopping |
 | `min_stop_ms` | 1000 | Minimum stop time |
 | `resume_without_green_ms` | 3000 | Time from the red light no longer being detected until starting (0 = wait until the green light is detected) |
 | `resume_ignore_ms` | 1500 | Time after starting during which red-light detections are ignored (to avoid stopping again while passing) |
@@ -350,23 +350,23 @@ stateDiagram-v2
 
 ### 7.5 Vehicle behaviour (the `vehicle` part of params.json)
 
-If this section (`vehicle`) is absent from `params.json` the behaviour is disabled. If present, every key is required (`train` adds it automatically to packs that contain the `vehicle` detector; override with `--vehicle key=value`). All distances are values after `tof_drive`'s processing; readings at or above `tof.conf_max_mm` (including no target detected) are treated as "open".
+If this section (`vehicle`) is absent from `params.json` the behaviour is disabled. If present, every key is required (`train` adds it automatically to packs that contain the `vehicle` detector; override with `--vehicle key=value`). All distances are values after `tof_drive`'s processing; readings at or above `tof.conf_max_mm` and −3 (nothing within 20 cm) are treated as "open".
 
 | Key | Default | Meaning |
 |---|---|---|
 | `detector` | `vehicle` | Name of the local detector |
 | `lane_cols` | 4 | The detected vehicle is judged to be in the own lane only when its best cell (the cell with the highest score) lies in this many centre columns of the grid (columns 2–5 of 8) |
 | `follow_gap_mm` | 150 | Minimum gap (centre ToF) to the vehicle ahead; at or below it the speed cap is 0 (stop). Must be greater than `tof.d_emergency_mm` and less than `tof.conf_max_mm` |
-| `follow_band_mm` | 80 | While the gap widens from `follow_gap_mm` by this amount, the cap rises linearly from 0 to `follow_v` |
-| `follow_v` | 700 | Speed cap while following (per mille); also applies while the vehicle is detected only by the camera and not yet by the ToF |
+| `follow_band_mm` | 40 | While the gap widens from `follow_gap_mm` by this amount, the cap rises linearly from 0 to `follow_v` (`follow_gap_mm` + `follow_band_mm` must not exceed `tof.conf_max_mm`: the ToF never returns more than 200 mm) |
+| `follow_v` | 179 | Speed cap while following (`RC_drive` value 0–255); also applies while the vehicle is detected only by the camera and not yet by the ToF |
 | `parked_confirm_ms` | 2000 | When the car has been stopped behind the vehicle for this long without the gap widening, the vehicle is classified as parked |
 | `still_delta_mm` | 20 | If the gap widens by more than this while waiting, the vehicle is judged to have started moving and the judgement restarts |
 | `overtake_side` | `open` | Side to overtake on: `left`, `right` or `open` (the side with the larger left/right ToF distance; equal → right) |
 | `side_clear_mm` | 120 | Overtaking is possible if that side's ToF reads at least this (or open); otherwise wait in `FOLLOW_WAIT` |
-| `overtake_v` | 500 | Speed cap during overtaking |
+| `overtake_v` | 128 | Speed cap during overtaking |
 | `out_ms` | 500 | Duration of the lane change to the passing side (maximum steering towards the passing side) |
 | `pass_min_ms` / `pass_max_ms` | 800 / 3000 | Minimum / maximum duration of driving alongside (steering back to neutral, straight ahead) |
-| `pass_clear_mm` / `pass_clear_ms` | 150 / 300 | After the inner (vehicle-side) ToF has read below this once (vehicle detected alongside), a reading at or above it for this long means passing is complete |
+| `pass_clear_mm` / `pass_clear_ms` | 150 / 700 | After the inner (vehicle-side) ToF has read below this once (vehicle detected), a reading at or above it (or −3) for this long means passing is complete. The left/right ToFs look 65° forward, so they lose the vehicle when the car's front passes the vehicle's front; this time lets the rest of the car pass it (provisional; check and tune on the real car) |
 | `in_ms` | 500 | Duration of the return to the lane (maximum steering to the opposite side) |
 | `ignore_ms` | 1500 | Time after overtaking during which vehicle detections are ignored. Also, if the camera does not detect the vehicle for this long while following, following ends and control returns to the ToF decisions (if the car is too close for the vehicle to be detected, the ToF logic avoids it as an obstacle) |
 
@@ -404,12 +404,12 @@ If this section (`intersection`) is absent the behaviour is disabled. If present
 | Key | Default | Meaning |
 |---|---|---|
 | `left_detector` / `right_detector` | `intersection_left` / `intersection_right` | Detectors (global) for an intersection branching to the left / right. One may be `""` (not both) |
-| `approach_v` | 500 | Speed cap from detecting the intersection until stopping |
-| `stop_trigger` | `side_open` | Stop condition. `side_open` = when the left or right ToF reads `open_mm` or more (the wall ends); `detector` = immediately when the detector is confirmed (courses without walls, where only images just before the intersection were learned) |
-| `open_mm` | 200 | A side ToF reading at or above this (or open) is judged "open" |
+| `approach_v` | 128 | Speed cap from detecting the intersection until stopping |
+| `stop_trigger` | `side_open` | Stop condition. `side_open` = when the left or right ToF reads `open_mm` or more, or −3 (the wall ends); `detector` = immediately when the detector is confirmed (courses without walls, where only images just before the intersection were learned) |
+| `open_mm` | 200 | A left/right ToF reading (65° forward) at or above this, or −3, is judged "open" (at most 200; at 200 only −3 counts) |
 | `stop_ms` | 1000 | Stop time (while a red light is detected, the car does not start until the light turns green) |
 | `turn` | `straight` | Path after stopping: `straight`, `left`, `right`, or `detector` (turn towards the detected side; both sides detected → straight) |
-| `turn_v` | 500 | Speed cap while driving straight waiting for the turn side to open, and while turning |
+| `turn_v` | 128 | Speed cap while driving straight waiting for the turn side to open, and while turning |
 | `cross_max_ms` | 2000 | Maximum time to drive straight waiting for the turn side's ToF to become open (if it does not, the manoeuvre ends going straight) |
 | `turn_ms` | 900 | Duration of maximum steering towards the turn side |
 | `ignore_ms` | 3000 | Time after completion during which intersection detections are ignored |
@@ -471,7 +471,7 @@ rumicar-activate show                  # active / previous versions and the last
 sudo nano /etc/rumicar/core.json       # settings (then sudo systemctl restart rumicar-core)
 ```
 
-Main settings in `/etc/rumicar/core.json` (spec 3.3): `car_name`, `startup_mode` (start-up drive mode: `record_only`, the default, or `auto` to drive at power-on), `max_drive_permille` (drive limit, 1000 = 100 %), `auto_accel_permille_per_s` (rate at which the permitted drive increases on entering auto mode; the default 1125 takes about 0.89 s from 0 to 100 %; 0 = no limit), `camera.enabled`, `camera.on_demand` (run the camera only while a PC is connected or in auto mode; default true), `camera.fps`, `network.heartbeat_timeout_ms`, `network.ap_start` (`core`, the default: the core starts the access point; `boot`: NetworkManager does it), `network.wifi_txpower_dbm` (upper limit of the radio's transmit power; 0 = driver default; try about 10–14 if battery voltage drops are a problem), `power.throttled_path` (under-voltage / throttling monitor; an empty string disables it).
+Main settings in `/etc/rumicar/core.json` (spec 3.3): `car_name`, `startup_mode` (start-up drive mode: `record_only`, the default, or `auto` to drive at power-on), `max_drive_pwm` (drive limit as an `RC_drive` value, 255 = 100 %), `auto_accel_pwm_per_s` (rate at which the permitted drive increases on entering auto mode; the default 287 takes about 0.89 s from 0 to 255; 0 = no limit), `camera.enabled`, `camera.on_demand` (run the camera only while a PC is connected or in auto mode; default true), `camera.fps`, `network.heartbeat_timeout_ms`, `network.ap_start` (`core`, the default: the core starts the access point; `boot`: NetworkManager does it), `network.wifi_txpower_dbm` (upper limit of the radio's transmit power; 0 = driver default; try about 10–14 if battery voltage drops are a problem), `power.throttled_path` (under-voltage / throttling monitor; an empty string disables it).
 
 ## 9. Updating
 
@@ -505,11 +505,11 @@ There are three kinds of version number, each updated independently.
 
 | Kind | Example | Scope and where it appears |
 |---|---|---|
-| Core (product) version | `v0.3.2` | The Release tag. The SD-card image, the `.deb`, the drive manager and the car's `core_version` share it. Shown as `本体 <version>, このアプリ <version>` in the log on connection, and in the application's title |
-| Logic version | `tof_drive-0.2.0`, `cam_drive-0.2.0` | One number per logic (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION` / `PY_DRIVE_VERSION` in `car/CMakeLists.txt`, `version` in its manifest). Shown in the version list and in the status panel's 版（ロジック／データ） |
-| Pack (decision data) version | `base-tof-0.1.1`, `cam-base-0.1.1`, your own `cam-signal-0.1.0` | `version` in each pack's `manifest.json`. Give a pack you learned yourself a number that does not duplicate a version installed on the car (section 7) |
+| Core (product) version | `v0.4.0` | The Release tag. The SD-card image, the `.deb`, the drive manager and the car's `core_version` share it. Shown as `本体 <version>, このアプリ <version>` in the log on connection, and in the application's title |
+| Logic version | `tof_drive-0.3.0`, `cam_drive-0.3.0` | One number per logic (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION` / `PY_DRIVE_VERSION` in `car/CMakeLists.txt`, `version` in its manifest). Shown in the version list and in the status panel's 版（ロジック／データ） |
+| Pack (decision data) version | `base-tof-0.2.0`, `cam-base-0.2.0`, your own `cam-signal-0.1.0` | `version` in each pack's `manifest.json`. Give a pack you learned yourself a number that does not duplicate a version installed on the car (section 7) |
 
-The core 0.3.2 Release bundles `tof_drive-0.2.0`, `cam_drive-0.2.0`, `py_drive-0.1.1`, `base-tof-0.1.1`, `cam-base-0.1.1` and `py-sample-0.1.1`. Even when the core and a logic carry the same number, the two numbers are independent.
+The core 0.4.0 Release bundles `tof_drive-0.3.0`, `cam_drive-0.3.0`, `py_drive-0.2.0`, `base-tof-0.2.0`, `cam-base-0.2.0` and `py-sample-0.2.0`. Even when the core and a logic carry the same number, the two numbers are independent.
 
 **Builds that are not a release** (the `.deb`, SD-card image and application made by GitHub Actions for anything other than a tag) carry `+g` and the first 7 characters of the commit after the number (e.g. `0.2.1+g1a2b3c4`), to distinguish them from tagged releases. Debian orders them `0.2.1` < `0.2.1+g1a2b3c4` < `0.2.2`. If the numeric parts (before the `+`) of the car's core version and the application version differ, a warning is logged on connection.
 
@@ -520,11 +520,11 @@ The core 0.3.2 Release bundles `tof_drive-0.2.0`, `cam_drive-0.2.0`, `py_drive-0
 | `RumiCar` does not appear in the Wi-Fi list | Wait 1–2 minutes after boot. If SSH is available, check that `nmcli connection show` lists `RumiCar-AP`, that `sudo journalctl -u NetworkManager -b` shows no errors, and that `iw reg get` reports `JP` |
 | The application cannot connect | Is the PC connected to `RumiCar` with a `10.42.0.x` address (`ipconfig`)? Firewall permission. On the car: `systemctl status rumicar-core` |
 | No image | On the car: `sudo journalctl -u rumicar-core -b \| grep -i camera`. Camera ribbon orientation. Is the camera listed by `rpicam-hello --list-cameras`? |
-| The car does not drive | After boot it waits in record-only mode (press 「自動」 in the application; to drive without a PC set `startup_mode` to `auto`). Does `sudo journalctl -u rumicar-core -b` begin with `hardware bring-up failed`? (The I2C/PWM settings are appended to `/boot/firmware/config.txt`.) Is the e-stop active (「非常停止解除」 in the application)? If a ToF reading stays `--` (read failure) for longer than `invalid_hold_ms` (default 300 ms), the car stops in SENSOR_FAULT |
-| Power cuts out or the car reboots during start-up (dry cells) | Since v0.1.3 the core starts sensors → Wi-Fi → camera in sequence and keeps the motors stopped until 「自動」 is selected, so that high-current functions (Wi-Fi, camera, motors) do not operate simultaneously at start-up. If it still occurs: replace the cells with fresh or rechargeable (NiMH) ones; reduce the transmit power with `network.wifi_txpower_dbm` (about 10); check whether the 電源 field in the application shows 「低電圧」 (on boards that report it, this helps isolate the cause). If it occurs while driving, lower `max_drive_permille` to limit the current during acceleration |
+| The car does not drive | After boot it waits in record-only mode (press 「自動」 in the application; to drive without a PC set `startup_mode` to `auto`). Does `sudo journalctl -u rumicar-core -b` begin with `hardware bring-up failed`? (The I2C/PWM settings are appended to `/boot/firmware/config.txt`.) Is the e-stop active (「非常停止解除」 in the application)? If a ToF reading stays `-1 タイムアウト` (read failure) for longer than `invalid_hold_ms` (default 300 ms), the car stops in SENSOR_FAULT (`-3 範囲外` is a normal value) |
+| Power cuts out or the car reboots during start-up (dry cells) | Since v0.1.3 the core starts sensors → Wi-Fi → camera in sequence and keeps the motors stopped until 「自動」 is selected, so that high-current functions (Wi-Fi, camera, motors) do not operate simultaneously at start-up. If it still occurs: replace the cells with fresh or rechargeable (NiMH) ones; reduce the transmit power with `network.wifi_txpower_dbm` (about 10); check whether the 電源 field in the application shows 「低電圧」 (on boards that report it, this helps isolate the cause). If it occurs while driving, lower `max_drive_pwm` to limit the current during acceleration |
 | Wi-Fi disappeared | If the core (rumicar-core) stops, the access point is not started either, but `rumicar-ap.timer` retries from 90 s after boot and then every 60 s. Check with `systemctl status rumicar-ap.timer` and `nmcli connection show --active` |
 | The PC disconnects from `RumiCar` by itself | The car's access point has no Internet access, so Windows may judge it as having no Internet connection and switch to another registered Wi-Fi network. If the application's PC の Wi-Fi turns red, this is the cause. Countermeasures: in Windows' Wi-Fi settings set `RumiCar` to "Connect automatically" and turn "Connect automatically" off for other networks (home, office) only while driving; or drive where other networks are out of range. A PC connected to the Internet over wired LAN can dedicate its Wi-Fi to the car |
-| Sudden start immediately after switching to auto | Since v0.3.0 the permitted drive increases from 0 when auto mode is entered (`auto_accel_permille_per_s`; the default 1125 takes about 0.89 s from 0 to 100 %). If it is too fast, lower 自動の最大出力 in the application (reset by a core restart; start a first drive at 30–50 %). To limit it permanently, use the car's `max_drive_permille` |
+| Sudden start immediately after switching to auto | Since v0.3.0 the permitted drive increases from 0 when auto mode is entered (`auto_accel_pwm_per_s`; the default 287 takes about 0.89 s from 0 to 255). If it is too fast, lower 自動の最大出力 in the application (reset by a core restart; start a first drive at 77–128). To limit it permanently, use the car's `max_drive_pwm` |
 | My own program does not run | Errors at load time are logged in the application with the reason (`drive.py の N 行目 …`, the line number in drive.py). Errors after the start and `print()` output are recorded in the car's log (`sudo journalctl -u rumicar-core -f`). If `loop()` does not complete within 30 ms, that frame brakes; if there is no response for 1 s or more, the program is stopped (`time.sleep()` and endless loops must not be used). Section 11 |
 | `hardware bring-up failed: open /dev/i2c-1` | The v0.1.1 image had no setting to load the `i2c-dev` kernel module, so `/dev/i2c-1` was not created. `sudo raspi-config` → Interface Options → I2C → Yes resolves it (persists across reboots). Not needed with the v0.1.2 and later images and packages |
 | A switch fails | The reason recorded in the application's log (manifest mismatch, missing required keys, logic-name mismatch, etc.). `rumicar-activate show` on the car |
@@ -539,46 +539,52 @@ Besides the bundled driving logics (`tof_drive`, `cam_drive`), the car can be dr
 ### 11.1 Procedure
 
 1. Copy the sample in `car/packs/py-sample/` (`drive.py` and `params.json`) to any folder on the PC (e.g. `C:\Users\<you>\RumiCarData\my-drive`). The folder name becomes the name of the data (pack) (characters other than letters and digits are replaced by `-`).
-2. Open `drive.py` and rewrite the body of `loop(car)` (it works unchanged for a first try).
+2. Open `drive.py` and rewrite the body of `loop()` (it works unchanged for a first try).
 3. Connect to the car and select that folder with **自分のプログラムを送る…** in 版の管理. The application creates the `manifest.json`, sends the folder and activates the logic `py_drive` together with the data (「有効化: ロジックも py_drive-… に切り替えます」 is logged).
-4. Press 自動 to start driving. At first, setting 自動の最大出力 to 30–50 % is recommended.
+4. Press 自動 to start driving. At first, setting 自動の最大出力 to 77–128 (30–50 %) is recommended.
 5. After editing, run 自分のプログラムを送る… again. Every send creates a new version (the version number is the send time), and データを戻す returns to the previous one.
 
 If `drive.py の N 行目 …` is logged in the drive manager, fix that line of drive.py. `print()` output and errors after the start are recorded in the car's log (`ssh rumicar@10.42.0.1`, then `sudo journalctl -u rumicar-core -f`).
 
 ### 11.2 Writing drive.py
 
-```python
-def setup(car):          # once at the start (optional)
-    car.state("START")
+`drive.py` is written with the RumiCar library API: the same function names, constants and values as the Arduino library RumiCar-lib and the Raspberry Pi Zero W version (`RasPi/RumiCar.py` in the RumiCar repository). On the Zero2Cam the core owns the sensors and motors, so the core calls `loop()` every 50 ms; `RC_read()` returns that frame's sensor values and `RC_steer()` / `RC_drive()` set the command for the frame.
 
-def loop(car):           # every 50 ms (20 Hz)
-    if car.center < 150:           # close ahead
-        car.steer(car.LEFT if car.left > car.right else car.RIGHT)   # towards the side with the larger distance
-        car.drive(400)
+```python
+from RumiCar import *
+
+def setup():             # once at the start (optional)
+    RC_setup()           # does nothing on the Zero2Cam (the core has initialized the hardware)
+    RC_state("START")
+
+def loop():              # every 50 ms (20 Hz)
+    center = RC_read(CENTER)
+    if center == -3:                   # nothing within 20 cm
+        center = 999
+    if center < 150:                   # close ahead
+        RC_steer(LEFT if RC_read(LEFT) > RC_read(RIGHT) else RIGHT)   # towards the side with the larger distance
+        RC_drive(FORWARD, 102)
     else:
-        car.steer(car.CENTER)
-        car.drive(car.params["speed"])   # a value from params.json
+        RC_steer(CENTER)
+        RC_drive(FORWARD, RC_params()["speed"])   # a value from params.json
 ```
 
 | Name | Description |
 |---|---|
-| `car.left` / `car.center` / `car.right` | Distance sensor values in mm; `car.FAR` (8190) when no target was detected, `None` on a read failure |
-| `car.params` | The contents of `params.json` (a dict). Values that differ per car or course can be put here, so that tuning does not require changing the program |
-| `car.time` / `car.dt` / `car.frame` | Seconds since the start / seconds since the previous `loop` / frame count |
-| `car.steer(direction)` | `car.LEFT` / `car.CENTER` / `car.RIGHT` (strings such as `"left"` are also accepted). Steering has three states |
-| `car.drive(value)` | Drive: `-1000` (reverse at maximum output) … `0` (stop) … `1000` (forward at maximum output). The values of `steer()` and `drive()` are held until changed |
-| `car.brake()` / `car.stop()` | Brake / set the drive to 0 (coast to a stop) |
-| `car.state("NAME")` | Name of the current processing state (letters, digits and `_`, up to 24 characters), shown as 判断状態 in the application |
+| `RC_read(LEFT / CENTER / RIGHT)` | Distance sensor value: `0`–`200` = distance in mm, `-1` = read failure, `-3` = out of range (nothing within 20 cm). `-3` is the smallest number, so map it to a large value before comparing. `RC_read(REAR)` is `-1` on this car; a bad argument gives `-2` |
+| `RC_steer(LEFT / CENTER / RIGHT)` | Steering, three states. Returns 1; a bad argument is ignored and returns 0 |
+| `RC_drive(direction, value)` | Drive: direction `FREE` (coast to a stop) / `REVERSE` / `FORWARD` / `BRAKE`, value = PWM duty `0`–`255` (150 means a signal of 150/255 ≈ 59 %). Values outside 0–255 are clamped. The values of `RC_steer()` and `RC_drive()` are held until changed |
+| `RC_params()` | The contents of `params.json` (a dict). Values that differ per car or course can be put here, so that tuning does not require changing the program |
+| `RC_state("NAME")` | Name of the current processing state (letters, digits and `_`, up to 24 characters), shown as 判断状態 in the application |
 | `print(...)` | Recorded in the car's log |
 
-Your own `.py` files can be placed next to `drive.py` and imported. Only the Python standard library is available (numpy etc. are not installed on the car). Camera images are not available in `py_drive` (images are handled by the learning pipeline of section 7).
+For elapsed time use Python's `time.monotonic()`. Your own `.py` files can be placed next to `drive.py` and imported. Only the Python standard library is available (numpy etc. are not installed on the car). Camera images are not available in `py_drive` (images are handled by the learning pipeline of section 7).
 
 ### 11.3 Safety control by the core
 
 - The processing time of one `loop()` call is limited to **30 ms**; a frame whose processing does not complete within this time brakes (a late response is discarded). If there is no response for **1 s** or more, the program is stopped and the car stays braked (activate again to restart). Do not use `time.sleep()` or `while` loops that do not terminate.
-- A frame in which an exception occurs brakes, and the program continues. Out-of-range values (`drive(5000)` etc.) also raise an exception.
-- On entering auto mode the permitted drive increases from 0, and the car never exceeds 自動の最大出力 or its `max_drive_permille`. Manual mode, record-only and the emergency stop behave the same for every logic.
+- A frame in which an exception occurs brakes, and the program continues. Out-of-range values do not raise: as in RumiCar-lib, `RC_drive(FORWARD, 5000)` is clamped to 255, and a bad direction or state name is ignored and returns 0 (logged once on the car).
+- On entering auto mode the permitted drive increases from 0, and the car never exceeds 自動の最大出力 or its `max_drive_pwm`. Manual mode, record-only and the emergency stop behave the same for every logic.
 - The program runs in a process separate from the core, so the core's control period (50 ms) is maintained even if the program stops responding.
 
 **Figure 9** Per-frame exchange between the core and drive.py (runner.py)
@@ -609,9 +615,9 @@ sequenceDiagram
 
 ### 11.4 Notes
 
-- A sent pack is stored in `/var/lib/rumicar/packs/<folder name>-<time>/`; `rumicar-activate pair py_drive-0.1.1 <pack>` switches to it over SSH (logic and data are switched as a pair).
+- A sent pack is stored in `/var/lib/rumicar/packs/<folder name>-<time>/`; `rumicar-activate pair py_drive-0.2.0 <pack>` switches to it over SSH (logic and data are switched as a pair).
 - The ToF driving (`tof_drive`) is written in C++. To port processing written in Python to a full driving logic, use `car/logic/tof_drive/` as the reference.
-- The sample `py-sample` is also bundled with the car, so `py-sample-0.1.1` can be activated from 版の管理 to check its behaviour without the repository on the PC.
+- The sample `py-sample` is also bundled with the car, so `py-sample-0.2.0` can be activated from 版の管理 to check its behaviour without the repository on the PC.
 
 ---
 
@@ -642,15 +648,15 @@ Every 50 ms the core performs the processing of Figure 10. The state transitions
 <!-- figure: en/10-frame.mmd -->
 ```mermaid
 flowchart TD
-    A["Read ToF ×3 (each within i2c.tof_read_timeout_ms, default 100 ms)<br/>number / 8190 = no target detected / −1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
+    A["Read ToF ×3 (each within i2c.tof_read_timeout_ms, default 100 ms)<br/>RC_read values: 0..200 [mm] / −3 = out of range (nothing within 20 cm) / −1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
     B --> C["Logic step()<br/>(every frame, in every mode)"]
     C --> E{"Emergency stop?<br/>Drive mode?"}
     E -->|"E-stop active"| B1["Brake"]
     E -->|"Record only"| B2["Brake"]
-    E -->|"Manual"| H["PC's manual_drive<br/>(limited to ±max_drive_permille)"]
+    E -->|"Manual"| H["PC's manual_drive<br/>(RC_steer / RC_drive values; the duty is capped at max_drive_pwm)"]
     E -->|"Auto"| F{"step() succeeded?"}
     F -->|"Failed"| B3["Brake"]
-    F -->|"Succeeded"| G["Limit the drive to the permitted value<br/>permitted = min(increase from 0 at auto_accel_permille_per_s,<br/>auto limit, max_drive_permille)<br/>brake if the command has BRAKE / FAULT"]
+    F -->|"Succeeded"| G["Limit the drive to the permitted value<br/>permitted = min(increase from 0 at auto_accel_pwm_per_s,<br/>auto limit, max_drive_pwm)<br/>brake if the command is BRAKE or has FAULT"]
     B1 --> MO["Output to DRV8835"]
     B2 --> MO
     B3 --> MO
@@ -699,13 +705,13 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 - **Write the number of the next Release into the sources first, then tag.** (1) In a pull request set `RUMICAR_VERSION` in `car/CMakeLists.txt`, `<Version>` in `pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` and the `assemblyIdentity version` (`X.Y.Z.0`) in `pc/RumiCar.DriveManager/app.manifest` to the same number, (2) merge it, (3) tag that merge commit `vX.Y.Z` and push the tag. `release.yml` first verifies that the tag matches those three places and is a commit on main, and stops without building if not (so that no Release is created whose tag and contents disagree).
 - Builds other than a tag (main, pull requests) get `+g<commit>` appended by CI (`-DRUMICAR_VERSION_SUFFIX` in `car.yml`, `-p:InformationalVersion` in `pc.yml`); a local build keeps the number in the sources. The logic versions (`TOF_DRIVE_VERSION` / `CAM_DRIVE_VERSION` / `PY_DRIVE_VERSION`) are independent of the core version and are raised when a logic changes. They are also raised when the contents of a logic or pack change (including files other than the .so and the manifest's description), because the car does not overwrite a directory of the same version (9.2).
 
-## Scope of this version (0.3.2)
+## Scope of this version (0.4.0)
 
 - Car: ToF driving logic, control loop and safety control, drive modes (auto / manual / record_only; record_only at start-up) and emergency stop, Camera Module 2 capture (libcamera, RGB24 320×240 at 20 fps, operated only when needed) with JPEG transmission, control server (TCP 5600) and telemetry server (TCP 5601), Wi-Fi access point (NetworkManager, started in sequence by the core) and `set_wifi`, under-voltage / throttling monitoring, hot-swapping of logic / packs while driving (from the PC or over SSH), verification by manifests that also carry a description, capabilities and source scenarios, systemd services, Debian package
 - PC: wire formats for control, telemetry, manifests and recording; the drive manager (connection, status and image, drive modes, e-stop, manual operation with pad, scrolling and keys, auto limit, display of the PC's Wi-Fi, recording with scenarios, version management with paired logic/pack switching, sending your own program, video creation from recordings)
-- Car: the image logic `cam_drive` (stopping and starting at traffic lights, following a vehicle ahead and overtaking a parked vehicle, stopping at intersections and going straight or turning), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic interface ABI 2
+- Car: the image logic `cam_drive` (stopping and starting at traffic lights, following a vehicle ahead and overtaking a parked vehicle, stopping at intersections and going straight or turning), the learned data `vision.bin`, the learning tool `train_pack.py`, the replay tool `rumicar-replay`, logic interface ABI 3
 - Car: the logic `py_drive` that executes a Python program written by the user (`drive.py`) with the sample `py-sample`, limiting of the rate of increase of the permitted drive and the maximum output in auto mode (`set_auto_limit`), paired switching of logic and data (`activate_pair`)
-- Distribution: standard SD-card image, GitHub Releases from tags (0.2.0: the logic interface changed from ABI 1 to ABI 2 and self-built logic must be rebuilt, hence the step up from 0.1.x; 0.2.1: manual operation changed to the driving pad and scrolling, the release verifies that tag and sources agree, builds that are not a release carry `+g<commit>`; 0.3.0: your own driving program, the auto limit and prevention of sudden starts, display of the PC's Wi-Fi; 0.3.1: wording in documents, screens and messages unified to technically precise terms (`py_drive` 0.1.1, `py-sample` 0.1.1, `cam-base` 0.1.1; no change in behaviour; 0.3.2: figures added to the READMEs and the specification, Japanese and English; no change in behaviour))
+- Distribution: standard SD-card image, GitHub Releases from tags (0.2.0: the logic interface changed from ABI 1 to ABI 2 and self-built logic must be rebuilt, hence the step up from 0.1.x; 0.2.1: manual operation changed to the driving pad and scrolling, the release verifies that tag and sources agree, builds that are not a release carry `+g<commit>`; 0.3.0: your own driving program, the auto limit and prevention of sudden starts, display of the PC's Wi-Fi; 0.3.1: wording in documents, screens and messages unified to technically precise terms (`py_drive` 0.1.1, `py-sample` 0.1.1, `cam-base` 0.1.1; no change in behaviour; 0.3.2: figures added to the READMEs and the specification, Japanese and English; no change in behaviour; 0.4.0: the values now follow the RumiCar library (Arduino RumiCar-lib, RumiCar.py for the Raspberry Pi): ToF as `RC_read` values (0–200 mm, −1 timeout, −3 out of range = nothing within 20 cm), steering as `RC_steer` LEFT=0 / CENTER=1 / RIGHT=2, drive as `RC_drive` FREE / REVERSE / FORWARD / BRAKE with a duty 0–255; logic interface ABI 3, control protocol 2, `core.json` keys `max_drive_pwm` / `auto_accel_pwm_per_s` / `kick_pwm`, `drive.py` written with the RumiCar library API. Not compatible with the 0.3.x PC application, recordings or self-built logic; recordings must be made again)
 - Future work: recording and tuning on real cars (overtaking and turning durations, learning intersection images), choosing the turn according to the situation (currently fixed per pack, or towards the detected side)
 
 ## License

@@ -1,11 +1,11 @@
 flowchart TD
-    R["Read a VL53L0X"] --> Q{"Measurement available within<br/>i2c.tof_read_timeout_ms?<br/>I2C communication OK?"}
-    Q -->|"No"| F["Read failure → −1<br/>display --, None in drive.py"]
-    Q -->|"Yes"| V{"Range ≥ 8190?"}
-    V -->|"Yes"| O["No target detected → 8190<br/>display open, car.FAR in drive.py<br/>(no reflected light, or received signal below the limit)"]
-    V -->|"No"| D["Range [mm]"]
-    D --> T{"tof_drive:<br/>at or above conf_max_mm (default 250)?"}
-    T -->|"Yes"| OPEN["tof_drive: open<br/>(no obstacle within the judged distance)"]
+    R["Read VL53L0X"] --> Q{"Measurement within<br/>i2c.tof_read_timeout_ms?<br/>I2C OK?"}
+    Q -->|"No"| F["Read failure → −1 (timeout)<br/>display -1 タイムアウト, RC_read() gives −1"]
+    Q -->|"Yes"| V{"Range beyond 200 mm?<br/>(including no target, 8190)"}
+    V -->|"Yes"| O["Out of range → −3<br/>display -3 範囲外, RC_read() gives −3<br/>(nothing within 20 cm; mounted this low, the beam<br/>tends to pick up the floor beyond that, so longer readings are not trusted)"]
+    V -->|"No"| D["Range 0..200 [mm]"]
+    D --> T{"tof_drive:<br/>≥ conf_max_mm (default 200)?"}
+    T -->|"Yes"| OPEN["tof_drive: open<br/>(no obstacle within the decision range)"]
     O --> OPEN
-    T -->|"No"| USE["tof_drive: used as a distance<br/>(median filter, exponential smoothing)"]
-    F --> HOLD["tof_drive: previous value held for invalid_hold_ms (default 300 ms)<br/>beyond that SENSOR_FAULT (stop)"]
+    T -->|"No"| USE["tof_drive: use as distance<br/>(median filter, exponential smoothing)"]
+    F --> HOLD["tof_drive: hold the previous value for invalid_hold_ms (default 300 ms)<br/>then SENSOR_FAULT (stop)"]

@@ -121,8 +121,9 @@ int py_step(void* inst, const rumi_sensor_frame* frame, rumi_command* out) {
     if (r.kind == Reply::Kind::Error) return 6;   // drive.py raised; the runner printed the traceback
 
     out->steer = r.steer;
-    out->drive_permille = r.drive;
-    out->flags = r.brake ? RUMI_CMD_FLAG_BRAKE : 0u;
+    out->drive_dir = r.drive_dir;
+    out->drive_pwm = r.drive_pwm;
+    out->flags = 0;
     out->state = in->state_id(r.state);
     return 0;
 }

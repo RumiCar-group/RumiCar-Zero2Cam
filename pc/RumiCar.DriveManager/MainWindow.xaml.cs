@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using RumiCar.Protocol;
 using RumiCar.Protocol.Control;
 using RumiCar.Protocol.Packs;
 using RumiCar.Protocol.Recording;
@@ -38,7 +39,7 @@ public partial class MainWindow : Window
     private readonly ManualInput _manual = new();
     private readonly DispatcherTimer _manualTimer = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(50) };
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
-    private (int Steer, int Drive)? _manualSent;   // last command the car accepted; null = send the next one in any case
+    private (int Steer, int DriveDir, int DrivePwm)? _manualSent;   // last command the car accepted; null = send the next one in any case
     private bool _manualSending;
     private bool _manualMode;
 
@@ -60,6 +61,7 @@ public partial class MainWindow : Window
     private bool _makingVideo;
     private string? _lastSessionDirectory;
     private uint _lastThrottled;
+    private bool _abiWarned;   // the car's telemetry is not ABI 3: said once per connection
     private JsonElement? _lastStatus;
     private List<string> _auxNames = new();
     // Detectors (by aux slot) that have reported cells: they say where (Local); the others judge the whole view (Global).
@@ -164,6 +166,7 @@ public partial class MainWindow : Window
             ConnectButton.Content = "切断";
             _lastStatus = null;
             _lastThrottled = 0;
+            _abiWarned = false;
             if (_vm.AutoRecord) StartRecording();   // default: every connection is recorded
             await RefreshWifiAsync();
             var wifi = _wifi;
@@ -326,13 +329,13 @@ public partial class MainWindow : Window
             try { _vm.AutoLimit = autoLimit; }
             finally { _applyingAutoLimit = false; }
             _vm.AutoLimitEnabled = _car is not null;
-            var max = data.TryGetProperty("max_drive_permille", out var mx) && mx.TryGetInt32(out var m) ? m : 1000;
-            _vm.AutoLimitNote = max < 1000 ? $"車の上限 {max / 10.0:F0}%（core.json の max_drive_permille）まで" : "本体の再起動で 100% に戻ります";
+            var max = data.TryGetProperty("max_drive_pwm", out var mx) && mx.TryGetInt32(out var m) ? m : RumiCarApi.PwmMax;
+            _vm.AutoLimitNote = max < RumiCarApi.PwmMax ? $"車の上限 {max}（core.json の max_drive_pwm）まで" : "本体の再起動で 255 に戻ります";
         }
         else if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("mode", out _) && !data.TryGetProperty("auto_limit", out _))
         {
             _vm.AutoLimitEnabled = false;
-            _vm.AutoLimitNote = "車の本体 0.3.0 以降で使用可";
+            _vm.AutoLimitNote = "車の本体 0.4.0 以降で使用可";
         }
     }
 
@@ -349,11 +352,11 @@ public partial class MainWindow : Window
             if (!r.Ok) { _vm.AddLog("自動の最大出力: 拒否 (" + r.Error + ")"); return; }
             if (r.Result is JsonElement res && res.TryGetProperty("auto_limit", out var v) && v.TryGetInt32(out var applied))
             {
-                _vm.AddLog($"自動の最大出力を {applied / 10.0:F0}% にしました");
+                _vm.AddLog($"自動の最大出力を {applied} にしました（RC_drive の値、255 = 100%）");
                 if (applied != _vm.AutoLimit && !_autoLimitTimer.IsEnabled)
                 {
                     _applyingAutoLimit = true;
-                    try { _vm.AutoLimit = applied; }   // clamped by the car (max_drive_permille)
+                    try { _vm.AutoLimit = applied; }   // clamped by the car (max_drive_pwm)
                     finally { _applyingAutoLimit = false; }
                 }
             }
@@ -464,24 +467,11 @@ public partial class MainWindow : Window
     };
 
     /// <summary>
-    /// Steering plus drive as direction and PWM duty: per mille shown as % and, in
-    /// brackets, on the Arduino analogWrite scale (0..255) used by RumiCar-lib.
+    /// Steering plus drive as the RumiCar library calls that would produce them:
+    /// RC_steer(LEFT) / RC_drive(FORWARD, 128).  The same words and numbers as in
+    /// an Arduino sketch, RasPi/RumiCar.py or drive.py.
     /// </summary>
-    private static string DescribeCommand(int steer, int drivePermille, bool brake)
-    {
-        var steering = steer < 0 ? "左" : steer > 0 ? "右" : "中央";
-        var drive = brake ? "ブレーキ"
-                  : drivePermille > 0 ? $"前進 {FormatDuty(drivePermille)}"
-                  : drivePermille < 0 ? $"後退 {FormatDuty(-drivePermille)}"
-                  : "停止";
-        return $"操舵 {steering} / {drive}";
-    }
-
-    private static string FormatDuty(int permille)
-    {
-        var scale255 = (int)Math.Round(permille * 255.0 / 1000.0, MidpointRounding.AwayFromZero);
-        return $"{permille / 10.0:F1}% ({scale255}/255)";
-    }
+    private static string DescribeCommand(int steer, int driveDir, int drivePwm) => RumiCarApi.CommandText(steer, driveDir, drivePwm);
 
     private void SetMode(string mode)
     {
@@ -544,10 +534,15 @@ public partial class MainWindow : Window
         _vm.Frames = Volatile.Read(ref _framesReceived).ToString();
         _vm.Images = Volatile.Read(ref _imagesReceived).ToString();
         var h = frame.Header;
+        if (h.Abi != RumiCarApi.Abi && !_abiWarned)
+        {
+            _abiWarned = true;
+            _vm.AddLog($"警告：車の送るデータの形式（ABI {h.Abi}）がこのアプリ（ABI {RumiCarApi.Abi}：ToF 0〜200 / -1 / -3、RC_steer・RC_drive の値）と異なります。表示と収録の値は正しくありません");
+        }
         _vm.Tof = $"{FormatTof(h.TofMm[0])} / {FormatTof(h.TofMm[1])} / {FormatTof(h.TofMm[2])}";
         _vm.LogicState = h.StateName.Length > 0 ? FormatState(h.StateName) : h.State.ToString();
-        _vm.Command = DescribeCommand(h.Steer, h.DrivePermille, h.Brake);
-        _vm.LogicCommand = DescribeCommand(h.LogicSteer, h.LogicDrivePermille, (h.Flags & 0x3) != 0);   // BRAKE or FAULT flag
+        _vm.Command = DescribeCommand(h.Steer, h.DriveDir, h.DrivePwm);
+        _vm.LogicCommand = DescribeCommand(h.LogicSteer, (h.Flags & 0x2) != 0 ? RumiCarApi.Brake : h.LogicDriveDir, h.LogicDrivePwm);   // FAULT flag: braked
         if (h.Mode.Length > 0 && h.Mode != _vm.Mode) SetMode(h.Mode);
         var estopText = h.EStop ? "作動中" : "なし";
         if (!_vm.EStop.StartsWith(estopText, StringComparison.Ordinal)) _vm.EStop = estopText;
@@ -657,7 +652,8 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string FormatTof(int mm) => mm < 0 ? "--" : mm >= 8190 ? "open" : mm.ToString();
+    /// <summary>RC_read values: the distance, or the code with its meaning (-1 タイムアウト, -3 範囲外).</summary>
+    private static string FormatTof(int mm) => RumiCarApi.TofText(mm);
 
     /// <summary>"SIGNAL_STOP（赤信号で停止）" for the states of the shipped logics, the bare name for others.</summary>
     private static string FormatState(string name)
@@ -792,10 +788,10 @@ public partial class MainWindow : Window
     private void StopManual(string? why)
     {
         if (!_manualMode) return;
-        var (_, drive, _) = _manual.Command(_clock.ElapsedMilliseconds);
+        var moving = _manual.Command(_clock.ElapsedMilliseconds).DrivePwm != 0;
         _manual.Stop();
         DrivePad.ReleaseMouseCapture();
-        if (why is not null && drive != 0) _vm.AddLog("手動操作: " + why);
+        if (why is not null && moving) _vm.AddLog("手動操作: " + why);
         ManualTick();
     }
 
@@ -807,40 +803,41 @@ public partial class MainWindow : Window
             DrawPad(0, 0, false);
             return;
         }
-        var (steer, drive, source) = _manual.Command(_clock.ElapsedMilliseconds);
-        var how = source switch
+        var cmd = _manual.Command(_clock.ElapsedMilliseconds);
+        var how = cmd.Source switch
         {
             ManualSource.Pad => "パッド",
             ManualSource.Keys => "キー",
             ManualSource.Scroll => "スクロール",
             _ => "",
         };
-        var setPoint = _manual.SetPoint != 0 && source != ManualSource.Pad ? $"　設定速度 {_manual.SetPoint / 10.0:F0}%" : "";
-        _vm.ManualStatus = DescribeCommand(steer, drive, false) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
-        DrawPad(steer, drive, true);
-        if (_manualSent == (steer, drive) || _manualSending) return;
-        _ = SendManualAsync(steer, drive);
+        var setPoint = _manual.SetPoint != 0 && cmd.Source != ManualSource.Pad ? $"　設定速度 {_manual.SetPoint}" : "";
+        _vm.ManualStatus = DescribeCommand(cmd.Steer, cmd.DriveDir, cmd.DrivePwm) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
+        DrawPad(cmd.SignedSteer, cmd.SignedDrive, true);
+        var key = (cmd.Steer, cmd.DriveDir, cmd.DrivePwm);
+        if (_manualSent == key || _manualSending) return;
+        _ = SendManualAsync(cmd.Steer, cmd.DriveDir, cmd.DrivePwm);
     }
 
-    private async Task SendManualAsync(int steer, int drive)
+    private async Task SendManualAsync(int steer, int driveDir, int drivePwm)
     {
         var car = _car;
         if (car is null) return;
         _manualSending = true;
         try
         {
-            var r = await car.RequestAsync(ControlCodec.ManualDrive(car.NextId(), steer, drive), CancellationToken.None);
-            if (r.Ok) _manualSent = (steer, drive);
+            var r = await car.RequestAsync(ControlCodec.ManualDrive(car.NextId(), steer, driveDir, drivePwm), CancellationToken.None);
+            if (r.Ok) _manualSent = (steer, driveDir, drivePwm);
             else
             {
                 _vm.AddLog("手動操作: 拒否 (" + r.Error + ")");
-                _manualSent = (steer, drive);   // not again until the command changes
+                _manualSent = (steer, driveDir, drivePwm);   // not again until the command changes
             }
         }
         catch (Exception ex)
         {
             _vm.AddLog("手動操作の送信失敗: " + ex.Message);
-            _manualSent = (steer, drive);
+            _manualSent = (steer, driveDir, drivePwm);
         }
         finally
         {

@@ -35,7 +35,7 @@ PwmChannel::PwmChannel(const std::string& chip_path, unsigned channel, int frequ
     write("duty_cycle", 0);
     write("period", period_ns_);
     write("enable", 1);
-    last_permille_ = 0;
+    last_pwm_ = 0;
 }
 
 PwmChannel::~PwmChannel() {
@@ -47,11 +47,11 @@ PwmChannel::~PwmChannel() {
     }
 }
 
-void PwmChannel::set_duty_permille(int permille) {
-    permille = std::clamp(permille, 0, 1000);
-    if (permille == last_permille_) return;
-    write("duty_cycle", (period_ns_ * permille) / 1000);
-    last_permille_ = permille;
+void PwmChannel::set_duty(int pwm) {
+    pwm = std::clamp(pwm, 0, 255);
+    if (pwm == last_pwm_) return;
+    write("duty_cycle", (period_ns_ * pwm) / 255);
+    last_pwm_ = pwm;
 }
 
 void PwmChannel::write(const std::string& file, long value) const {
