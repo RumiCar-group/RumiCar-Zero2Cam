@@ -22,18 +22,18 @@ std::string validate(const Params& p) {
     if (p.median_window != 1 && p.median_window != 3 && p.median_window != 5)
         return "median_window must be 1, 3 or 5";
     if (!(p.ema_alpha > 0.0 && p.ema_alpha <= 1.0)) return "ema_alpha must be in (0, 1]";
-    if (p.conf_max_mm <= 0 || p.conf_max_mm >= TofDriveLogic::OPEN_MM) return "conf_max_mm out of range";
+    if (p.conf_max_mm <= 0 || p.conf_max_mm > RUMI_TOF_MAX_MM) return "conf_max_mm must be 1..200 (RC_read returns -3 beyond 200 mm)";
     if (p.invalid_hold_ms < 0 || p.invalid_hold_ms > 5000) return "invalid_hold_ms out of range";
 
     if (!(p.d_emergency_mm > 0 && p.d_emergency_mm < p.d_min_mm && p.d_min_mm < p.d_max_mm))
         return "require 0 < d_emergency_mm < d_min_mm < d_max_mm";
     if (p.d_max_mm > p.conf_max_mm) return "d_max_mm must not exceed conf_max_mm";
-    if (!between(p.v_min, 0, RUMI_DRIVE_MAX) || !between(p.v_max, 0, RUMI_DRIVE_MAX) || p.v_min > p.v_max)
-        return "require 0 <= v_min <= v_max <= 1000";
-    if (!between(p.v_turn_cap, 0, RUMI_DRIVE_MAX)) return "v_turn_cap out of range";
-    if (!between(p.v_reverse, 0, RUMI_DRIVE_MAX)) return "v_reverse out of range";
-    if (p.accel_permille_per_s <= 0 || p.decel_permille_per_s <= 0) return "accel/decel must be positive";
-    if (p.decel_permille_per_s < p.accel_permille_per_s) return "decel must be at least accel";
+    if (!between(p.v_min, 0, RUMI_PWM_MAX) || !between(p.v_max, 0, RUMI_PWM_MAX) || p.v_min > p.v_max)
+        return "require 0 <= v_min <= v_max <= 255";
+    if (!between(p.v_turn_cap, 0, RUMI_PWM_MAX)) return "v_turn_cap out of range";
+    if (!between(p.v_reverse, 0, RUMI_PWM_MAX)) return "v_reverse out of range";
+    if (p.accel_pwm_per_s <= 0 || p.decel_pwm_per_s <= 0) return "accel/decel must be positive";
+    if (p.decel_pwm_per_s < p.accel_pwm_per_s) return "decel must be at least accel";
     if (!(p.ttc_slow_s >= 0.0 && p.ttc_slow_s <= 5.0)) return "ttc_slow_s out of range";
 
     if (!(p.d_turn_enter_mm > p.d_emergency_mm && p.d_turn_enter_mm < p.d_turn_exit_mm))
@@ -47,7 +47,7 @@ std::string validate(const Params& p) {
     if (p.reverse_ms < 200 || p.reverse_ms > 5000) return "reverse_ms must be 200..5000";
     if (p.stuck_time_ms < 500 || p.stuck_time_ms > 10000) return "stuck_time_ms must be 500..10000";
     if (p.stuck_delta_mm < 0) return "stuck_delta_mm must be >= 0";
-    if (!between(p.stuck_min_drive, 0, RUMI_DRIVE_MAX)) return "stuck_min_drive out of range";
+    if (!between(p.stuck_min_drive, 0, RUMI_PWM_MAX)) return "stuck_min_drive out of range";
     return {};
 }
 
@@ -67,6 +67,8 @@ TofDriveLogic::TofDriveLogic(const Params& p) : p_(p) {}
 
 // ---------------------------------------------------------------------------
 // Sensor conditioning: raw -> (open / distance) -> median -> EMA -> filt_
+// raw is an RC_read value: 0..200 mm, -3 = nothing within 20 cm (open),
+// -1 = no reading (hold the last value, then flag missing).
 // ---------------------------------------------------------------------------
 int TofDriveLogic::median(const Sensor& s, int window) {
     const size_t n = static_cast<size_t>(std::clamp(std::min(s.count, window), 1, 5));
@@ -89,7 +91,7 @@ int TofDriveLogic::median(const Sensor& s, int window) {
 void TofDriveLogic::condition(int idx, int32_t raw, uint64_t t_us) {
     Sensor& s = sens_[static_cast<size_t>(idx)];
 
-    if (raw < 0) {
+    if (raw < 0 && raw != RUMI_TOF_OUT_OF_RANGE) {
         // No reading.  Hold the last value for a limited time, then flag missing.
         if (!s.have_valid || (t_us - s.last_valid_us) > ms_to_us(p_.invalid_hold_ms)) {
             s.missing = true;
@@ -98,7 +100,7 @@ void TofDriveLogic::condition(int idx, int32_t raw, uint64_t t_us) {
         return;
     }
 
-    const int sample = (raw >= p_.conf_max_mm) ? OPEN_MM : raw;
+    const int sample = (raw == RUMI_TOF_OUT_OF_RANGE || raw >= p_.conf_max_mm) ? OPEN_MM : raw;
     s.ring[static_cast<size_t>(s.head)] = sample;
     s.head = (s.head + 1) % 5;
     if (s.count < 5) ++s.count;
@@ -128,7 +130,7 @@ void TofDriveLogic::decide_steer(int L, int C, int R, uint64_t t_us) {
     else if (C < p_.d_turn_enter_mm) turning_ = true;
     else if (C > p_.d_turn_exit_mm) turning_ = false;
 
-    int8_t desired;
+    uint8_t desired;
     if (steer_mode_ == SteerMode::Force) {
         desired = forced_steer_;
     } else if (turning_) {
@@ -187,7 +189,7 @@ void TofDriveLogic::rate_limit(int target, double dt) {
     // the (fast) deceleration rate.
     const double tgt = static_cast<double>(target);
     const bool growing_forward = tgt > 0.0 && drive_ >= 0.0 && tgt > drive_;
-    const double rate = (growing_forward ? p_.accel_permille_per_s : p_.decel_permille_per_s) * dt;
+    const double rate = (growing_forward ? p_.accel_pwm_per_s : p_.decel_pwm_per_s) * dt;
     const double delta  = std::clamp(tgt - drive_, -rate, rate);
     drive_ += delta;
 }
@@ -245,7 +247,7 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
     switch (state_) {
     case State::SensorFault:
         immediate_stop = true;
-        flags |= RUMI_CMD_FLAG_FAULT | RUMI_CMD_FLAG_BRAKE;
+        flags |= RUMI_CMD_FLAG_FAULT;
         break;
 
     case State::Cruise:
@@ -254,7 +256,6 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
         if (C < p_.d_emergency_mm) {
             enter(State::EmergencyBrake, t);
             immediate_stop = true;
-            flags |= RUMI_CMD_FLAG_BRAKE;
             stuck_tracking_ = false;
             break;
         }
@@ -275,7 +276,7 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
             stuck_tracking_ = false;
             recover_steer_ = (L > R + p_.side_deadband_mm) ? RUMI_STEER_RIGHT
                            : (R > L + p_.side_deadband_mm) ? RUMI_STEER_LEFT
-                           : (last_turn_dir_ == RUMI_STEER_LEFT ? RUMI_STEER_RIGHT : RUMI_STEER_LEFT);
+                           : other_side(last_turn_dir_);
             enter(State::RecoverReverse, t);
             steer_ = recover_steer_;
             steer_since_us_ = t;
@@ -292,7 +293,6 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
 
     case State::EmergencyBrake: {
         immediate_stop = true;
-        flags |= RUMI_CMD_FLAG_BRAKE;
         if ((t - state_since_us_) >= ms_to_us(p_.brake_ms)) {
             if (C >= p_.d_min_mm) {
                 enter(State::Cruise, t);
@@ -301,13 +301,12 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
                 // Reverse with the wheels turned away from the open side so the nose swings towards it.
                 recover_steer_ = (L > R + p_.side_deadband_mm) ? RUMI_STEER_RIGHT
                                : (R > L + p_.side_deadband_mm) ? RUMI_STEER_LEFT
-                               : (last_turn_dir_ == RUMI_STEER_LEFT ? RUMI_STEER_RIGHT : RUMI_STEER_LEFT);
+                               : other_side(last_turn_dir_);
                 enter(State::RecoverReverse, t);
                 steer_ = recover_steer_;
                 steer_since_us_ = t;
                 immediate_stop = false;
                 target = -p_.v_reverse;
-                flags = 0;
             }
         }
         break;
@@ -331,16 +330,31 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
     }
 
     // --- output --------------------------------------------------------------
+    // RC_drive form: an immediate stop is BRAKE (both inputs high); otherwise
+    // the signed, rate-limited duty becomes FORWARD / REVERSE with its
+    // magnitude, and 0 is FREE (coast).
     if (immediate_stop) {
         drive_ = 0.0;
     } else {
         rate_limit(target, dt);
     }
+    const int duty = std::clamp(static_cast<int>(std::lround(drive_)), -RUMI_PWM_MAX, RUMI_PWM_MAX);
 
     out.size = sizeof(rumi_command);
     out.steer = steer_;
-    out.drive_permille = static_cast<int16_t>(std::clamp(static_cast<int>(std::lround(drive_)),
-                                                         RUMI_DRIVE_MIN, RUMI_DRIVE_MAX));
+    if (immediate_stop) {
+        out.drive_dir = RUMI_DRIVE_BRAKE;
+        out.drive_pwm = 0;
+    } else if (duty > 0) {
+        out.drive_dir = RUMI_DRIVE_FORWARD;
+        out.drive_pwm = static_cast<uint8_t>(duty);
+    } else if (duty < 0) {
+        out.drive_dir = RUMI_DRIVE_REVERSE;
+        out.drive_pwm = static_cast<uint8_t>(-duty);
+    } else {
+        out.drive_dir = RUMI_DRIVE_FREE;
+        out.drive_pwm = 0;
+    }
     out.state = static_cast<uint8_t>(state_);
     out.flags = flags;
     out.aux_format = 0;

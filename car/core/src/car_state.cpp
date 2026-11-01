@@ -1,5 +1,7 @@
 #include "car_state.hpp"
 
+#include "rumicar/logic_api.h"
+
 #include <algorithm>
 
 namespace rumicar {
@@ -47,8 +49,9 @@ void CarState::set_mode(DriveMode m, Clock::time_point now) {
         mode_ = m;
         // Entering any mode resets the manual command; the set_mode request
         // itself counts as a heartbeat so manual driving can start at once.
-        manual_steer_ = 0;
-        manual_drive_ = 0;
+        manual_steer_ = RUMI_STEER_CENTER;
+        manual_drive_dir_ = RUMI_DRIVE_FREE;
+        manual_drive_pwm_ = 0;
         last_heartbeat_ = now;
     }
     emit_status();
@@ -65,8 +68,9 @@ bool CarState::set_estop(bool active, const std::string& reason) {
         if (estop_ == active) return false;
         estop_ = active;
         estop_reason_ = active ? reason : "";
-        manual_steer_ = 0;
-        manual_drive_ = 0;
+        manual_steer_ = RUMI_STEER_CENTER;
+        manual_drive_dir_ = RUMI_DRIVE_FREE;
+        manual_drive_pwm_ = 0;
     }
     emit("estop", json{{"active", active}, {"reason", reason}});
     emit_status();
@@ -79,11 +83,12 @@ bool CarState::estop(std::string* reason) const {
     return estop_;
 }
 
-bool CarState::set_manual(int8_t steer, int drive_permille) {
+bool CarState::set_manual(uint8_t steer, uint8_t drive_dir, uint8_t drive_pwm) {
     std::lock_guard<std::mutex> lock(m_);
     if (mode_ != DriveMode::Manual) return false;
     manual_steer_ = steer;
-    manual_drive_ = drive_permille;
+    manual_drive_dir_ = drive_dir;
+    manual_drive_pwm_ = drive_pwm;
     return true;
 }
 
@@ -102,16 +107,16 @@ bool CarState::client_is_connected() const {
     return client_connected_;
 }
 
-void CarState::set_max_drive(int permille) {
+void CarState::set_max_drive(int pwm) {
     std::lock_guard<std::mutex> lock(m_);
-    max_drive_ = std::clamp(permille, 0, 1000);
+    max_drive_ = std::clamp(pwm, 0, RUMI_PWM_MAX);
     auto_limit_ = max_drive_;
 }
 
-bool CarState::set_auto_limit(int permille) {
+bool CarState::set_auto_limit(int pwm) {
     {
         std::lock_guard<std::mutex> lock(m_);
-        const int v = std::clamp(permille, 0, max_drive_);
+        const int v = std::clamp(pwm, 0, max_drive_);
         if (v == auto_limit_) return false;
         auto_limit_ = v;
     }
@@ -130,7 +135,8 @@ CarState::FrameInputs CarState::frame_inputs(Clock::time_point now) const {
     in.mode = mode_;
     in.estop = estop_;
     in.manual_steer = manual_steer_;
-    in.manual_drive = manual_drive_;
+    in.manual_drive_dir = manual_drive_dir_;
+    in.manual_drive_pwm = manual_drive_pwm_;
     in.manual_timed_out = mode_ == DriveMode::Manual && (now - last_heartbeat_) > heartbeat_timeout_;
     in.auto_limit = auto_limit_;
     return in;
@@ -181,7 +187,7 @@ json CarState::status_json() const {
         {"battery_mv", 0},
         {"throttled", throttled_},
         {"auto_limit", auto_limit_},
-        {"max_drive_permille", max_drive_},
+        {"max_drive_pwm", max_drive_},
     };
 }
 

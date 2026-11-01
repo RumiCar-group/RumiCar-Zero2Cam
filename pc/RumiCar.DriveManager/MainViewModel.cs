@@ -4,6 +4,7 @@ using System.IO;   // WPF projects do not get System.IO from implicit usings (Sy
 using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
 using RumiCar.Protocol;
+using RumiCar.Protocol.Control;
 
 namespace RumiCar.DriveManager;
 
@@ -154,11 +155,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _pushStatus = "-";
     private VersionRow? _selectedVersion;
     private BitmapImage? _image;
-    private int _manualMaxDrive = 600;
+    private int _manualMaxDrive = 153;
     private bool _invertHorizontal;
     private bool _manualEnabled;
     private string _manualStatus = "手動モードで操作可能";
-    private int _autoLimit = 1000;
+    private int _autoLimit = RumiCarApi.PwmMax;
     private bool _autoLimitEnabled;
     private string _autoLimitNote = "接続時に車の設定値を取得します";
     private string _pcWifi = "PC の Wi-Fi: -";
@@ -219,13 +220,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<VersionRow> InstalledVersions { get; } = new();
     public BitmapImage? Image { get => _image; set => Set(ref _image, value); }
 
-    /// <summary>Upper limit of the manual drive (per mille) for the pad, the scroll and the ↑ ↓ keys.</summary>
+    /// <summary>Upper limit of the manual drive (RC_drive duty 0..255) for the pad, the scroll and the ↑ ↓ keys.</summary>
     public int ManualMaxDrive
     {
         get => _manualMaxDrive;
-        set { if (Set(ref _manualMaxDrive, Math.Clamp(value, 100, 1000))) OnPropertyChanged(nameof(ManualMaxDriveText)); }
+        set { if (Set(ref _manualMaxDrive, Math.Clamp(value, ManualInput.MinMaxDrive, RumiCarApi.PwmMax))) OnPropertyChanged(nameof(ManualMaxDriveText)); }
     }
-    public string ManualMaxDriveText => $"{_manualMaxDrive / 10.0:F0}%";
+    public string ManualMaxDriveText => $"{_manualMaxDrive}";
     /// <summary>Reverse the horizontal scroll (touchpads set to the other scrolling direction).</summary>
     public bool InvertHorizontal { get => _invertHorizontal; set => Set(ref _invertHorizontal, value); }
     /// <summary>The car is connected and in manual mode: the pad and the keys drive.</summary>
@@ -233,13 +234,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public System.Windows.Visibility ManualHintVisibility => _manualEnabled ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
     /// <summary>The manual command being sent, in words.</summary>
     public string ManualStatus { get => _manualStatus; set => Set(ref _manualStatus, value); }
-    /// <summary>Cap of the drive in auto mode (per mille), as the car reports it; the slider changes it (set_auto_limit).</summary>
+    /// <summary>Cap of the drive in auto mode (RC_drive duty 0..255), as the car reports it; the slider changes it (set_auto_limit).</summary>
     public int AutoLimit
     {
         get => _autoLimit;
-        set { if (Set(ref _autoLimit, Math.Clamp(value, 0, 1000))) OnPropertyChanged(nameof(AutoLimitText)); }
+        set { if (Set(ref _autoLimit, Math.Clamp(value, 0, RumiCarApi.PwmMax))) OnPropertyChanged(nameof(AutoLimitText)); }
     }
-    public string AutoLimitText => $"{_autoLimit / 10.0:F0}%";
+    public string AutoLimitText => $"{_autoLimit}";
     /// <summary>Connected to a car that knows set_auto_limit (core 0.3.0 and later).</summary>
     public bool AutoLimitEnabled { get => _autoLimitEnabled; set => Set(ref _autoLimitEnabled, value); }
     public string AutoLimitNote { get => _autoLimitNote; set => Set(ref _autoLimitNote, value); }

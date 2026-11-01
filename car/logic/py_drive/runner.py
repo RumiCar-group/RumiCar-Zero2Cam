@@ -5,15 +5,22 @@ Started by the py_drive plug-in as `python3 -I -B -u runner.py <pack dir>`;
 it talks to the plug-in over its standard input/output, one line per frame
 (docs 3.12).  What drive.py prints goes to the core's log.
 
-drive.py (written by the user) defines
+drive.py (written by the user) uses the RumiCar library API, the same as the
+Arduino library RumiCar-lib and RasPi/RumiCar.py of RumiCar-group/RumiCar:
 
-    def setup(car):      # optional: once, when the program starts
-        ...
-    def loop(car):       # every frame (20 times a second)
-        ...
+    from RumiCar import *
 
-and uses the `car` object below.  The values set with steer() / drive()
-stay until they are changed, as in an Arduino sketch.
+    def setup():         # optional: once, when the program starts
+        RC_setup()
+    def loop():          # every frame (20 times a second)
+        d = RC_read(CENTER)        # 0..200 mm, -1 timeout, -3 nothing within 20 cm
+        RC_steer(LEFT)             # LEFT / CENTER / RIGHT
+        RC_drive(FORWARD, 150)     # FREE / REVERSE / FORWARD / BRAKE, 0..255
+
+The RumiCar module is provided by this runner (the car's hardware is owned by
+the core): RC_read returns the frame's sensor values, RC_steer / RC_drive set
+the command for the frame, RC_setup does nothing.  The values set with
+RC_steer / RC_drive stay until they are changed, as in an Arduino sketch.
 Standard library only.
 """
 import importlib.util
@@ -22,77 +29,106 @@ import os
 import sys
 import time
 import traceback
+import types
 
-FAR = 8190            # a distance sensor that sees nothing within its range
-LEFT, CENTER, RIGHT = -1, 0, 1
-_STEER_NAMES = {"left": LEFT, "center": CENTER, "centre": CENTER, "right": RIGHT}
+LEFT, CENTER, RIGHT, REAR = 0, 1, 2, 3
+FREE, REVERSE, FORWARD, BRAKE = 0, 1, 2, 3
+PWM_MAX = 255
+
+_warned = set()          # messages already written to the log (one line each, not every frame)
 
 
-class DriveError(Exception):
-    """A wrong value given to the car object (shown with the line in drive.py)."""
+def _warn(key, message):
+    if key not in _warned:
+        _warned.add(key)
+        print("drive.py: " + message, file=sys.stderr, flush=True)
 
 
-class Car:
-    """What drive.py sees.  Distances in millimetres; drive in per mille (1000 = 100 %)."""
-
-    LEFT = LEFT
-    CENTER = CENTER
-    RIGHT = RIGHT
-    FAR = FAR
+class _Car:
+    """The frame's sensor values and the command drive.py builds with RC_*."""
 
     def __init__(self, params):
-        self.params = params        # params.json of the pack (the program's own settings)
-        self.left = FAR             # distance sensors: mm, FAR = nothing near, None = no reading
-        self.center = FAR
-        self.right = FAR
-        self.time = 0.0             # seconds since the program started
-        self.dt = 0.0               # seconds since the previous frame
-        self.frame = 0              # frame counter
-        self._steer = CENTER
-        self._drive = 0
-        self._brake = False
-        self._state = "-"
+        self.params = params
+        self.tof = [-1, -1, -1]        # LEFT, CENTER, RIGHT (RC_read values)
+        self.steer = CENTER
+        self.drive_dir = FREE
+        self.drive_pwm = 0
+        self.state = "-"
 
-    @property
-    def tof(self):
-        """(left, center, right) in mm."""
-        return (self.left, self.center, self.right)
 
-    def steer(self, direction):
-        """Steering: car.LEFT / car.CENTER / car.RIGHT (or -1 / 0 / 1, or "left" / "center" / "right")."""
-        if isinstance(direction, str):
-            if direction.lower() not in _STEER_NAMES:
-                raise DriveError(f"steer() に {direction!r} は使用不可（\"left\" / \"center\" / \"right\"）")
-            direction = _STEER_NAMES[direction.lower()]
-        if isinstance(direction, bool) or direction not in (LEFT, CENTER, RIGHT):
-            raise DriveError(f"steer() に {direction!r} は使用不可（car.LEFT / car.CENTER / car.RIGHT）")
-        self._steer = int(direction)
+_car = None
 
-    def drive(self, permille):
-        """Drive motor: -1000 (full reverse) .. 0 (stop) .. 1000 (full forward)."""
-        if isinstance(permille, bool) or not isinstance(permille, (int, float)):
-            raise DriveError(f"drive() の引数は数値です（{permille!r} は使用不可）")
-        if not -1000 <= permille <= 1000:
-            raise DriveError(f"drive() の引数の範囲は -1000〜1000 です（{permille} は範囲外）")
-        self._drive = int(round(permille))
-        self._brake = False
 
-    def stop(self):
-        """Drive 0 (the motor coasts)."""
-        self._drive = 0
-        self._brake = False
+def RC_setup():
+    """RumiCar のセンサとモータの初期化 (Zero2Cam では本体が行う: 何もしない)"""
+    return None
 
-    def brake(self):
-        """Brake the drive motor (stays until drive() is called)."""
-        self._drive = 0
-        self._brake = True
 
-    def state(self, name):
-        """A name for what the program is doing now, shown as 判断状態 on the PC (letters, digits, _)."""
-        name = str(name).strip().upper().replace(" ", "_")
-        if not name or len(name) > 24 or not all(c.isalnum() or c == "_" for c in name) or not name.isascii():
-            raise DriveError(f"state() の名前は英数字と _ で 24 文字までです（{name!r}）")
-        self._state = name
+def RC_steer(direc):
+    """操舵の関数: LEFT / CENTER / RIGHT.  Returns 1, or 0 for a bad argument."""
+    if direc is True or direc is False or direc not in (LEFT, CENTER, RIGHT):
+        _warn(("steer", repr(direc)), "RC_steer(%r): not LEFT / CENTER / RIGHT; ignored" % (direc,))
+        return 0
+    _car.steer = int(direc)
+    return 1
+
+
+def RC_drive(direc, ipwm):
+    """走行の関数: FREE / REVERSE / FORWARD / BRAKE, ipwm 0..255.  Returns 1, or 0 for a bad direction."""
+    if direc is True or direc is False or direc not in (FREE, REVERSE, FORWARD, BRAKE):
+        _warn(("drive", repr(direc)), "RC_drive(%r, ...): not FREE / REVERSE / FORWARD / BRAKE; ignored" % (direc,))
+        return 0
+    try:
+        ipwm = int(ipwm)
+    except (TypeError, ValueError):
+        _warn(("pwm", repr(ipwm)), "RC_drive(..., %r): the value must be a number 0..255; 0 used" % (ipwm,))
+        ipwm = 0
+    if ipwm < 0:
+        ipwm = 0
+    if ipwm > PWM_MAX:
+        ipwm = PWM_MAX
+    _car.drive_dir = int(direc)
+    _car.drive_pwm = ipwm
+    return 1
+
+
+def RC_read(direc):
+    """測距の関数: LEFT / CENTER / RIGHT / REAR.
+    0..200 = mm, -1 = タイムアウト (REAR: この車には無い), -2 = 引数エラー, -3 = 範囲外 (20 cm 以内に何もない)"""
+    if direc is True or direc is False:
+        return -2
+    if direc in (LEFT, CENTER, RIGHT):
+        return _car.tof[direc]
+    if direc == REAR:
+        return -1
+    return -2
+
+
+def RC_params():
+    """params.json of the pack as a dict ({} when there is none)."""
+    return _car.params
+
+
+def RC_state(name):
+    """Name of what the program is doing now (letters, digits and _, up to 24),
+    shown as 判断状態 on the PC.  Returns 1, or 0 for an invalid name."""
+    name = str(name).strip().upper().replace(" ", "_")
+    if not name or len(name) > 24 or not name.isascii() or not all(c.isalnum() or c == "_" for c in name):
+        _warn(("state", name), "RC_state(%r): use letters, digits and _ (up to 24); ignored" % (name,))
+        return 0
+    _car.state = name
+    return 1
+
+
+def _make_module():
+    """The `RumiCar` module drive.py imports (`from RumiCar import *`)."""
+    m = types.ModuleType("RumiCar")
+    for name in ("LEFT", "CENTER", "RIGHT", "REAR", "FREE", "REVERSE", "FORWARD", "BRAKE",
+                 "RC_setup", "RC_steer", "RC_drive", "RC_read", "RC_params", "RC_state"):
+        setattr(m, name, globals()[name])
+    m.__all__ = ["LEFT", "CENTER", "RIGHT", "REAR", "FREE", "REVERSE", "FORWARD", "BRAKE",
+                 "RC_setup", "RC_steer", "RC_drive", "RC_read", "RC_params", "RC_state"]
+    return m
 
 
 def _where(exc):
@@ -104,14 +140,8 @@ def _where(exc):
     return "drive.py"
 
 
-def _distance(text):
-    v = int(text)
-    if v < 0:
-        return None          # the sensor gave no reading
-    return v
-
-
 def main():
+    global _car
     if len(sys.argv) != 2:
         print("usage: runner.py <pack dir>", file=sys.stderr)
         return 2
@@ -134,18 +164,19 @@ def main():
             with open(params_path, encoding="utf-8") as f:
                 params = json.load(f)
             if not isinstance(params, dict):
-                raise DriveError("params.json は JSON オブジェクト（{ ... }、名前と値の組）で記述してください")
+                raise ValueError("params.json は JSON オブジェクト（{ ... }、名前と値の組）で記述してください")
+        _car = _Car(params)
+        sys.modules["RumiCar"] = _make_module()
         sys.path.insert(0, pack_dir)          # drive.py may import its own modules from the pack
         spec = importlib.util.spec_from_file_location("drive", os.path.join(pack_dir, "drive.py"))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         loop = getattr(module, "loop", None)
         if not callable(loop):
-            raise DriveError("drive.py に def loop(car): がありません")
+            raise ValueError("drive.py に def loop(): がありません（Zero2Cam では 1 フレームごとに loop() が呼ばれます）")
         setup = getattr(module, "setup", None)
-        car = Car(params)
         if callable(setup):
-            setup(car)
+            setup()
     except SyntaxError as e:
         traceback.print_exc()
         reply(f"ERROR drive.py の {e.lineno} 行目に構文エラーがあります: {e.msg}")
@@ -163,7 +194,6 @@ def main():
     # --- one line per frame -------------------------------------------------------------------------------
     last_error = ""
     last_error_time = -1e9
-    prev_t = None
     while True:
         raw = proto_in.readline()
         if not raw:
@@ -178,14 +208,9 @@ def main():
             continue
         seq = parts[1]
         try:
-            t_s = float(parts[2]) / 1000.0
-            car.left, car.center, car.right = (_distance(p) for p in parts[3:6])
-            car.dt = 0.0 if prev_t is None else t_s - prev_t
-            prev_t = t_s
-            car.time = t_s
-            car.frame += 1
-            loop(car)
-            reply(f"C {seq} {car._steer} {car._drive} {1 if car._brake else 0} {car._state}")
+            _car.tof = [int(p) for p in parts[3:6]]
+            loop()
+            reply(f"C {seq} {_car.steer} {_car.drive_dir} {_car.drive_pwm} {_car.state}")
         except Exception as e:   # noqa: BLE001 — the frame brakes; the program keeps running
             message = f"{_where(e)}: {type(e).__name__}: {e}".replace("\n", " ")
             # The same error every frame would flood the log: print it again only after 5 s.

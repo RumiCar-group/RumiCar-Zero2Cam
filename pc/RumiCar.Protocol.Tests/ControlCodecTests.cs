@@ -9,7 +9,7 @@ public class ControlCodecTests
     [Fact]
     public void RequestRoundTripsThroughOneLine()
     {
-        var req = ControlCodec.ManualDrive(42, -1, 350);
+        var req = ControlCodec.ManualDrive(42, RumiCarApi.Left, RumiCarApi.Forward, 89);
         var line = ControlCodec.Encode(req);
         Assert.DoesNotContain("\n", line);
         Assert.True(ControlCodec.TryDecode(line, out var decoded));
@@ -18,8 +18,10 @@ public class ControlCodecTests
         Assert.Equal(RequestType.ManualDrive, back.Type);
         var p = back.Params;
         Assert.NotNull(p);
-        Assert.Equal(-1, p!["steer"].GetInt32());
-        Assert.Equal(350, p["drive_permille"].GetInt32());
+        Assert.Equal(0, p!["steer"].GetInt32());          // RC_steer LEFT
+        Assert.Equal(2, p["drive_dir"].GetInt32());       // RC_drive FORWARD
+        Assert.Equal(89, p["drive_pwm"].GetInt32());
+        Assert.False(p.ContainsKey("drive_permille"));
     }
 
     [Fact]
@@ -52,8 +54,12 @@ public class ControlCodecTests
     [Fact]
     public void BuildersValidateArguments()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.ManualDrive(1, 2, 0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.ManualDrive(1, 0, 1001));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.ManualDrive(1, 3, RumiCarApi.Free, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.ManualDrive(1, -1, RumiCarApi.Free, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.ManualDrive(1, RumiCarApi.Center, 4, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.ManualDrive(1, RumiCarApi.Center, RumiCarApi.Forward, 256));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.ManualDrive(1, RumiCarApi.Center, RumiCarApi.Forward, -1));
+        Assert.Equal(2, ControlProtocol.Version);
         Assert.Throws<ArgumentException>(() => ControlCodec.Activate(1, "firmware", "x"));
         Assert.Throws<ArgumentException>(() => ControlCodec.Activate(1, "pack", "../etc"));
         Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetWifi(1, "RumiCar", 14));

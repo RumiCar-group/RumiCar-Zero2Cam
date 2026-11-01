@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace RumiCar.Protocol.Control;
 
-/// <summary>Request types understood by the car's control server (protocol version 1).</summary>
+/// <summary>Request types understood by the car's control server (protocol version 2).</summary>
 public static class RequestType
 {
     public const string Hello = "hello";
@@ -35,10 +35,10 @@ public static class DriveMode
     public const string RecordOnly = "record_only";
 }
 
-/// <summary>Protocol version carried in hello.</summary>
+/// <summary>Protocol version carried in hello.  2 = RC_steer / RC_drive values in manual_drive and set_auto_limit (car ABI 3).</summary>
 public static class ControlProtocol
 {
-    public const int Version = 1;
+    public const int Version = 2;
 }
 
 /// <summary>A request from the PC. Serialised as one JSON object on one line.</summary>
@@ -117,13 +117,15 @@ public static class ControlCodec
 
     public static ControlRequest SetMode(long id, string mode) => Build(id, RequestType.SetMode, new { mode });
 
-    /// <param name="steer">-1 left, 0 centre, +1 right</param>
-    /// <param name="drivePermille">-1000..1000</param>
-    public static ControlRequest ManualDrive(long id, int steer, int drivePermille)
+    /// <param name="steer">RC_steer: LEFT 0, CENTER 1, RIGHT 2</param>
+    /// <param name="driveDir">RC_drive direction: FREE 0, REVERSE 1, FORWARD 2, BRAKE 3</param>
+    /// <param name="drivePwm">RC_drive duty 0..255</param>
+    public static ControlRequest ManualDrive(long id, int steer, int driveDir, int drivePwm)
     {
-        if (steer is < -1 or > 1) throw new ArgumentOutOfRangeException(nameof(steer));
-        if (drivePermille is < -1000 or > 1000) throw new ArgumentOutOfRangeException(nameof(drivePermille));
-        return Build(id, RequestType.ManualDrive, new { steer, drive_permille = drivePermille });
+        if (steer is < RumiCarApi.Left or > RumiCarApi.Right) throw new ArgumentOutOfRangeException(nameof(steer));
+        if (driveDir is < RumiCarApi.Free or > RumiCarApi.Brake) throw new ArgumentOutOfRangeException(nameof(driveDir));
+        if (drivePwm is < 0 or > RumiCarApi.PwmMax) throw new ArgumentOutOfRangeException(nameof(drivePwm));
+        return Build(id, RequestType.ManualDrive, new { steer, drive_dir = driveDir, drive_pwm = drivePwm });
     }
 
     public static ControlRequest Heartbeat(long id) => Build(id, RequestType.Heartbeat, null);
@@ -158,11 +160,11 @@ public static class ControlCodec
     /// <summary>Back to the previous logic and pack together (undoes activate_pair).</summary>
     public static ControlRequest RollbackBoth(long id) => Build(id, RequestType.Rollback, new { kind = "both" });
 
-    /// <summary>Cap of the drive in auto mode, per mille (the car clamps it to its max_drive_permille).</summary>
-    public static ControlRequest SetAutoLimit(long id, int drivePermille)
+    /// <summary>Cap of the drive duty in auto mode, 0..255 (the car clamps it to its max_drive_pwm).</summary>
+    public static ControlRequest SetAutoLimit(long id, int drivePwm)
     {
-        if (drivePermille is < 0 or > 1000) throw new ArgumentOutOfRangeException(nameof(drivePermille));
-        return Build(id, RequestType.SetAutoLimit, new { drive_permille = drivePermille });
+        if (drivePwm is < 0 or > RumiCarApi.PwmMax) throw new ArgumentOutOfRangeException(nameof(drivePwm));
+        return Build(id, RequestType.SetAutoLimit, new { drive_pwm = drivePwm });
     }
 
     /// <summary>Temporary (until reboot) access-point change.</summary>

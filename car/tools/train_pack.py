@@ -71,6 +71,10 @@ class Session:
                     continue
                 if isinstance(line, dict) and isinstance(line.get("header"), dict):
                     self.lines.append(line)
+        if self.lines and self.lines[0]["header"].get("abi", 0) != SESSION_ABI:
+            raise SystemExit(f"error: {path} was recorded by a car with ABI {self.lines[0]['header'].get('abi', 0)}; "
+                             f"this version needs ABI {SESSION_ABI} (ToF 0..200 / -1 / -3, steer 0..2, drive_dir + drive_pwm): "
+                             "record the session again with the current car software")
         self.scenario = ""
         sj = os.path.join(self.path, "session.json")
         if os.path.isfile(sj):
@@ -364,15 +368,17 @@ def propose_blobs(s: Session, a, out_path: str) -> int:
 
 
 def tof_mm(line, i: int):
-    """Raw ToF reading i of a meta line: an int, or None when invalid / no target."""
+    """ToF reading i of a meta line (an RC_read value): an int 0..200 mm, or None when the
+    sensor gave no reading (-1) or saw nothing within 20 cm (-3, "open")."""
     v = line["header"].get("tof_mm")
     if not isinstance(v, list) or len(v) <= i or not isinstance(v[i], (int, float)):
         return None
     v = int(v[i])
-    return v if 0 <= v < NO_TARGET_MM else None
+    return v if 0 <= v <= TOF_MAX_MM else None
 
 
-NO_TARGET_MM = 8190
+TOF_MAX_MM = 200          # RC_read returns -3 beyond this (logic_api.h RUMI_TOF_MAX_MM)
+SESSION_ABI = 3           # "abi" in the recorded headers: ToF 0..200 / -1 / -3, steer 0..2, drive_dir + drive_pwm
 
 
 def propose_near_frames(s: Session, a, out_path: str) -> int:
@@ -395,8 +401,9 @@ def propose_near_frames(s: Session, a, out_path: str) -> int:
 
 
 def propose_side_openings(s: Session, a, out_path: str) -> int:
-    """The moments a side ToF went from a wall (below --near-mm) to open: the car was passing an
-    opening on that side, so the --before-ms before it show the intersection ahead."""
+    """The moments a side ToF went from a wall (below --near-mm) to open (-3 or at/above --near-mm).
+    The side ToFs look 65 degrees forward, so this is the moment the car's front reached the
+    corner of the opening: the --before-ms before it show the intersection ahead."""
     side = 0 if a.detector.endswith("left") else 2 if a.detector.endswith("right") else None
     if side is None:
         raise SystemExit("error: --detector must be intersection_left or intersection_right (which side opens)")
@@ -467,14 +474,15 @@ def load_parent(parent_dir: str):
 
 
 # The behaviour parameters and their defaults, as in car/logic/cam_drive/cam_params.hpp (docs 3.11).
+# Speeds are RC_drive PWM duties (0..255), distances RC_read values (0..200 mm).
 DEFAULT_SIGNAL = {"red_detector": "traffic_light_red", "green_detector": "traffic_light_green", "stop_min_cells": 2,
-                  "approach_v": 500, "min_stop_ms": 1000, "resume_without_green_ms": 3000, "resume_ignore_ms": 1500}
-DEFAULT_VEHICLE = {"detector": "vehicle", "lane_cols": 4, "follow_gap_mm": 150, "follow_band_mm": 80, "follow_v": 700,
+                  "approach_v": 128, "min_stop_ms": 1000, "resume_without_green_ms": 3000, "resume_ignore_ms": 1500}
+DEFAULT_VEHICLE = {"detector": "vehicle", "lane_cols": 4, "follow_gap_mm": 150, "follow_band_mm": 40, "follow_v": 179,
                    "parked_confirm_ms": 2000, "still_delta_mm": 20, "overtake_side": "open", "side_clear_mm": 120,
-                   "overtake_v": 500, "out_ms": 500, "pass_min_ms": 800, "pass_max_ms": 3000, "pass_clear_mm": 150,
-                   "pass_clear_ms": 300, "in_ms": 500, "ignore_ms": 1500}
-DEFAULT_INTERSECTION = {"left_detector": "intersection_left", "right_detector": "intersection_right", "approach_v": 500,
-                        "stop_trigger": "side_open", "open_mm": 200, "stop_ms": 1000, "turn": "straight", "turn_v": 500,
+                   "overtake_v": 128, "out_ms": 500, "pass_min_ms": 800, "pass_max_ms": 3000, "pass_clear_mm": 150,
+                   "pass_clear_ms": 700, "in_ms": 500, "ignore_ms": 1500}
+DEFAULT_INTERSECTION = {"left_detector": "intersection_left", "right_detector": "intersection_right", "approach_v": 128,
+                        "stop_trigger": "side_open", "open_mm": 200, "stop_ms": 1000, "turn": "straight", "turn_v": 128,
                         "cross_max_ms": 2000, "turn_ms": 900, "ignore_ms": 3000}
 BEHAVIOUR_DEFAULTS = {"signal": DEFAULT_SIGNAL, "vehicle": DEFAULT_VEHICLE, "intersection": DEFAULT_INTERSECTION}
 DETECTOR_KEYS = {"signal": ("red_detector", "green_detector"), "vehicle": ("detector",),
@@ -794,7 +802,7 @@ def main() -> int:
     pr.add_argument("--detector", default="traffic_light_red")
     pr.add_argument("--color-class", default=0, help="pixel class to look for when --detector is not a known name (0 red .. 5 magenta)")
     pr.add_argument("--min-pixels", type=int, default=3, help="smallest blob in small-image pixels")
-    pr.add_argument("--near-mm", type=int, default=250, help="vehicle: centre ToF below this is 'close'; intersection: a side below this is a wall")
+    pr.add_argument("--near-mm", type=int, default=200, help="vehicle: centre ToF below this is 'close'; intersection: a side below this is a wall (RC_read values: 0..200 mm; -3 = nothing within 20 cm = open)")
     pr.add_argument("--before-ms", type=int, default=2000, help="intersection: how long before the side opened the stretch starts")
     pr.add_argument("--every", type=int, default=1, help="look at every n-th frame")
     pr.add_argument("--out")

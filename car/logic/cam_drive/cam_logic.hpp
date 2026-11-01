@@ -109,7 +109,7 @@ private:
     bool parked_timing_ = false;
     uint64_t parked_since_us_ = 0;
     int parked_ref_c_ = 0;                 // Follow: distance when the wait began; Wait: the distance to watch
-    int8_t overtake_dir_ = RUMI_STEER_CENTER;
+    uint8_t overtake_dir_ = RUMI_STEER_CENTER;
     bool pass_seen_ = false;               // the inner side ToF has seen the vehicle
     bool pass_clear_timing_ = false;
     uint64_t pass_clear_since_us_ = 0;
@@ -118,7 +118,7 @@ private:
     IntersectionPhase iphase_ = IntersectionPhase::Normal;
     uint64_t iphase_since_us_ = 0;
     uint64_t intersection_ignore_until_us_ = 0;
-    int8_t turn_dir_ = RUMI_STEER_CENTER;  // decided when stopping: CENTER = straight
+    uint8_t turn_dir_ = RUMI_STEER_CENTER;  // decided when stopping: CENTER = straight
 
     uint8_t state_ = 0;
 
@@ -132,8 +132,8 @@ private:
     void step_signal(const View& v, uint64_t t);
     void step_intersection(const View& v, uint64_t t);
     void step_vehicle(const View& v, uint64_t t);
-    int8_t choose_overtake_side(int L, int R) const;
-    int8_t decide_turn(const View& v) const;
+    uint8_t choose_overtake_side(int L, int R) const;
+    uint8_t decide_turn(const View& v) const;
     int follow_cap(int C) const;
     bool tof_driving() const;
     void fill_aux(rumi_command& out) const;

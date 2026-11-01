@@ -1,13 +1,13 @@
 flowchart TD
-    A["Read ToF ×3 (each within i2c.tof_read_timeout_ms, default 100 ms)<br/>number / 8190 = no target detected / −1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
+    A["Read ToF ×3 (each within i2c.tof_read_timeout_ms, default 100 ms)<br/>RC_read values: 0..200 [mm] / −3 = out of range (nothing within 20 cm) / −1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
     B --> C["Logic step()<br/>(every frame, in every mode)"]
     C --> E{"Emergency stop?<br/>Drive mode?"}
     E -->|"E-stop active"| B1["Brake"]
     E -->|"Record only"| B2["Brake"]
-    E -->|"Manual"| H["PC's manual_drive<br/>(limited to ±max_drive_permille)"]
+    E -->|"Manual"| H["PC's manual_drive<br/>(RC_steer / RC_drive values; the duty is capped at max_drive_pwm)"]
     E -->|"Auto"| F{"step() succeeded?"}
     F -->|"Failed"| B3["Brake"]
-    F -->|"Succeeded"| G["Limit the drive to the permitted value<br/>permitted = min(increase from 0 at auto_accel_permille_per_s,<br/>auto limit, max_drive_permille)<br/>brake if the command has BRAKE / FAULT"]
+    F -->|"Succeeded"| G["Limit the drive to the permitted value<br/>permitted = min(increase from 0 at auto_accel_pwm_per_s,<br/>auto limit, max_drive_pwm)<br/>brake if the command is BRAKE or has FAULT"]
     B1 --> MO["Output to DRV8835"]
     B2 --> MO
     B3 --> MO

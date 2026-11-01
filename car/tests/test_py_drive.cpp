@@ -73,30 +73,30 @@ void test_sample_pack(const fs::path& sample) {
     if (!r.inst) return;
     char err[256] = {};
     CHECK(api->self_test(r.inst, err, sizeof err) == 0);
-    // Open road: straight at "speed" (600).
-    CHECK(r.step(RUMI_TOF_NO_TARGET, RUMI_TOF_NO_TARGET, RUMI_TOF_NO_TARGET) == 0);
+    // Open road (nothing within 20 cm, -3): straight at "speed" (153).
+    CHECK(r.step(RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE) == 0);
     CHECK(r.out.size == sizeof(rumi_command));
-    CHECK(r.out.steer == RUMI_STEER_CENTER && r.out.drive_permille == 600 && r.out.flags == 0);
+    CHECK(r.out.steer == RUMI_STEER_CENTER && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 153 && r.out.flags == 0);
     CHECK(r.state() == "RUN");
     // A wall near on the left: steer right.
-    CHECK(r.step(40, RUMI_TOF_NO_TARGET, 300) == 0);
+    CHECK(r.step(40, RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE) == 0);
     CHECK(r.out.steer == RUMI_STEER_RIGHT && r.state() == "RUN");
     // Something ahead, more room on the left: turn left slowly.
-    CHECK(r.step(240, 150, 90) == 0);
-    CHECK(r.out.steer == RUMI_STEER_LEFT && r.out.drive_permille == 450 && r.state() == "TURN");
+    CHECK(r.step(RUMI_TOF_OUT_OF_RANGE, 150, 90) == 0);
+    CHECK(r.out.steer == RUMI_STEER_LEFT && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 115 && r.state() == "TURN");
     // Very close: back up with the wheels turned away from the open side.
-    CHECK(r.step(240, 80, 90) == 0);
-    CHECK(r.out.steer == RUMI_STEER_RIGHT && r.out.drive_permille == -500 && r.state() == "BACK");
+    CHECK(r.step(RUMI_TOF_OUT_OF_RANGE, 80, 90) == 0);
+    CHECK(r.out.steer == RUMI_STEER_RIGHT && r.out.drive_dir == RUMI_DRIVE_REVERSE && r.out.drive_pwm == 128 && r.state() == "BACK");
     // A sensor without reading (-1): brake.
-    CHECK(r.step(-1, 300, 300) == 0);
-    CHECK((r.out.flags & RUMI_CMD_FLAG_BRAKE) != 0 && r.out.drive_permille == 0 && r.state() == "NO_SENSOR");
+    CHECK(r.step(-1, 150, 150) == 0);
+    CHECK(r.out.drive_dir == RUMI_DRIVE_BRAKE && r.out.drive_pwm == 0 && r.state() == "NO_SENSOR");
     // The same names keep their ids; unknown ids have a name too.
-    CHECK(r.step(RUMI_TOF_NO_TARGET, RUMI_TOF_NO_TARGET, RUMI_TOF_NO_TARGET) == 0 && r.state() == "RUN");
+    CHECK(r.step(RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE) == 0 && r.state() == "RUN");
     CHECK(std::string(api->state_name(r.inst, 0)) == "DRIVE");
     CHECK(std::string(api->state_name(r.inst, 200)) == "?");
     // The round trip is fast: 200 frames well within the 50 ms period each.
     const auto t0 = Clock::now();
-    for (int i = 0; i < 200; ++i) CHECK(r.step(RUMI_TOF_NO_TARGET, 500, RUMI_TOF_NO_TARGET) == 0);
+    for (int i = 0; i < 200; ++i) CHECK(r.step(RUMI_TOF_OUT_OF_RANGE, 150, RUMI_TOF_OUT_OF_RANGE) == 0);
     const auto per_frame = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t0).count() / 200;
     CHECK_MSG(per_frame < 10000, std::to_string(per_frame) + " us per frame");
     std::printf("py_drive: %lld us per frame\n", static_cast<long long>(per_frame));
@@ -104,24 +104,24 @@ void test_sample_pack(const fs::path& sample) {
 
 void test_loading_errors() {
     {
-        Run r(make_pack("syntax", "def loop(car)\n    car.drive(500)\n"));
+        Run r(make_pack("syntax", "from RumiCar import *\ndef loop()\n    RC_drive(FORWARD, 100)\n"));
         CHECK(r.inst == nullptr);
-        CHECK_MSG(r.error.find("drive.py の 1 行目") != std::string::npos, r.error);
+        CHECK_MSG(r.error.find("drive.py の 2 行目") != std::string::npos, r.error);
     }
     {
-        Run r(make_pack("noloop", "def setup(car):\n    pass\n"));
+        Run r(make_pack("noloop", "def setup():\n    pass\n"));
         CHECK(r.inst == nullptr);
-        CHECK_MSG(r.error.find("def loop(car):") != std::string::npos, r.error);
+        CHECK_MSG(r.error.find("def loop():") != std::string::npos, r.error);
     }
     {
-        Run r(make_pack("badparams", "def loop(car):\n    pass\n", "{\n  \"speed\": 600 600\n}"));
+        Run r(make_pack("badparams", "def loop():\n    pass\n", "{\n  \"speed\": 600 600\n}"));
         CHECK(r.inst == nullptr);
         CHECK_MSG(r.error.find("params.json の 2 行目") != std::string::npos, r.error);
     }
     {
-        Run r(make_pack("setupfail", "def setup(car):\n    x = car.params['missing']\ndef loop(car):\n    pass\n"));
+        Run r(make_pack("setupfail", "from RumiCar import *\ndef setup():\n    x = RC_params()['missing']\ndef loop():\n    pass\n"));
         CHECK(r.inst == nullptr);
-        CHECK_MSG(r.error.find("drive.py の 2 行目") != std::string::npos && r.error.find("KeyError") != std::string::npos, r.error);
+        CHECK_MSG(r.error.find("drive.py の 3 行目") != std::string::npos && r.error.find("KeyError") != std::string::npos, r.error);
     }
     {
         // No drive.py at all.
@@ -131,49 +131,57 @@ void test_loading_errors() {
     }
     {
         // Without params.json the program gets {}.
-        Run r(make_pack("noparams", "def loop(car):\n    car.drive(300 if car.params == {} else 0)\n", ""));
+        Run r(make_pack("noparams", "from RumiCar import *\ndef loop():\n    RC_drive(FORWARD, 77 if RC_params() == {} else 0)\n", ""));
         CHECK_MSG(r.inst != nullptr, r.error);
-        if (r.inst) CHECK(r.step(100, 100, 100) == 0 && r.out.drive_permille == 300);
+        if (r.inst) CHECK(r.step(100, 100, 100) == 0 && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 77);
     }
 }
 
 void test_runtime_errors() {
-    // An exception brakes that frame only; the program keeps running.  Wrong values are errors too.
+    // An exception brakes that frame only; the program keeps running.  Wrong
+    // values are not exceptions (as in RumiCar-lib): a duty outside 0..255 is
+    // clamped, a bad direction or state name is ignored and returns 0.
     Run r(make_pack("raises",
-        "def loop(car):\n"
-        "    print('distance', car.center)\n"            // print() must not disturb the protocol
-        "    if car.center < 100:\n"
+        "from RumiCar import *\n"
+        "def loop():\n"
+        "    c = RC_read(CENTER)\n"
+        "    print('distance', c)\n"            // print() must not disturb the protocol
+        "    if c < 100:\n"
         "        raise RuntimeError('too close')\n"
-        "    if car.center == 111:\n"
-        "        car.drive(5000)\n"
-        "    if car.center == 112:\n"
-        "        car.steer(2)\n"
-        "    if car.center == 113:\n"
-        "        car.state('bad name!')\n"
-        "    car.steer('left')\n"
-        "    car.drive(400.4)\n"
-        "    car.state('ok')\n"));
+        "    if c == 111:\n"
+        "        RC_drive(FORWARD, 5000)\n"
+        "        return\n"
+        "    if c == 112:\n"
+        "        RC_drive(FORWARD, 200)\n"
+        "        if RC_steer(5) != 0: raise RuntimeError('bad steer accepted')\n"
+        "        return\n"
+        "    if c == 113:\n"
+        "        if RC_state('bad name!') != 0: raise RuntimeError('bad state accepted')\n"
+        "        if RC_read(7) != -2 or RC_read(REAR) != -1: raise RuntimeError('bad read')\n"
+        "        return\n"
+        "    if RC_steer(LEFT) != 1 or RC_drive(FORWARD, 150.4) != 1 or RC_state('ok') != 1: raise RuntimeError('rc')\n"));
     CHECK_MSG(r.inst != nullptr, r.error);
     if (!r.inst) return;
-    CHECK(r.step(500, 500, 500) == 0 && r.out.drive_permille == 400 && r.out.steer == RUMI_STEER_LEFT && r.state() == "OK");
-    CHECK(r.step(500, 50, 500) == 6);
-    CHECK(r.step(500, 111, 500) == 6);
-    CHECK(r.step(500, 112, 500) == 6);
-    CHECK(r.step(500, 113, 500) == 6);
-    CHECK(r.step(500, 500, 500) == 0 && r.out.drive_permille == 400);
+    CHECK(r.step(150, 150, 150) == 0 && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 150 && r.out.steer == RUMI_STEER_LEFT && r.state() == "OK");
+    CHECK(r.step(150, 50, 150) == 6);
+    CHECK(r.step(150, 111, 150) == 0 && r.out.drive_pwm == 255 && r.out.steer == RUMI_STEER_LEFT);   // clamped; steering kept
+    CHECK(r.step(150, 112, 150) == 0 && r.out.drive_pwm == 200 && r.out.steer == RUMI_STEER_LEFT);   // RC_steer(5) ignored
+    CHECK(r.step(150, 113, 150) == 0 && r.state() == "OK");                                            // bad name ignored
+    CHECK(r.step(150, 150, 150) == 0 && r.out.drive_pwm == 150);
 }
 
 void test_hung_program_is_stopped() {
     Run r(make_pack("hangs",
         "import time\n"
-        "def loop(car):\n"
-        "    if car.center < 100:\n"
+        "from RumiCar import *\n"
+        "def loop():\n"
+        "    if RC_read(CENTER) < 100:\n"
         "        while True:\n"
         "            time.sleep(0.01)\n"
-        "    car.drive(500)\n"));
+        "    RC_drive(FORWARD, 128)\n"));
     CHECK_MSG(r.inst != nullptr, r.error);
     if (!r.inst) return;
-    CHECK(r.step(500, 500, 500) == 0);
+    CHECK(r.step(150, 150, 150) == 0);
     // Every frame returns within the step timeout (30 ms), braking, until 1 s
     // without an answer stops the program for good.
     int late = 0;
@@ -182,7 +190,7 @@ void test_hung_program_is_stopped() {
     const auto t0 = Clock::now();
     for (int i = 0; i < 60 && rc != 5; ++i) {
         const auto s = Clock::now();
-        rc = r.step(500, 50, 500);
+        rc = r.step(150, 50, 150);
         worst = std::max(worst, std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - s));
         if (rc == 4) ++late;
     }
@@ -190,29 +198,31 @@ void test_hung_program_is_stopped() {
     CHECK_MSG(worst.count() < 45000, std::to_string(worst.count()) + " us at most per frame");
     CHECK(late >= 30);
     CHECK(Clock::now() - t0 < std::chrono::seconds(3));
-    CHECK(r.step(500, 500, 500) == 5);   // stays stopped
+    CHECK(r.step(150, 150, 150) == 5);   // stays stopped
 }
 
 void test_program_that_exits() {
     Run r(make_pack("exits",
         "import os\n"
-        "def loop(car):\n"
-        "    if car.center < 100:\n"
+        "from RumiCar import *\n"
+        "def loop():\n"
+        "    if RC_read(CENTER) < 100:\n"
         "        os._exit(3)\n"
-        "    car.drive(200)\n"));
+        "    RC_drive(FORWARD, 200)\n"));
     CHECK_MSG(r.inst != nullptr, r.error);
     if (!r.inst) return;
-    CHECK(r.step(500, 500, 500) == 0 && r.out.drive_permille == 200);
-    CHECK(r.step(500, 50, 500) == 5);
-    CHECK(r.step(500, 500, 500) == 5);
+    CHECK(r.step(150, 150, 150) == 0 && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 200);
+    CHECK(r.step(150, 50, 150) == 5);
+    CHECK(r.step(150, 150, 150) == 5);
 }
 
 void test_destroy_ends_the_process() {
     const fs::path pack = make_pack("pidfile",
         "import os\n"
-        "def setup(car):\n"
-        "    open(car.params['pidfile'], 'w').write(str(os.getpid()))\n"
-        "def loop(car):\n"
+        "from RumiCar import *\n"
+        "def setup():\n"
+        "    open(RC_params()['pidfile'], 'w').write(str(os.getpid()))\n"
+        "def loop():\n"
         "    pass\n",
         "{\"pidfile\": \"" + (tmp / "pid.txt").string() + "\"}");
     pid_t pid = 0;

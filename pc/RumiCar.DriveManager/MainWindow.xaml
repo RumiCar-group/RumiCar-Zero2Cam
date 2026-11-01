@@ -162,9 +162,9 @@
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="判断状態" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LogicState}" Style="{StaticResource Text.Value}"/>
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="ToF 左 / 中 / 右 [mm]" Style="{StaticResource Text.Label}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="ToF 左 / 中 / 右 [mm]" Style="{StaticResource Text.Label}" ToolTip="RC_read の値：0〜200 = 距離 [mm]、-1 = タイムアウト（読めない）、-3 = 範囲外（20 cm 以内に何もない）"/>
                             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Tof}" Style="{StaticResource Text.Value}"/>
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="モーター出力" Style="{StaticResource Text.Label}" ToolTip="実際にモーターへ出力した指令。駆動の % は PWM のデューティ比（1000‰ = 100%）、括弧内は Arduino の analogWrite 換算（0〜255）"/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="モーター出力" Style="{StaticResource Text.Label}" ToolTip="実際にモーターへ出力した指令を RumiCar ライブラリの呼び出しの形で表示：RC_steer(LEFT / CENTER / RIGHT) / RC_drive(FREE / REVERSE / FORWARD / BRAKE, 0〜255)。値は PWM のデューティ（255 = 100%）"/>
                             <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Command}" Style="{StaticResource Text.Value}"/>
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="ロジックの判断" Style="{StaticResource Text.Label}" ToolTip="ロジックがそのフレームで算出した指令（手動・収録のみ・非常停止中も表示）"/>
                             <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding LogicCommand}" Style="{StaticResource Text.Value}"/>
@@ -232,8 +232,8 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="最大出力" Style="{StaticResource Text.Label}" VerticalAlignment="Center"
-                                       ToolTip="パッドの端・スクロール・↑ ↓ キーで出力する駆動の上限。車の設定 max_drive_permille でも制限されます"/>
-                            <Slider Grid.Column="1" Minimum="100" Maximum="1000" SmallChange="50" LargeChange="100" TickFrequency="50" IsSnapToTickEnabled="True"
+                                       ToolTip="パッドの端・スクロール・↑ ↓ キーで出力する駆動（RC_drive の値 0〜255）の上限。車の設定 max_drive_pwm でも制限されます"/>
+                            <Slider Grid.Column="1" Minimum="26" Maximum="255" SmallChange="13" LargeChange="26" TickFrequency="1" IsSnapToTickEnabled="True"
                                     Value="{Binding ManualMaxDrive}" VerticalAlignment="Center"/>
                             <TextBlock Grid.Column="2" Text="{Binding ManualMaxDriveText}" Style="{StaticResource Text.Value}" Width="44" TextAlignment="Right" VerticalAlignment="Center"/>
                             <Button Grid.Column="3" Content="停止" MinWidth="64" Margin="8,0,0,0" Click="OnManualStopClick" IsEnabled="{Binding ManualEnabled}"
@@ -255,8 +255,8 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="自動の最大出力" Style="{StaticResource Text.Label}" VerticalAlignment="Center"
-                                       ToolTip="自動モードでロジックが出力する駆動の上限。車が保持し、本体の再起動で max_drive_permille（既定 100%）に戻ります。手動の「最大出力」とは独立しています&#x0a;自動モードへの切り替え時は、駆動の許容値を 0 から auto_accel_permille_per_s の傾きで増加させ、この上限で頭打ちにします（急発進しません）"/>
-                            <Slider Grid.Column="1" Minimum="0" Maximum="1000" SmallChange="50" LargeChange="100" TickFrequency="50" IsSnapToTickEnabled="True"
+                                       ToolTip="自動モードでロジックが出力する駆動（RC_drive の値 0〜255）の上限。車が保持し、本体の再起動で max_drive_pwm（既定 255）に戻ります。手動の「最大出力」とは独立しています&#x0a;自動モードへの切り替え時は、駆動の許容値を 0 から auto_accel_pwm_per_s の傾きで増加させ、この上限で頭打ちにします（急発進しません）"/>
+                            <Slider Grid.Column="1" Minimum="0" Maximum="255" SmallChange="13" LargeChange="26" TickFrequency="1" IsSnapToTickEnabled="True"
                                     Value="{Binding AutoLimit}" IsEnabled="{Binding AutoLimitEnabled}" VerticalAlignment="Center"/>
                             <TextBlock Grid.Column="2" Text="{Binding AutoLimitText}" Style="{StaticResource Text.Value}" Width="44" TextAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>

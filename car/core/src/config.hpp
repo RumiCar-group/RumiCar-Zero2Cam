@@ -21,11 +21,12 @@ struct CoreConfig {
     int loop_period_ms = 50;         // target frame period
     int watchdog_ms = 200;           // motors are braked if the loop stalls longer than this
     int activation_poll_ms = 500;    // how often current/* links are checked for a change
-    int max_drive_permille = 1000;   // global cap applied to the logic's drive command
+    int max_drive_pwm = 255;         // global cap applied to the drive PWM duty (0..255) in every mode
     // Auto mode starts from rest: after any time the logic was not driving
-    // (another mode, an emergency stop, an error) the drive allowed in auto
-    // grows from 0 at this rate (per mille per second); 0 = no start ramp.
-    int auto_accel_permille_per_s = 1125;
+    // (another mode, an emergency stop, an error) the duty allowed in auto
+    // grows from 0 at this rate (duty per second, 0..255 scale: 287 = 0 to
+    // 255 in about 0.9 s); 0 = no start ramp.
+    int auto_accel_pwm_per_s = 287;
 
     // Paths
     std::string state_dir = "/var/lib/rumicar";
@@ -41,7 +42,7 @@ struct CoreConfig {
     unsigned drive_in1 = 0;          // pwm0 -> GPIO18 -> DRV8835 BIN1
     unsigned drive_in2 = 1;          // pwm1 -> GPIO13 -> DRV8835 BIN2
     int pwm_frequency_hz = 960;
-    int kick_permille = 784;         // start kick (200/255) ...
+    int kick_pwm = 200;              // start kick duty (0..255, as RumiCar-lib's KICK_DUTY) ...
     int kick_ms = 20;                // ... for this long on a start/direction edge
 
     // I2C

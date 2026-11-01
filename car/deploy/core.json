@@ -5,8 +5,8 @@
   "loop_period_ms": 50,
   "watchdog_ms": 200,
   "activation_poll_ms": 500,
-  "max_drive_permille": 1000,
-  "auto_accel_permille_per_s": 1125,
+  "max_drive_pwm": 255,
+  "auto_accel_pwm_per_s": 287,
   "paths": {
     "state_dir": "/var/lib/rumicar"
   },
@@ -21,7 +21,7 @@
     "drive_in1": 0,
     "drive_in2": 1,
     "frequency_hz": 960,
-    "kick_permille": 784,
+    "kick_pwm": 200,
     "kick_ms": 20
   },
   "i2c": {
