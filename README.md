@@ -502,11 +502,11 @@ sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 
 | 種類 | 例 | 対象・表示箇所 |
 |---|---|---|
-| 本体（製品）の版 | `v0.3.1` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
+| 本体（製品）の版 | `v0.3.2` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
 | ロジックの版 | `tof_drive-0.2.0`、`cam_drive-0.2.0` | ロジックごとの番号（`car/CMakeLists.txt` の `TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`／`PY_DRIVE_VERSION`、manifest の `version`）。「版の管理」の一覧と状態欄の「版（ロジック／データ）」 |
 | 判断データ（パック）の版 | `base-tof-0.1.1`、`cam-base-0.1.1`、自分で作成した `cam-signal-0.1.0` | パックごとの `manifest.json` の `version`。自分で学習させた版には、車にインストール済みの版と重複しない番号を付けます（7 章） |
 
-本体 0.3.1 の Release の同梱は `tof_drive-0.2.0`・`cam_drive-0.2.0`・`py_drive-0.1.1`・`base-tof-0.1.1`・`cam-base-0.1.1`・`py-sample-0.1.1` です。本体とロジックの番号が一致していても、両者は独立した番号です。
+本体 0.3.2 の Release の同梱は `tof_drive-0.2.0`・`cam_drive-0.2.0`・`py_drive-0.1.1`・`base-tof-0.1.1`・`cam-base-0.1.1`・`py-sample-0.1.1` です。本体とロジックの番号が一致していても、両者は独立した番号です。
 
 **Release ではないビルド**（GitHub Actions がタグ以外で作成した `.deb`・SD カードイメージ・アプリ）は、版の後ろに `+g` と commit の先頭 7 文字が付きます（例 `0.2.1+g1a2b3c4`）。タグの付いた Release のものと区別するためです。Debian の版の比較では `0.2.1` ＜ `0.2.1+g1a2b3c4` ＜ `0.2.2` です。車の本体とアプリの版の数値部分（`+` より前）が異なる場合は、接続時のログに警告を記録します。
 
@@ -696,13 +696,13 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 - 本体の版は、**次の Release の番号をソースに記述してからタグを付けます**。手順：(1) プルリクエストで `car/CMakeLists.txt` の `RUMICAR_VERSION`、`pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` の `<Version>`、`pc/RumiCar.DriveManager/app.manifest` の `assemblyIdentity version`（`X.Y.Z.0`）を同じ番号にする、(2) マージする、(3) そのマージの commit に `vX.Y.Z` のタグを付けて push する。`release.yml` は最初にタグとこの 3 か所の一致、およびタグが main の commit であることを検証し、不一致ならビルドせずに停止します（タグと内容の版が食い違った Release を作成しないため）。
 - タグ以外のビルド（main・プルリクエスト）では、CI が版の後ろに `+g<commit>` を付けます（`car.yml` の `-DRUMICAR_VERSION_SUFFIX`、`pc.yml` の `-p:InformationalVersion`）。手元でのビルドはソースの番号のままです。ロジックの版（`TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`／`PY_DRIVE_VERSION`）は本体の版とは独立に、ロジックを変更したときに上げます。ロジック・パックの内容（.so 以外のファイルや manifest の説明を含む）を変更したときも版を上げます（車は同じ版のディレクトリを上書きしないため。9.2）。
 
-## 本版（0.3.1）の範囲
+## 本版（0.3.2）の範囲
 
 - 車：ToF 走行ロジック、制御ループと安全制御、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときのみ動作）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序制御して起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中の差し替え（PC または SSH から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、走行モード、非常停止、手動操作（操縦パッド・スクロール・キー）、自動の最大出力、PC の Wi-Fi の表示、シナリオ付き収録、版の管理（ロジックとデータの組での切り替え）、自作プログラムの送信、収録からの動画作成）
 - 車：画像ロジック `cam_drive`（信号機での停止・発進、前方車両への追従と駐車車両の追い越し、交差点での停止・直進・右左折）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジックのインターフェース ABI 2
 - 車：自作の走行プログラム（Python の `drive.py`）を実行するロジック `py_drive` と見本 `py-sample`、自動モードの駆動許容値の増加制限と最大出力（`set_auto_limit`）、ロジックとデータの組での切り替え（`activate_pair`）
-- 配布：標準 SD カードイメージ、タグによる GitHub Release（0.2.0：ロジックのインターフェースが ABI 1 から 2 に変わり、自作ロジックの再ビルドが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに変更、タグとソースの版の一致を Release で検証、Release ではないビルドに `+g<commit>`。0.3.0：自作の走行プログラム、自動の最大出力と急発進の防止、PC の Wi-Fi の表示。0.3.1：文書・画面表示・メッセージの表記を技術的に正確な表現に統一（`py_drive` 0.1.1、`py-sample` 0.1.1、`cam-base` 0.1.1。動作の変更なし））
+- 配布：標準 SD カードイメージ、タグによる GitHub Release（0.2.0：ロジックのインターフェースが ABI 1 から 2 に変わり、自作ロジックの再ビルドが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに変更、タグとソースの版の一致を Release で検証、Release ではないビルドに `+g<commit>`。0.3.0：自作の走行プログラム、自動の最大出力と急発進の防止、PC の Wi-Fi の表示。0.3.1：文書・画面表示・メッセージの表記を技術的に正確な表現に統一（`py_drive` 0.1.1、`py-sample` 0.1.1、`cam-base` 0.1.1。動作の変更なし）。0.3.2：図の追加（README・仕様書、日本語・英語。動作の変更なし））
 - 今後の作業：実車での収録と調整（追い越し・右左折の時間、交差点の画像の学習）、場面に応じた右左折の選択（現状は版ごとに固定、または検出した側へ）
 
 ## ライセンス

@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.25)
 # release workflow refuses a tag that differs from this value.  CI builds that
 # are not a release add the commit as build metadata (RUMICAR_VERSION_SUFFIX
 # "+g<commit>"), so their core_version and .deb never pass for the release.
-set(RUMICAR_VERSION "0.3.1" CACHE STRING "Product version X.Y.Z (the release tag without the v)")
+set(RUMICAR_VERSION "0.3.2" CACHE STRING "Product version X.Y.Z (the release tag without the v)")
 set(RUMICAR_VERSION_SUFFIX "" CACHE STRING "Build metadata for builds that are not a release, e.g. +g1a2b3c4 (empty for a release)")
 if(NOT RUMICAR_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "RUMICAR_VERSION must be X.Y.Z, got '${RUMICAR_VERSION}'")
