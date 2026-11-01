@@ -1,0 +1,16 @@
+flowchart TD
+    A["ToF ×3 を読み取り（各 i2c.tof_read_timeout_ms、既定 100 ms 以内）<br/>数値 / 8190 = 対象物未検出 / −1 = 読み取り失敗"] --> B["カメラの最新画像を添付<br/>（新しい画像があるフレームのみ）"]
+    B --> C["ロジック step()<br/>（どのモードでも毎フレーム実行）"]
+    C --> E{"非常停止中？<br/>走行モードは？"}
+    E -->|"非常停止中"| B1["ブレーキ"]
+    E -->|"収録のみ"| B2["ブレーキ"]
+    E -->|"手動"| H["PC の manual_drive<br/>（±max_drive_permille に制限）"]
+    E -->|"自動"| F{"step() 成功？"}
+    F -->|"失敗"| B3["ブレーキ"]
+    F -->|"成功"| G["駆動を許容値で制限<br/>許容値 = min(0 から auto_accel_permille_per_s で増加,<br/>自動の最大出力, max_drive_permille)<br/>指令に BRAKE／FAULT があればブレーキ"]
+    B1 --> MO["DRV8835 へ出力"]
+    B2 --> MO
+    B3 --> MO
+    H --> MO
+    G --> MO
+    MO --> T["状態と JPEG をテレメトリへ（受信者がいる場合）<br/>→ 次の周期（50 ms）"]

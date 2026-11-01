@@ -16,8 +16,31 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 |---|---|
 | `car/` | 車載側。`rumicar-core`（制御ループ・ハードウェア制御・通信・差し替え機構）、走行ロジック `tof_drive`・`cam_drive`・`py_drive`（共有ライブラリ。`py_drive` は利用者が作成した Python プログラムを実行）、同梱パック `base-tof`・`cam-base`・`py-sample`、学習・再生ツール、単体テスト、Debian パッケージと SD カードイメージの作成 |
 | `pc/` | PC 側。`RumiCar.Protocol`（通信形式・manifest・収録）、`RumiCar.Protocol.Tests`、`RumiCar.DriveManager`（WPF の走行管理アプリ） |
-| `docs/` | 仕様書と設計の記録（いずれも .docx。教育目的で公開） |
+| `docs/` | 仕様書と設計の記録（いずれも .docx。教育目的で公開）、図のソース（`docs/figures`、Mermaid、日本語・英語） |
 | `.github/workflows/` | 自動ビルド（`car.yml`: Debian 13 arm64/amd64 と SD カードイメージ、`pc.yml`: Windows、`release.yml`: タグによる Release） |
+
+**図 1** システム構成（車・PC・Claude デスクトップアプリ）
+
+<!-- figure: ja/01-system.mmd -->
+```mermaid
+flowchart TB
+    subgraph CAR["車（Raspberry Pi Zero 2 W）"]
+        direction TB
+        SEN["VL53L0X ×3<br/>（左・中央・右）"] --> CORE
+        CAM["Camera Module 2<br/>（320×240、20 fps）"] --> CORE
+        CORE["rumicar-core<br/>制御ループ 50 ms"] <--> LOGIC["走行ロジック（.so）<br/>tof_drive / cam_drive / py_drive"]
+        PACK["判断データ（パック）<br/>params.json / vision.bin / drive.py"] --> LOGIC
+        CORE --> MOT["DRV8835<br/>操舵・駆動モーター"]
+    end
+    subgraph PCSIDE["PC（Windows）"]
+        direction TB
+        APP["走行管理アプリ<br/>状態・画像の表示、走行モード、<br/>非常停止、版の管理"] --> REC["収録フォルダ<br/>frames/・meta.jsonl・session.json"]
+    end
+    CORE <-->|"Wi-Fi AP（SSID RumiCar、10.42.0.1）<br/>制御 TCP 5600 ／ テレメトリ TCP 5601"| APP
+    REC --> CL["Claude デスクトップアプリ<br/>ラベル付け・train_pack.py で学習"]
+    CL --> NEW["新しいパック<br/>（manifest.json 付き）"]
+    NEW -->|"「送る…」→「有効化」<br/>（走行中に差し替え可）"| APP
+```
 
 ---
 
@@ -50,6 +73,21 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 1. 車を台に載せ、電源を入れます。
 2. 初回はパーティション拡張のため自動で 1 回再起動します。2〜3 分待ちます。
 3. 起動後、`rumicar-core` がセンサーの初期化 → Wi-Fi アクセスポイントの起動 → （PC の接続後）カメラの起動 の順に処理します。乾電池の電圧低下を避けるため、消費電流の大きい機能は同時に起動しません（10 章）。**この時点では走行しません**（収録のみ）。走行させるには 4 章の手順で接続し、「自動」を選択します。
+
+**図 2** 起動手順（消費電流の大きい機能を順に起動）
+
+<!-- figure: ja/02-startup.mmd -->
+```mermaid
+flowchart TD
+    P["電源投入<br/>（systemd が rumicar-core を起動）"] --> M["1. モーターをブレーキ"]
+    M --> S["2. VL53L0X ×3 の初期化<br/>（失敗時は終了コード 3、systemd が 5 秒後に再起動）"]
+    S --> L["3. ロジック／パックの読み込みと self_test<br/>（失敗時は previous/* を 1 回だけ試行）"]
+    L --> W["4. Wi-Fi AP の起動（network.ap_start = core、最長 20 秒）<br/>（失敗時は rumicar-ap.timer が起動 90 秒後から 60 秒ごとに再試行）"]
+    W --> N["5. 制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）の起動"]
+    N --> LOOP["6. 制御ループ開始<br/>（startup_mode：既定 record_only で待機）"]
+    LOOP -.->|"PC 接続中 または 自動モード<br/>（camera.on_demand = true）"| C["カメラの起動（別スレッド）<br/>（失敗時は 30 秒ごとに再試行）"]
+    LOOP -->|"走行管理アプリで「自動」"| A["走行開始<br/>（駆動の許容値を 0 から増加）"]
+```
 
 イメージの初期設定：
 
@@ -93,6 +131,23 @@ ToF の表示値：
 | 数値 | 測距値 [mm] |
 | `open` | 対象物を検出できなかった（センサー値 8190）。多くはレーザーが対象物に当たって反射光が戻らなかった場合、または受信した信号が弱く規定値に満たなかった場合 |
 | `--` | 読み取り失敗（`i2c.tof_read_timeout_ms` 以内に測定結果が得られない、または I2C 通信エラー） |
+
+**図 3** ToF の読み取り値の扱い（表示と tof_drive の判断）
+
+<!-- figure: ja/03-tof-reading.mmd -->
+```mermaid
+flowchart TD
+    R["VL53L0X の読み取り"] --> Q{"i2c.tof_read_timeout_ms 以内に<br/>測定結果が得られた？<br/>I2C 通信は正常？"}
+    Q -->|"いいえ"| F["読み取り失敗 → −1<br/>表示 --、drive.py では None"]
+    Q -->|"はい"| V{"測距値 ≥ 8190？"}
+    V -->|"はい"| O["対象物未検出 → 8190<br/>表示 open、drive.py では car.FAR<br/>（反射光が戻らない、または受信信号が規定値未満）"]
+    V -->|"いいえ"| D["測距値 [mm]"]
+    D --> T{"tof_drive：<br/>conf_max_mm（既定 250）以上？"}
+    T -->|"はい"| OPEN["tof_drive：開放<br/>（判断対象の距離内に障害物なし）"]
+    O --> OPEN
+    T -->|"いいえ"| USE["tof_drive：距離として使用<br/>（中央値フィルタ・指数平滑）"]
+    F --> HOLD["tof_drive：前の値を invalid_hold_ms（既定 300 ms）保持<br/>超過で SENSOR_FAULT（停止）"]
+```
 
 タイトル（ウィンドウと画面左上）にアプリの版を表示します。その隣に **PC の Wi-Fi**（この PC が現在接続しているネットワークの名前）を表示します。車への接続時のネットワーク（通常 `RumiCar`）から外れると赤色で表示し、ログにも記録します。Windows はインターネットに接続できないアクセスポイントから、自動で別のネットワークへ切り替えることがあるため、通信が突然切れた場合はまずこの表示を確認してください（10 章）。Windows 11 24H2 以降でネットワーク名を取得できない場合は、Windows の 設定 → プライバシーとセキュリティ → 位置情報 →「デスクトップ アプリに位置情報へのアクセスを許可する」をオンにします（Windows がネットワーク名を位置情報として扱うため）。
 
@@ -170,6 +225,22 @@ base-tof-0.2.0/            フォルダ名は <id>-<version>
 
 車は ToF（距離センサー）による走行を基盤としたまま、カメラ画像を特徴量に変換し（320×240 を 1/5 に縮小して 8×6 のセルに分割し、セルごとに 8 つの色区分（6 色相と明・暗）の画素数と、明度・彩度・明度勾配（横・縦）の総和を集計した 576 個の整数）、**収録データから学習した検出器**を適用します。検出器には、画像内の位置を出力する**局所検出器**（赤信号・青信号・車両。3×3 セルの窓で評価）と、画像全体の状態を出力する**全体検出器**（前方に交差点がある、など）の 2 種類があります。検出結果に基づき、3 つの挙動が ToF の走行に「速度の上限」と「操舵モード」を与えます。
 
+**図 4** 特徴量の算出と検出器
+
+<!-- figure: ja/04-features.mmd -->
+```mermaid
+flowchart TD
+    I["カメラ画像 RGB24<br/>320×240"] --> R["1/5 に縮小 → 64×48<br/>（5×5 画素の平均）"]
+    R --> C["画素の分類：6 色相・明・暗<br/>明度 V・彩度 S・明度勾配（横・縦）"]
+    C --> G["8×6 セル（1 セル 8×8 画素）<br/>セルごとに 12 値：8 区分の画素数、ΣV、ΣS、Σ|dx|、Σ|dy|"]
+    G --> F["特徴量 576 個（整数）→ 標準化 z"]
+    F --> L["局所検出器<br/>各セルと周囲 3×3 セル（108 値）<br/>→ セルごとのスコア p = σ(w·z + b)"]
+    F --> GL["全体検出器<br/>576 値 → スコア p = σ(w·z + b)"]
+    L --> T["時間方向の確定<br/>p ≥ thr_on（局所はセル数 ≥ min_cells も）が confirm_frames 続けば確定<br/>p < thr_off が release_frames 続けば解除"]
+    GL --> T
+    T --> B["挙動（信号機・車両・交差点）へ"]
+```
+
 | 挙動 | 使用する検出器 | 動作 |
 |---|---|---|
 | 信号機 `signal` | 赤信号・青信号（局所） | 赤信号の検出が所定のフレーム数続くと減速し、接近すると停止。青信号を検出する（または赤信号が検出されなくなってから所定時間が経過する）と発進 |
@@ -187,6 +258,22 @@ base-tof-0.2.0/            フォルダ名は <id>-<version>
 - 任意：`rumicar-replay`（GitHub Actions の成果物 `rumicar-replay-amd64`。収録を実際のロジックで再生し、送信前に停止・発進の判断を確認できます）
 
 ### 7.3 手順
+
+**図 5** 学習から車への反映までの流れ
+
+<!-- figure: ja/05-learning.mmd -->
+```mermaid
+flowchart TD
+    A["1. 収録（シナリオ名を付与）<br/>学習用・検証用・壁のみ（負例）"] --> B["2. 候補の出力<br/>train_pack.py propose"]
+    B --> C["3. ラベル付け（Claude が候補を確認）<br/>labels.jsonl"]
+    C --> D["4. 学習<br/>train_pack.py train<br/>→ params.json・vision.bin・training.json・manifest.json"]
+    D --> E{"5. 送信前の確認<br/>show・replay・rumicar-replay"}
+    E -->|"再現率が低い／誤検出が多い"| X["ラベル・負例を追加"]
+    X --> D
+    E -->|"問題なし"| F["6. 走行管理アプリで「送る…」→「有効化」"]
+    F --> G["7. 実車で走行・収録"]
+    G -->|"場面を追加したら<br/>全検出器を再学習"| A
+```
 
 1. **収録**：信号機を設置したコースを走行させ（発進前に赤・青を撮影する場合は「収録のみ」で車を手で動かしても可）、シナリオ名を「信号機ありケース1」などとして収録します。信号機の無いコースの収録（「壁のみの走行データ」）は「信号機が写っていない例」（負例）として自動的に使用されるため、こちらも用意します。学習用と検証用に、別々の収録を 2 回以上行います。
 2. **ラベル付け**：`python car/tools/train_pack.py propose <収録フォルダ> --detector traffic_light_red` が、赤色領域の位置（フレーム番号と矩形）を候補として `proposals_traffic_light_red.jsonl` に出力します。Claude にそのフォルダを参照させ、候補のフレーム（`frames/` の画像）を確認させて、正しいものを `labels.jsonl` に記述させます。青信号も同様です（`--detector traffic_light_green`）。候補の行は `labels.jsonl` の行と同じ形式で、余分なキー（`image`、`pixels` など、候補とした根拠の情報）は無視されるため、不要な行を削除して貼り付ければ使用できます。形式は次のとおりです（1 行 1 件、矩形は画素座標 [x0, y0, x1, y1]、x1/y1 は範囲に含まない）。
@@ -241,6 +328,24 @@ python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
 
 `train` の `--signal キー=値` で変更できます（例 `--signal stop_min_cells=3`）。
 
+**図 6** 信号機の挙動の状態遷移
+
+<!-- figure: ja/06-signal.mmd -->
+```mermaid
+stateDiagram-v2
+    state "通常（tof_drive の状態）" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> SIGNAL_APPROACH: 赤信号を確定<br/>（セル数 < stop_min_cells）
+    NORMAL --> SIGNAL_STOP: 赤信号を確定<br/>（セル数 ≥ stop_min_cells）
+    SIGNAL_APPROACH --> SIGNAL_STOP: セル数 ≥ stop_min_cells
+    SIGNAL_APPROACH --> NORMAL: 赤信号の確定が解除
+    SIGNAL_STOP --> SIGNAL_RESUME: min_stop_ms 経過後、青信号を確定<br/>または 赤信号の解除から<br/>resume_without_green_ms 経過
+    SIGNAL_RESUME --> NORMAL: resume_ignore_ms 経過
+    note right of SIGNAL_APPROACH: 速度の上限 approach_v
+    note right of SIGNAL_STOP: 速度の上限 0（停止後はブレーキ保持）
+    note right of SIGNAL_RESUME: 赤信号の検出を無視
+```
+
 ### 7.5 前方車両の挙動の設定（params.json の vehicle）
 
 この節（`vehicle`）が `params.json` に無ければ挙動は無効です。ある場合は全キーが必須です（`train` が検出器 `vehicle` を含むパックに自動で追加します。`--vehicle キー=値` で変更）。距離はすべて `tof_drive` の処理後の値で、`tof.conf_max_mm` 以上の読み（対象物未検出を含む）は「開放」として扱います。
@@ -265,6 +370,30 @@ python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
 
 追い越しは時間で区切った開ループ制御です（操舵が左／中央／右の 3 状態のみのため）。進路変更・復帰の時間は、コースと車速に合わせて調整してください。
 
+**図 7** 前方車両の挙動の状態遷移
+
+<!-- figure: ja/07-vehicle.mmd -->
+```mermaid
+stateDiagram-v2
+    state "通常" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> FOLLOW: 自車線に車両を確定<br/>（無視時間 ignore_ms の経過後）
+    FOLLOW --> NORMAL: 車両を検出せず ToF も開放<br/>または 非検出が ignore_ms 継続
+    FOLLOW --> OVERTAKE_OUT: 駐車車両と判定<br/>（停止・車間不変が parked_confirm_ms）<br/>かつ 追い越し側の ToF ≥ side_clear_mm
+    FOLLOW --> FOLLOW_WAIT: 駐車車両と判定<br/>通過可能な側なし
+    FOLLOW_WAIT --> FOLLOW: 車間が still_delta_mm を超えて拡大
+    FOLLOW_WAIT --> OVERTAKE_OUT: 追い越し側の ToF ≥ side_clear_mm
+    FOLLOW_WAIT --> NORMAL: 車両を検出せず ToF も開放<br/>または 非検出が ignore_ms 継続
+    OVERTAKE_OUT --> OVERTAKE_PASS: out_ms 経過
+    OVERTAKE_PASS --> OVERTAKE_IN: 通過完了（内側の ToF が pass_clear_mm 未満の後、<br/>以上が pass_clear_ms 継続、かつ pass_min_ms 以上）<br/>または pass_max_ms 経過
+    OVERTAKE_IN --> NORMAL: in_ms 経過
+    note right of OVERTAKE_PASS
+        OVERTAKE_OUT／PASS／IN の間に赤信号・交差点の処理が始まるか、
+        ToF の非常ブレーキ・後退・センサー異常になると中止して通常へ。
+        通常へ戻った後は ignore_ms の間、車両の検出を無視する
+    end note
+```
+
 ### 7.6 交差点の挙動の設定（params.json の intersection）
 
 この節（`intersection`）が無ければ無効です。ある場合は全キーが必須です（`train` が検出器 `intersection_left`／`intersection_right` のいずれかを含むパックに自動で追加します。`--intersection キー=値` で変更）。
@@ -281,6 +410,30 @@ python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
 | `cross_max_ms` | 2000 | 曲がる側の ToF が開放になるまで直進して待つ最長時間（開放にならなければ直進で終了） |
 | `turn_ms` | 900 | 曲がる側へ最大舵角で操舵する時間 |
 | `ignore_ms` | 3000 | 終了後、交差点の検出を無視する時間 |
+
+**図 8** 交差点の挙動の状態遷移
+
+<!-- figure: ja/08-intersection.mmd -->
+```mermaid
+stateDiagram-v2
+    state "通常" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> INTERSECTION_APPROACH: 交差点検出器を確定<br/>（stop_trigger = side_open）
+    NORMAL --> INTERSECTION_STOP: 交差点検出器を確定<br/>（stop_trigger = detector）
+    INTERSECTION_APPROACH --> NORMAL: 確定が解除
+    INTERSECTION_APPROACH --> INTERSECTION_STOP: 左右いずれかの ToF ≥ open_mm
+    INTERSECTION_STOP --> NORMAL: stop_ms 経過・赤信号なし<br/>進路が直進
+    INTERSECTION_STOP --> INTERSECTION_CROSS: stop_ms 経過・赤信号なし<br/>進路が左／右
+    INTERSECTION_CROSS --> INTERSECTION_TURN: 曲がる側の ToF ≥ open_mm
+    INTERSECTION_CROSS --> NORMAL: cross_max_ms 経過（直進で終了）<br/>または 赤信号・ToF の非常動作
+    INTERSECTION_TURN --> NORMAL: turn_ms 経過<br/>または 赤信号・ToF の非常動作
+    note right of INTERSECTION_STOP
+        停止時に進路を決定：turn = straight／left／right／detector
+        （detector は検出した側。両側なら直進）
+        追い越し中は APPROACH を開始しない。
+        STOP・CROSS・TURN から通常へ戻った後は ignore_ms の間、交差点の検出を無視する
+    end note
+```
 
 ### 7.7 挙動の組み合わせ
 
@@ -425,6 +578,32 @@ def loop(car):           # 50 ms ごと（20 Hz）
 - 自動モードへの切り替え時は駆動の許容値を 0 から増加させ、「自動の最大出力」と車の `max_drive_permille` を超えては走行しません。手動モード・収録のみ・非常停止の動作は、どのロジックでも同じです。
 - プログラムは本体とは別のプロセスで実行されるため、プログラムが応答しなくなっても本体の制御周期（50 ms）は維持されます。
 
+**図 9** 本体と drive.py（runner.py）のフレームごとのやり取り
+
+<!-- figure: ja/09-py-drive.mmd -->
+```mermaid
+sequenceDiagram
+    participant C as rumicar-core（libpy_drive.so）
+    participant R as runner.py（別プロセス）
+    Note over C,R: 有効化（create）
+    C->>R: 起動：python3 -I -B -u runner.py パック
+    R->>R: params.json と drive.py の読み込み、setup(car)
+    R-->>C: READY（最長 15 秒）または ERROR メッセージ
+    loop 50 ms ごと
+        C->>R: F seq t_ms 左 中央 右
+        alt 30 ms 以内に応答
+            R-->>C: C seq steer drive brake state
+            C->>C: 指令を出力（本体の制限を適用）
+        else loop() で例外
+            R-->>C: X seq メッセージ
+            C->>C: このフレームはブレーキ（プログラムは継続）
+        else 30 ms 以内に応答なし
+            C->>C: このフレームはブレーキ（遅れた応答は破棄）
+        end
+    end
+    Note over C,R: 最後の応答から 1 秒以上応答なし → SIGKILL<br/>（プログラムが終了した場合も含め、次の有効化までブレーキ）
+```
+
 ### 11.4 補足
 
 - 送信されたパックは `/var/lib/rumicar/packs/<フォルダ名>-<日時>/` に格納され、`rumicar-activate pair py_drive-0.1.1 <パック>` で SSH からも切り替えられます（ロジックとデータは組で切り替えます）。
@@ -450,6 +629,57 @@ sudo cmake --install build --prefix /usr/local   # 手動インストール
 libcamera の無い環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF のみで走行します）。
 
 走行ロジックは `car/logic/` にあります：`tof_drive`（ToF による走行）、`cam_drive`（`tof_drive` にカメラによる判断を追加したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間方向の確定、`cam_logic` 信号機・車両・交差点の挙動と優先順位）、`py_drive`（パックの `drive.py` を `runner.py` が別プロセスで実行し、`py_process` がフレームごとに 1 行で送受信。タイムアウト・異常終了時はブレーキ。`test_py_drive` が実際の runner で検証）。本体とロジックのインターフェースは `car/include/rumicar/logic_api.h`（ABI 2：補助出力 `aux` と `aux_name`）で定義しています。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ 実装と完全に一致することを `test_vision` で検証しています。`car/tests/tools_smoke.py <build dir>` は合成した収録から学習し、`rumicar-replay` で停止・発進、追従と追い越し、交差点での停止までを一連で検証します（CI でも実行）。
+
+## 制御ループと ToF 走行ロジック
+
+本体は 50 ms ごとに図 10 の処理を行います。走行ロジック `tof_drive` の状態遷移は図 11 のとおりです（仕様書 3.5、3.7）。
+
+**図 10** 制御ループ 1 フレーム（50 ms）の処理
+
+<!-- figure: ja/10-frame.mmd -->
+```mermaid
+flowchart TD
+    A["ToF ×3 を読み取り（各 i2c.tof_read_timeout_ms、既定 100 ms 以内）<br/>数値 / 8190 = 対象物未検出 / −1 = 読み取り失敗"] --> B["カメラの最新画像を添付<br/>（新しい画像があるフレームのみ）"]
+    B --> C["ロジック step()<br/>（どのモードでも毎フレーム実行）"]
+    C --> E{"非常停止中？<br/>走行モードは？"}
+    E -->|"非常停止中"| B1["ブレーキ"]
+    E -->|"収録のみ"| B2["ブレーキ"]
+    E -->|"手動"| H["PC の manual_drive<br/>（±max_drive_permille に制限）"]
+    E -->|"自動"| F{"step() 成功？"}
+    F -->|"失敗"| B3["ブレーキ"]
+    F -->|"成功"| G["駆動を許容値で制限<br/>許容値 = min(0 から auto_accel_permille_per_s で増加,<br/>自動の最大出力, max_drive_permille)<br/>指令に BRAKE／FAULT があればブレーキ"]
+    B1 --> MO["DRV8835 へ出力"]
+    B2 --> MO
+    B3 --> MO
+    H --> MO
+    G --> MO
+    MO --> T["状態と JPEG をテレメトリへ（受信者がいる場合）<br/>→ 次の周期（50 ms）"]
+```
+
+**図 11** tof_drive の状態遷移
+
+<!-- figure: ja/11-tof-states.mmd -->
+```mermaid
+stateDiagram-v2
+    state "TURN_LEFT / TURN_RIGHT" as TURN
+    [*] --> CRUISE
+    CRUISE --> TURN: 左／右へ操舵<br/>（旋回 または 側壁回避）
+    TURN --> CRUISE: 操舵が中央に戻る
+    CRUISE --> EMERGENCY_BRAKE: 中央 < d_emergency_mm
+    TURN --> EMERGENCY_BRAKE: 中央 < d_emergency_mm
+    EMERGENCY_BRAKE --> CRUISE: brake_ms 経過 かつ<br/>中央 ≥ d_min_mm
+    EMERGENCY_BRAKE --> RECOVER_REVERSE: brake_ms 経過 かつ<br/>中央 < d_min_mm
+    CRUISE --> RECOVER_REVERSE: スタック検出<br/>（stuck_time_ms）
+    TURN --> RECOVER_REVERSE: スタック検出
+    RECOVER_REVERSE --> CRUISE: reverse_ms 経過 または<br/>（200 ms 以上後退 かつ 中央 ≥ d_turn_exit_mm）
+    note right of CRUISE
+        いずれかのセンサーの読み取り失敗が
+        invalid_hold_ms を超えると SENSOR_FAULT（停止）、
+        回復すると CRUISE
+    end note
+```
+
+図のソースは `docs/figures/ja`（日本語）と `docs/figures/en`（英語）の `.mmd`（Mermaid）です。README の図はその写しで、ソースを変更したら `python3 docs/figures/sync_readme.py --write` で反映します（CI は `--check` で一致を検査します）。
 
 ## PC 側のビルド（Windows / .NET 10 SDK）
 

@@ -1,0 +1,10 @@
+flowchart TD
+    A["1. 収録（シナリオ名を付与）<br/>学習用・検証用・壁のみ（負例）"] --> B["2. 候補の出力<br/>train_pack.py propose"]
+    B --> C["3. ラベル付け（Claude が候補を確認）<br/>labels.jsonl"]
+    C --> D["4. 学習<br/>train_pack.py train<br/>→ params.json・vision.bin・training.json・manifest.json"]
+    D --> E{"5. 送信前の確認<br/>show・replay・rumicar-replay"}
+    E -->|"再現率が低い／誤検出が多い"| X["ラベル・負例を追加"]
+    X --> D
+    E -->|"問題なし"| F["6. 走行管理アプリで「送る…」→「有効化」"]
+    F --> G["7. 実車で走行・収録"]
+    G -->|"場面を追加したら<br/>全検出器を再学習"| A
