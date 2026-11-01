@@ -196,10 +196,14 @@ jobs:
           path: deb
 
       - name: Build the image
+        # A release build (tag) also gets the Raspberry Pi Imager manifest, which
+        # build-image.sh validates with check_manifest.py (python3-jsonschema for
+        # the schema check).  A build that is not a release has no download URL.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils curl openssl
+          sudo apt-get install -y --no-install-recommends xz-utils curl openssl python3 python3-jsonschema
           sudo car/image/build-image.sh --deb deb/rumicar-zero2cam_*_arm64.deb --out dist
+          if [ "$GITHUB_REF_TYPE" = tag ]; then test -f dist/rumicar-zero2cam.rpi-imager-manifest; fi
 
       - name: Upload the image
         uses: actions/upload-artifact@v5

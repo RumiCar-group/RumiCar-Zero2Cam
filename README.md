@@ -68,6 +68,14 @@ flowchart TB
 
 ダウンロードしたファイルの検証（任意）：Release の `SHA256SUMS.txt` の値と、PowerShell の `Get-FileHash <ファイル名>` の値が一致すれば正常です。
 
+**Imager の一覧から選ぶ方法**（Raspberry Pi Imager 2.0 以降。イメージのダウンロードと検証を Imager が行います）：Imager の左下 **App Options → Content Repository → EDIT** で次の URL を登録して **APPLY & RESTART** すると、デバイス「Raspberry Pi Zero 2 W」の OS 一覧に「RumiCar Zero2Cam <版>」が出ます。選んでストレージを指定し、書き込みます（OS customisation の画面は出ません）。
+
+```
+https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/latest/download/rumicar-zero2cam.rpi-imager-manifest
+```
+
+この一覧（Release の `rumicar-zero2cam.rpi-imager-manifest`）は最新の Release を指し、Imager はイメージの SHA-256 を照合してから書き込み、書き込み後に SD カードを検証します。ダウンロードしてダブルクリックしても同じ一覧で Imager が開きます。元の一覧（Raspberry Pi 公式）には同じ画面で戻せます。
+
 ## 3. 初回起動
 
 1. 車を台に載せ、電源を入れます。

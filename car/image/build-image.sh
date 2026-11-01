@@ -3,12 +3,20 @@
 # official Raspberry Pi OS Lite (64-bit) + the rumicar-zero2cam package +
 # first-boot settings (user, SSH, hostname, wireless country, config.txt).
 #
-#   sudo car/image/build-image.sh --deb rumicar-zero2cam_0.3.2_arm64.deb --out dist [options]
+#   sudo car/image/build-image.sh --deb rumicar-zero2cam_0.4.1_arm64.deb --out dist [options]
 #
 # Runs as root on an arm64 Debian/Ubuntu host (GitHub's ubuntu-24.04-arm
 # runner, or a Raspberry Pi): the package is installed natively in a chroot
 # of the mounted image, so no emulation is involved.  Needs: curl, xz, losetup
 # (util-linux), mount, chroot, openssl, sha256sum.
+#
+# Besides the image it writes a Raspberry Pi Imager repository manifest
+# (rumicar-zero2cam.rpi-imager-manifest, "Repository JSON" of Imager 2.0): point
+# Imager at it (App Options > Content Repository, --repo, or double-click) and
+# the image appears in Imager's OS list, with download, checksum verification
+# and writing done by Imager (docs 7.5, README 2).  The image URL in it is the
+# GitHub Release of the package version (--download-url to override), so it is
+# written only for a release build (version X.Y.Z) or when --download-url is given.
 set -euo pipefail
 
 DEB=""
@@ -21,6 +29,8 @@ PASSWORD="rumicar"       # documented default; the image is public and the AP is
 HOSTNAME="rumicar"
 COUNTRY="JP"             # wireless regulatory domain; required for the access point
 KEEP_WORK=0
+DOWNLOAD_URL=""          # where the finished .img.xz will be downloadable from (for the Imager manifest)
+REPO_URL="https://github.com/RumiCar-group/RumiCar-Zero2Cam"
 
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
@@ -36,6 +46,7 @@ while [ $# -gt 0 ]; do
         --hostname) HOSTNAME="$2"; shift 2 ;;
         --country) COUNTRY="$2"; shift 2 ;;
         --keep-work) KEEP_WORK=1; shift ;;
+        --download-url) DOWNLOAD_URL="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -179,16 +190,45 @@ losetup -d "$LOOP"; LOOP=""
 VERSION="$(dpkg-deb -f "$DEB" Version)"
 STAMP="$(date -u +%Y%m%d)"
 FINAL="$OUT/$NAME-$VERSION-$STAMP.img.xz"
+# Imager verifies the written card against the hash of the *uncompressed* image.
+EXTRACT_SIZE="$(stat -c %s "$IMG")"
+EXTRACT_SHA256="$(sha256sum "$IMG" | cut -d' ' -f1)"
 log "compressing to $FINAL"
 xz -T0 -6 -c "$IMG" > "$FINAL"
 (cd "$OUT" && sha256sum "$(basename "$FINAL")" > "$(basename "$FINAL").sha256")
+DOWNLOAD_SIZE="$(stat -c %s "$FINAL")"
+DOWNLOAD_SHA256="$(cut -d' ' -f1 "$FINAL.sha256")"
+
+# The Imager repository manifest (same schema as Imager's own OS list; see
+# https://github.com/raspberrypi/rpi-imager/blob/main/doc/schema-notes.md).
+# The image URL is the GitHub Release of this version, which exists only for a
+# release build (version X.Y.Z, tagged vX.Y.Z); a +g<commit> build gets no manifest
+# unless --download-url says where its image will be.
+MANIFEST="$OUT/$NAME.rpi-imager-manifest"
+if [ -z "$DOWNLOAD_URL" ] && printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    DOWNLOAD_URL="$REPO_URL/releases/download/v$VERSION/$(basename "$FINAL")"
+fi
+if [ -n "$DOWNLOAD_URL" ]; then
+    log "writing $MANIFEST"
+    python3 "$(dirname "$(readlink -f "$0")")/write_manifest.py" --out "$MANIFEST" --version "$VERSION" --image "$FINAL" \
+        --extract-size "$EXTRACT_SIZE" --extract-sha256 "$EXTRACT_SHA256" --url "$DOWNLOAD_URL" \
+        --base-name "$BASE_NAME" --user "$USERNAME" --password "$PASSWORD"
+    python3 "$(dirname "$(readlink -f "$0")")/check_manifest.py" "$MANIFEST" --image "$FINAL"
+else
+    log "no Imager manifest: version $VERSION is not a release and --download-url was not given"
+fi
+
 cat > "$OUT/$NAME-$VERSION-$STAMP.txt" <<INFO
 RumiCar Zero2Cam standard image
   package:      rumicar-zero2cam $VERSION
   base image:   $BASE_NAME (Raspberry Pi OS Lite 64-bit)
   user:         $USERNAME / $PASSWORD (SSH enabled, hostname $HOSTNAME)
   Wi-Fi:        access point, SSID RumiCar (open), car 10.42.0.1, country $COUNTRY
-  write with:   Raspberry Pi Imager (choose "Use custom") or xz -dc image.img.xz | dd of=/dev/sdX bs=4M
+  image:        $(basename "$FINAL") ($DOWNLOAD_SIZE bytes, sha256 $DOWNLOAD_SHA256)
+                uncompressed $EXTRACT_SIZE bytes, sha256 $EXTRACT_SHA256
+  write with:   Raspberry Pi Imager: add $NAME.rpi-imager-manifest as the content repository
+                (App Options > Content Repository, or double-click it) and pick "RumiCar Zero2Cam $VERSION",
+                or choose "Use custom" with the .img.xz, or xz -dc image.img.xz | dd of=/dev/sdX bs=4M
 INFO
 ls -l "$OUT"
 log "done"
