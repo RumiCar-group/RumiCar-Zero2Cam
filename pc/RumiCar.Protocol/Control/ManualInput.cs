@@ -76,7 +76,7 @@ public sealed class ManualInput
     private int _lastDriveKey;
 
     private int _setPoint;
-    private double _wheelAccumulator;
+    private long _wheelAccumulator;                // scroll not yet turned into set-point steps, in delta × WheelStep (exact integers)
     private int _detentDirection;                  // the direction ignored at zero, 0 = none
     private long _detentUntilMs;
 
@@ -191,11 +191,13 @@ public sealed class ManualInput
             return;
         }
         if (Math.Sign(_wheelAccumulator) == -direction) _wheelAccumulator = 0;
-        _wheelAccumulator += delta * (double)WheelStep / WheelNotch;
-        var steps = (int)(_wheelAccumulator / Quantum);   // towards zero
+        // One notch (WheelNotch delta units) moves the set-point by WheelStep: count in
+        // delta × WheelStep so that small touchpad deltas add up exactly to a notch.
+        _wheelAccumulator += (long)delta * WheelStep;
+        var steps = (int)(_wheelAccumulator / WheelNotch);   // towards zero
         if (steps == 0) return;
-        _wheelAccumulator -= steps * Quantum;
-        var next = _setPoint + steps * Quantum;
+        _wheelAccumulator -= (long)steps * WheelNotch;
+        var next = _setPoint + steps;
         if ((_setPoint > 0 && next < 0) || (_setPoint < 0 && next > 0))
         {
             next = 0;
