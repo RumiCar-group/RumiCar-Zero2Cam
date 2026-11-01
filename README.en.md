@@ -596,12 +596,12 @@ sequenceDiagram
     participant R as runner.py (separate process)
     Note over C,R: Activation (create)
     C->>R: start: python3 -I -B -u runner.py pack
-    R->>R: load params.json and drive.py, setup(car)
+    R->>R: load params.json and drive.py, setup()
     R-->>C: READY (within 15 s) or ERROR message
     loop every 50 ms
         C->>R: F seq t_ms left centre right
         alt response within 30 ms
-            R-->>C: C seq steer drive brake state
+            R-->>C: C seq steer drive_dir drive_pwm state
             C->>C: output the command (core limits applied)
         else exception in loop()
             R-->>C: X seq message
@@ -648,7 +648,7 @@ Every 50 ms the core performs the processing of Figure 10. The state transitions
 <!-- figure: en/10-frame.mmd -->
 ```mermaid
 flowchart TD
-    A["Read ToF ×3 (each within i2c.tof_read_timeout_ms, default 100 ms)<br/>RC_read values: 0..200 [mm] / −3 = out of range (nothing within 20 cm) / −1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
+    A["Read ToF ×3<br/>(each within i2c.tof_read_timeout_ms, default 100 ms)<br/>RC_read values: 0..200 [mm]<br/>−3 = out of range (nothing within 20 cm)<br/>−1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
     B --> C["Logic step()<br/>(every frame, in every mode)"]
     C --> E{"Emergency stop?<br/>Drive mode?"}
     E -->|"E-stop active"| B1["Brake"]

@@ -1,5 +1,5 @@
 flowchart TD
-    A["Read ToF ×3 (each within i2c.tof_read_timeout_ms, default 100 ms)<br/>RC_read values: 0..200 [mm] / −3 = out of range (nothing within 20 cm) / −1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
+    A["Read ToF ×3<br/>(each within i2c.tof_read_timeout_ms, default 100 ms)<br/>RC_read values: 0..200 [mm]<br/>−3 = out of range (nothing within 20 cm)<br/>−1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
     B --> C["Logic step()<br/>(every frame, in every mode)"]
     C --> E{"Emergency stop?<br/>Drive mode?"}
     E -->|"E-stop active"| B1["Brake"]
