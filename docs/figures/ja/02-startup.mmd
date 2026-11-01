@@ -1,0 +1,9 @@
+flowchart TD
+    P["電源投入<br/>（systemd が rumicar-core を起動）"] --> M["1. モーターをブレーキ"]
+    M --> S["2. VL53L0X ×3 の初期化<br/>（失敗時は終了コード 3、systemd が 5 秒後に再起動）"]
+    S --> L["3. ロジック／パックの読み込みと self_test<br/>（失敗時は previous/* を 1 回だけ試行）"]
+    L --> W["4. Wi-Fi AP の起動（network.ap_start = core、最長 20 秒）<br/>（失敗時は rumicar-ap.timer が起動 90 秒後から 60 秒ごとに再試行）"]
+    W --> N["5. 制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）の起動"]
+    N --> LOOP["6. 制御ループ開始<br/>（startup_mode：既定 record_only で待機）"]
+    LOOP -.->|"PC 接続中 または 自動モード<br/>（camera.on_demand = true）"| C["カメラの起動（別スレッド）<br/>（失敗時は 30 秒ごとに再試行）"]
+    LOOP -->|"走行管理アプリで「自動」"| A["走行開始<br/>（駆動の許容値を 0 から増加）"]

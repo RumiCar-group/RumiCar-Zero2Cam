@@ -1,0 +1,9 @@
+flowchart TD
+    P["Power on<br/>(systemd starts rumicar-core)"] --> M["1. Brake the motors"]
+    M --> S["2. Initialise VL53L0X ×3<br/>(on failure: exit code 3, systemd restarts after 5 s)"]
+    S --> L["3. Load the logic / pack and run self_test<br/>(on failure: previous/* is tried once)"]
+    L --> W["4. Start the Wi-Fi AP (network.ap_start = core, up to 20 s)<br/>(on failure: rumicar-ap.timer retries every 60 s from 90 s after boot)"]
+    W --> N["5. Start the control server (TCP 5600) and telemetry server (TCP 5601)"]
+    N --> LOOP["6. Start the control loop<br/>(startup_mode: waits in record_only by default)"]
+    LOOP -.->|"PC connected or auto mode<br/>(camera.on_demand = true)"| C["Start the camera (separate thread)<br/>(on failure: retried every 30 s)"]
+    LOOP -->|"自動 (auto) in the drive manager"| A["Start driving<br/>(permitted drive increases from 0)"]

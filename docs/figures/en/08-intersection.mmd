@@ -1,0 +1,18 @@
+stateDiagram-v2
+    state "Normal" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> INTERSECTION_APPROACH: intersection detector confirmed<br/>(stop_trigger = side_open)
+    NORMAL --> INTERSECTION_STOP: intersection detector confirmed<br/>(stop_trigger = detector)
+    INTERSECTION_APPROACH --> NORMAL: confirmation released
+    INTERSECTION_APPROACH --> INTERSECTION_STOP: left or right ToF ≥ open_mm
+    INTERSECTION_STOP --> NORMAL: stop_ms elapsed, no red light<br/>path straight
+    INTERSECTION_STOP --> INTERSECTION_CROSS: stop_ms elapsed, no red light<br/>path left / right
+    INTERSECTION_CROSS --> INTERSECTION_TURN: turn-side ToF ≥ open_mm
+    INTERSECTION_CROSS --> NORMAL: cross_max_ms elapsed (ends straight)<br/>or red light / ToF emergency action
+    INTERSECTION_TURN --> NORMAL: turn_ms elapsed<br/>or red light / ToF emergency action
+    note right of INTERSECTION_STOP
+        The path is decided on stopping: turn = straight / left / right / detector
+        (detector: the detected side; both sides → straight).
+        APPROACH does not start during overtaking.
+        After returning to Normal from STOP, CROSS or TURN, intersection detections are ignored for ignore_ms
+    end note

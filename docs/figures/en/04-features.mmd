@@ -1,0 +1,10 @@
+flowchart TD
+    I["Camera image RGB24<br/>320×240"] --> R["Reduce to 1/5 → 64×48<br/>(mean of 5×5 pixels)"]
+    R --> C["Pixel classes: 6 hues, bright, dark<br/>value V, saturation S, value gradients (horizontal, vertical)"]
+    C --> G["8×6 cells (8×8 pixels each)<br/>12 values per cell: pixel counts of 8 classes, ΣV, ΣS, Σ|dx|, Σ|dy|"]
+    G --> F["576 features (integers) → standardised z"]
+    F --> L["Local detector<br/>each cell with its 3×3 neighbourhood (108 values)<br/>→ score per cell p = σ(w·z + b)"]
+    F --> GL["Global detector<br/>576 values → score p = σ(w·z + b)"]
+    L --> T["Temporal confirmation<br/>p ≥ thr_on (local: also cells ≥ min_cells) for confirm_frames → confirmed<br/>p < thr_off for release_frames → released"]
+    GL --> T
+    T --> B["To the behaviours (traffic light, vehicle, intersection)"]

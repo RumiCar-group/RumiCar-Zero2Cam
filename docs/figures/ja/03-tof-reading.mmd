@@ -1,0 +1,11 @@
+flowchart TD
+    R["VL53L0X の読み取り"] --> Q{"i2c.tof_read_timeout_ms 以内に<br/>測定結果が得られた？<br/>I2C 通信は正常？"}
+    Q -->|"いいえ"| F["読み取り失敗 → −1<br/>表示 --、drive.py では None"]
+    Q -->|"はい"| V{"測距値 ≥ 8190？"}
+    V -->|"はい"| O["対象物未検出 → 8190<br/>表示 open、drive.py では car.FAR<br/>（反射光が戻らない、または受信信号が規定値未満）"]
+    V -->|"いいえ"| D["測距値 [mm]"]
+    D --> T{"tof_drive：<br/>conf_max_mm（既定 250）以上？"}
+    T -->|"はい"| OPEN["tof_drive：開放<br/>（判断対象の距離内に障害物なし）"]
+    O --> OPEN
+    T -->|"いいえ"| USE["tof_drive：距離として使用<br/>（中央値フィルタ・指数平滑）"]
+    F --> HOLD["tof_drive：前の値を invalid_hold_ms（既定 300 ms）保持<br/>超過で SENSOR_FAULT（停止）"]

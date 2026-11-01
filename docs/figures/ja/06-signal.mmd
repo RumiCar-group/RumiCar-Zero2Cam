@@ -1,0 +1,12 @@
+stateDiagram-v2
+    state "通常（tof_drive の状態）" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> SIGNAL_APPROACH: 赤信号を確定<br/>（セル数 < stop_min_cells）
+    NORMAL --> SIGNAL_STOP: 赤信号を確定<br/>（セル数 ≥ stop_min_cells）
+    SIGNAL_APPROACH --> SIGNAL_STOP: セル数 ≥ stop_min_cells
+    SIGNAL_APPROACH --> NORMAL: 赤信号の確定が解除
+    SIGNAL_STOP --> SIGNAL_RESUME: min_stop_ms 経過後、青信号を確定<br/>または 赤信号の解除から<br/>resume_without_green_ms 経過
+    SIGNAL_RESUME --> NORMAL: resume_ignore_ms 経過
+    note right of SIGNAL_APPROACH: 速度の上限 approach_v
+    note right of SIGNAL_STOP: 速度の上限 0（停止後はブレーキ保持）
+    note right of SIGNAL_RESUME: 赤信号の検出を無視

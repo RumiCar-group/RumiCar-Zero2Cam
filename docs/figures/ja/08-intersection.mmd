@@ -1,0 +1,18 @@
+stateDiagram-v2
+    state "通常" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> INTERSECTION_APPROACH: 交差点検出器を確定<br/>（stop_trigger = side_open）
+    NORMAL --> INTERSECTION_STOP: 交差点検出器を確定<br/>（stop_trigger = detector）
+    INTERSECTION_APPROACH --> NORMAL: 確定が解除
+    INTERSECTION_APPROACH --> INTERSECTION_STOP: 左右いずれかの ToF ≥ open_mm
+    INTERSECTION_STOP --> NORMAL: stop_ms 経過・赤信号なし<br/>進路が直進
+    INTERSECTION_STOP --> INTERSECTION_CROSS: stop_ms 経過・赤信号なし<br/>進路が左／右
+    INTERSECTION_CROSS --> INTERSECTION_TURN: 曲がる側の ToF ≥ open_mm
+    INTERSECTION_CROSS --> NORMAL: cross_max_ms 経過（直進で終了）<br/>または 赤信号・ToF の非常動作
+    INTERSECTION_TURN --> NORMAL: turn_ms 経過<br/>または 赤信号・ToF の非常動作
+    note right of INTERSECTION_STOP
+        停止時に進路を決定：turn = straight／left／right／detector
+        （detector は検出した側。両側なら直進）
+        追い越し中は APPROACH を開始しない。
+        STOP・CROSS・TURN から通常へ戻った後は ignore_ms の間、交差点の検出を無視する
+    end note

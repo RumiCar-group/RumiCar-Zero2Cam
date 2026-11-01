@@ -103,6 +103,9 @@ jobs:
           python3 car/tools/make_manifest.py verify car/packs/cam-base
           python3 car/tools/make_manifest.py verify car/packs/py-sample
 
+      - name: Figures in the READMEs match their sources (docs/figures)
+        run: python3 docs/figures/sync_readme.py --check
+
       - name: Golden data of the vision layer is reproducible from the Python implementation
         run: python3 car/tests/data/vision/make_golden.py --check
 

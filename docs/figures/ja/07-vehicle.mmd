@@ -1,0 +1,18 @@
+stateDiagram-v2
+    state "通常" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> FOLLOW: 自車線に車両を確定<br/>（無視時間 ignore_ms の経過後）
+    FOLLOW --> NORMAL: 車両を検出せず ToF も開放<br/>または 非検出が ignore_ms 継続
+    FOLLOW --> OVERTAKE_OUT: 駐車車両と判定<br/>（停止・車間不変が parked_confirm_ms）<br/>かつ 追い越し側の ToF ≥ side_clear_mm
+    FOLLOW --> FOLLOW_WAIT: 駐車車両と判定<br/>通過可能な側なし
+    FOLLOW_WAIT --> FOLLOW: 車間が still_delta_mm を超えて拡大
+    FOLLOW_WAIT --> OVERTAKE_OUT: 追い越し側の ToF ≥ side_clear_mm
+    FOLLOW_WAIT --> NORMAL: 車両を検出せず ToF も開放<br/>または 非検出が ignore_ms 継続
+    OVERTAKE_OUT --> OVERTAKE_PASS: out_ms 経過
+    OVERTAKE_PASS --> OVERTAKE_IN: 通過完了（内側の ToF が pass_clear_mm 未満の後、<br/>以上が pass_clear_ms 継続、かつ pass_min_ms 以上）<br/>または pass_max_ms 経過
+    OVERTAKE_IN --> NORMAL: in_ms 経過
+    note right of OVERTAKE_PASS
+        OVERTAKE_OUT／PASS／IN の間に赤信号・交差点の処理が始まるか、
+        ToF の非常ブレーキ・後退・センサー異常になると中止して通常へ。
+        通常へ戻った後は ignore_ms の間、車両の検出を無視する
+    end note

@@ -16,8 +16,31 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 |---|---|
 | `car/` | Car side: `rumicar-core` (control loop, hardware control, networking, hot-swap mechanism), the driving logics `tof_drive`, `cam_drive` and `py_drive` (shared libraries; `py_drive` executes a Python program written by the user), the bundled packs `base-tof`, `cam-base` and `py-sample`, the learning and replay tools, unit tests, Debian package and SD-card image builds |
 | `pc/` | PC side: `RumiCar.Protocol` (wire formats, manifests, recording), `RumiCar.Protocol.Tests`, `RumiCar.DriveManager` (WPF drive manager) |
-| `docs/` | The specification and the design record (both .docx, in Japanese; published for educational use) |
+| `docs/` | The specification and the design record (both .docx, in Japanese; published for educational use), the figure sources (`docs/figures`, Mermaid, Japanese and English) |
 | `.github/workflows/` | CI (`car.yml`: Debian 13 arm64/amd64 and the SD-card image, `pc.yml`: Windows, `release.yml`: releases from tags) |
+
+**Figure 1** System overview (car, PC, Claude desktop app)
+
+<!-- figure: en/01-system.mmd -->
+```mermaid
+flowchart TB
+    subgraph CAR["Car (Raspberry Pi Zero 2 W)"]
+        direction TB
+        SEN["VL53L0X ×3<br/>(left, centre, right)"] --> CORE
+        CAM["Camera Module 2<br/>(320×240, 20 fps)"] --> CORE
+        CORE["rumicar-core<br/>control loop 50 ms"] <--> LOGIC["Driving logic (.so)<br/>tof_drive / cam_drive / py_drive"]
+        PACK["Decision data (pack)<br/>params.json / vision.bin / drive.py"] --> LOGIC
+        CORE --> MOT["DRV8835<br/>steering and drive motors"]
+    end
+    subgraph PCSIDE["PC (Windows)"]
+        direction TB
+        APP["Drive manager<br/>status and image display, drive mode,<br/>emergency stop, version management"] --> REC["Recording folder<br/>frames/, meta.jsonl, session.json"]
+    end
+    CORE <-->|"Wi-Fi AP (SSID RumiCar, 10.42.0.1)<br/>control TCP 5600 / telemetry TCP 5601"| APP
+    REC --> CL["Claude desktop app<br/>labelling, learning with train_pack.py"]
+    CL --> NEW["New pack<br/>(with manifest.json)"]
+    NEW -->|"送る… (send) → 有効化 (activate)<br/>(swappable while driving)"| APP
+```
 
 ---
 
@@ -50,6 +73,21 @@ Optional verification of the download: the values in the Release's `SHA256SUMS.t
 1. Place the car on a stand and switch it on.
 2. The first boot expands the partition and reboots once automatically. Wait 2–3 minutes.
 3. `rumicar-core` then initialises the sensors → starts the Wi-Fi access point → starts the camera (after a PC connects), in this order. Functions with high current consumption are not started simultaneously, to avoid voltage drops on dry-cell batteries (section 10). **The car does not drive at this point** (record only); connect as in section 4 and select 「自動」.
+
+**Figure 2** Start-up sequence (high-current functions started one after another)
+
+<!-- figure: en/02-startup.mmd -->
+```mermaid
+flowchart TD
+    P["Power on<br/>(systemd starts rumicar-core)"] --> M["1. Brake the motors"]
+    M --> S["2. Initialise VL53L0X ×3<br/>(on failure: exit code 3, systemd restarts after 5 s)"]
+    S --> L["3. Load the logic / pack and run self_test<br/>(on failure: previous/* is tried once)"]
+    L --> W["4. Start the Wi-Fi AP (network.ap_start = core, up to 20 s)<br/>(on failure: rumicar-ap.timer retries every 60 s from 90 s after boot)"]
+    W --> N["5. Start the control server (TCP 5600) and telemetry server (TCP 5601)"]
+    N --> LOOP["6. Start the control loop<br/>(startup_mode: waits in record_only by default)"]
+    LOOP -.->|"PC connected or auto mode<br/>(camera.on_demand = true)"| C["Start the camera (separate thread)<br/>(on failure: retried every 30 s)"]
+    LOOP -->|"自動 (auto) in the drive manager"| A["Start driving<br/>(permitted drive increases from 0)"]
+```
 
 Image defaults:
 
@@ -95,6 +133,23 @@ ToF readings:
 | number | Measured distance [mm] |
 | `open` | No target detected (sensor value 8190). Typically the laser light was not reflected back from an object, or the received signal was too weak and below the configured limit |
 | `--` | Read failure (no measurement within `i2c.tof_read_timeout_ms`, or an I2C communication error) |
+
+**Figure 3** Handling of ToF readings (display and tof_drive decisions)
+
+<!-- figure: en/03-tof-reading.mmd -->
+```mermaid
+flowchart TD
+    R["Read a VL53L0X"] --> Q{"Measurement available within<br/>i2c.tof_read_timeout_ms?<br/>I2C communication OK?"}
+    Q -->|"No"| F["Read failure → −1<br/>display --, None in drive.py"]
+    Q -->|"Yes"| V{"Range ≥ 8190?"}
+    V -->|"Yes"| O["No target detected → 8190<br/>display open, car.FAR in drive.py<br/>(no reflected light, or received signal below the limit)"]
+    V -->|"No"| D["Range [mm]"]
+    D --> T{"tof_drive:<br/>at or above conf_max_mm (default 250)?"}
+    T -->|"Yes"| OPEN["tof_drive: open<br/>(no obstacle within the judged distance)"]
+    O --> OPEN
+    T -->|"No"| USE["tof_drive: used as a distance<br/>(median filter, exponential smoothing)"]
+    F --> HOLD["tof_drive: previous value held for invalid_hold_ms (default 300 ms)<br/>beyond that SENSOR_FAULT (stop)"]
+```
 
 The window title and the header show the application's version. Next to it the header shows **PC の Wi-Fi**, the name of the network this PC is currently connected to. It turns red, and the event is logged, when the PC leaves the network it was on when it connected to the car (normally `RumiCar`). Windows may automatically switch from an access point without Internet access to another network, so check this display first when communication is interrupted unexpectedly (section 10). If the network name cannot be obtained on Windows 11 24H2 or later, turn on Settings → Privacy & security → Location → "Let desktop apps access your location" (Windows treats network names as location data).
 
@@ -172,6 +227,22 @@ A rebuilt driving logic (the `tof_drive` `.so`) is sent the same way (`make_mani
 
 The car keeps the ToF (distance sensor) driving as its base. In addition, each camera image is converted into features (320×240 reduced to 1/5 and divided into 8×6 cells; per cell, the pixel counts of 8 colour classes (6 hues plus bright and dark) and the sums of value, saturation and value gradients (horizontal, vertical) — 576 integers), to which **detectors learned from the recordings** are applied. There are two kinds of detector: **local detectors**, which output a position in the image (red light, green light, vehicle; evaluated on a 3×3 window of cells), and **global detectors**, which output a state of the whole image (an intersection ahead, etc.). Based on the detection results, three behaviours give the ToF driving a "speed cap" and a "steering mode".
 
+**Figure 4** Feature extraction and detectors
+
+<!-- figure: en/04-features.mmd -->
+```mermaid
+flowchart TD
+    I["Camera image RGB24<br/>320×240"] --> R["Reduce to 1/5 → 64×48<br/>(mean of 5×5 pixels)"]
+    R --> C["Pixel classes: 6 hues, bright, dark<br/>value V, saturation S, value gradients (horizontal, vertical)"]
+    C --> G["8×6 cells (8×8 pixels each)<br/>12 values per cell: pixel counts of 8 classes, ΣV, ΣS, Σ|dx|, Σ|dy|"]
+    G --> F["576 features (integers) → standardised z"]
+    F --> L["Local detector<br/>each cell with its 3×3 neighbourhood (108 values)<br/>→ score per cell p = σ(w·z + b)"]
+    F --> GL["Global detector<br/>576 values → score p = σ(w·z + b)"]
+    L --> T["Temporal confirmation<br/>p ≥ thr_on (local: also cells ≥ min_cells) for confirm_frames → confirmed<br/>p < thr_off for release_frames → released"]
+    GL --> T
+    T --> B["To the behaviours (traffic light, vehicle, intersection)"]
+```
+
 | Behaviour | Detectors | Action |
 |---|---|---|
 | `signal` | red / green light (local) | When the red light is detected for the configured number of frames: decelerate; when close: stop. When the green light is detected (or a configured time has passed since the red light was last detected): start |
@@ -189,6 +260,22 @@ The learned result is a "decision data pack": `params.json` (ToF and behaviour p
 - Optional: `rumicar-replay` (GitHub Actions artifact `rumicar-replay-amd64`), which replays a recording through the actual logic so that stop/start decisions can be checked before sending
 
 ### 7.3 Procedure
+
+**Figure 5** From learning to the car
+
+<!-- figure: en/05-learning.mmd -->
+```mermaid
+flowchart TD
+    A["1. Record (with a scenario name)<br/>for learning, for validation, walls only (negatives)"] --> B["2. Propose candidates<br/>train_pack.py propose"]
+    B --> C["3. Label (Claude checks the candidates)<br/>labels.jsonl"]
+    C --> D["4. Learn<br/>train_pack.py train<br/>→ params.json, vision.bin, training.json, manifest.json"]
+    D --> E{"5. Check before sending<br/>show, replay, rumicar-replay"}
+    E -->|"Low recall / many false detections"| X["Add labels / negatives"]
+    X --> D
+    E -->|"OK"| F["6. 送る… (send) → 有効化 (activate) in the drive manager"]
+    F --> G["7. Drive and record on the real car"]
+    G -->|"New scenes added:<br/>re-learn all detectors"| A
+```
 
 1. **Record**: drive a course with a traffic light (to capture red and green before starting, the car may be moved by hand in record-only mode) with a scenario name such as "信号機ありケース1". Recordings of a course without traffic lights ("壁のみの走行データ") are used automatically as "no traffic light in view" examples (negatives), so prepare those as well. Make at least two separate recordings, one for learning and one for validation.
 2. **Label**: `python car/tools/train_pack.py propose <session> --detector traffic_light_red` writes candidate red regions (frame index and box) to `proposals_traffic_light_red.jsonl`. Let Claude read that folder, check the candidate frames (images in `frames/`) and write the correct ones into `labels.jsonl`. Likewise for the green light (`--detector traffic_light_green`). Candidate lines have the same format as `labels.jsonl` lines, and extra keys (`image`, `pixels`, etc., which record why the line was proposed) are ignored, so the lines can be used after deleting the unwanted ones. The format is as follows (one object per line; boxes are pixel coordinates [x0, y0, x1, y1] with x1/y1 exclusive):
@@ -243,6 +330,24 @@ python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
 
 Override with `--signal key=value` of `train` (e.g. `--signal stop_min_cells=3`).
 
+**Figure 6** State transitions of the traffic-light behaviour
+
+<!-- figure: en/06-signal.mmd -->
+```mermaid
+stateDiagram-v2
+    state "Normal (tof_drive states)" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> SIGNAL_APPROACH: red light confirmed<br/>(cells < stop_min_cells)
+    NORMAL --> SIGNAL_STOP: red light confirmed<br/>(cells ≥ stop_min_cells)
+    SIGNAL_APPROACH --> SIGNAL_STOP: cells ≥ stop_min_cells
+    SIGNAL_APPROACH --> NORMAL: red light released
+    SIGNAL_STOP --> SIGNAL_RESUME: after min_stop_ms, green light confirmed<br/>or resume_without_green_ms elapsed<br/>since the red light was released
+    SIGNAL_RESUME --> NORMAL: resume_ignore_ms elapsed
+    note right of SIGNAL_APPROACH: speed cap approach_v
+    note right of SIGNAL_STOP: speed cap 0 (brake held once stopped)
+    note right of SIGNAL_RESUME: red-light detections ignored
+```
+
 ### 7.5 Vehicle behaviour (the `vehicle` part of params.json)
 
 If this section (`vehicle`) is absent from `params.json` the behaviour is disabled. If present, every key is required (`train` adds it automatically to packs that contain the `vehicle` detector; override with `--vehicle key=value`). All distances are values after `tof_drive`'s processing; readings at or above `tof.conf_max_mm` (including no target detected) are treated as "open".
@@ -267,6 +372,31 @@ If this section (`vehicle`) is absent from `params.json` the behaviour is disabl
 
 Overtaking is open-loop control divided by time (because the steering has only three states: left, centre, right). Adjust the lane-change and return durations to the course and the speed.
 
+**Figure 7** State transitions of the vehicle behaviour
+
+<!-- figure: en/07-vehicle.mmd -->
+```mermaid
+stateDiagram-v2
+    state "Normal" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> FOLLOW: vehicle confirmed in the own lane<br/>(after the ignore time ignore_ms)
+    FOLLOW --> NORMAL: vehicle not detected and ToF open<br/>or not detected for ignore_ms
+    FOLLOW --> OVERTAKE_OUT: classified as parked<br/>(stopped, gap unchanged for parked_confirm_ms)<br/>and passing-side ToF ≥ side_clear_mm
+    FOLLOW --> FOLLOW_WAIT: classified as parked<br/>no side to pass on
+    FOLLOW_WAIT --> FOLLOW: gap widened by more than still_delta_mm
+    FOLLOW_WAIT --> OVERTAKE_OUT: passing-side ToF ≥ side_clear_mm
+    FOLLOW_WAIT --> NORMAL: vehicle not detected and ToF open<br/>or not detected for ignore_ms
+    OVERTAKE_OUT --> OVERTAKE_PASS: out_ms elapsed
+    OVERTAKE_PASS --> OVERTAKE_IN: passed (inner ToF below pass_clear_mm, then<br/>at or above it for pass_clear_ms, and ≥ pass_min_ms)<br/>or pass_max_ms elapsed
+    OVERTAKE_IN --> NORMAL: in_ms elapsed
+    note right of OVERTAKE_PASS
+        During OVERTAKE_OUT / PASS / IN, a red light or an intersection being handled,
+        or the ToF logic's emergency brake, reversing or sensor fault,
+        aborts the manoeuvre (back to Normal).
+        After returning to Normal, vehicle detections are ignored for ignore_ms
+    end note
+```
+
 ### 7.6 Intersection behaviour (the `intersection` part of params.json)
 
 If this section (`intersection`) is absent the behaviour is disabled. If present, every key is required (`train` adds it automatically to packs that contain `intersection_left` or `intersection_right`; override with `--intersection key=value`).
@@ -283,6 +413,30 @@ If this section (`intersection`) is absent the behaviour is disabled. If present
 | `cross_max_ms` | 2000 | Maximum time to drive straight waiting for the turn side's ToF to become open (if it does not, the manoeuvre ends going straight) |
 | `turn_ms` | 900 | Duration of maximum steering towards the turn side |
 | `ignore_ms` | 3000 | Time after completion during which intersection detections are ignored |
+
+**Figure 8** State transitions of the intersection behaviour
+
+<!-- figure: en/08-intersection.mmd -->
+```mermaid
+stateDiagram-v2
+    state "Normal" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> INTERSECTION_APPROACH: intersection detector confirmed<br/>(stop_trigger = side_open)
+    NORMAL --> INTERSECTION_STOP: intersection detector confirmed<br/>(stop_trigger = detector)
+    INTERSECTION_APPROACH --> NORMAL: confirmation released
+    INTERSECTION_APPROACH --> INTERSECTION_STOP: left or right ToF ≥ open_mm
+    INTERSECTION_STOP --> NORMAL: stop_ms elapsed, no red light<br/>path straight
+    INTERSECTION_STOP --> INTERSECTION_CROSS: stop_ms elapsed, no red light<br/>path left / right
+    INTERSECTION_CROSS --> INTERSECTION_TURN: turn-side ToF ≥ open_mm
+    INTERSECTION_CROSS --> NORMAL: cross_max_ms elapsed (ends straight)<br/>or red light / ToF emergency action
+    INTERSECTION_TURN --> NORMAL: turn_ms elapsed<br/>or red light / ToF emergency action
+    note right of INTERSECTION_STOP
+        The path is decided on stopping: turn = straight / left / right / detector
+        (detector: the detected side; both sides → straight).
+        APPROACH does not start during overtaking.
+        After returning to Normal from STOP, CROSS or TURN, intersection detections are ignored for ignore_ms
+    end note
+```
 
 ### 7.7 How the behaviours combine
 
@@ -427,6 +581,32 @@ Your own `.py` files can be placed next to `drive.py` and imported. Only the Pyt
 - On entering auto mode the permitted drive increases from 0, and the car never exceeds 自動の最大出力 or its `max_drive_permille`. Manual mode, record-only and the emergency stop behave the same for every logic.
 - The program runs in a process separate from the core, so the core's control period (50 ms) is maintained even if the program stops responding.
 
+**Figure 9** Per-frame exchange between the core and drive.py (runner.py)
+
+<!-- figure: en/09-py-drive.mmd -->
+```mermaid
+sequenceDiagram
+    participant C as rumicar-core (libpy_drive.so)
+    participant R as runner.py (separate process)
+    Note over C,R: Activation (create)
+    C->>R: start: python3 -I -B -u runner.py pack
+    R->>R: load params.json and drive.py, setup(car)
+    R-->>C: READY (within 15 s) or ERROR message
+    loop every 50 ms
+        C->>R: F seq t_ms left centre right
+        alt response within 30 ms
+            R-->>C: C seq steer drive brake state
+            C->>C: output the command (core limits applied)
+        else exception in loop()
+            R-->>C: X seq message
+            C->>C: brake this frame (program continues)
+        else no response within 30 ms
+            C->>C: brake this frame (late response discarded)
+        end
+    end
+    Note over C,R: No response for 1 s or more since the last one → SIGKILL<br/>(also when the program ends: braked until the next activation)
+```
+
 ### 11.4 Notes
 
 - A sent pack is stored in `/var/lib/rumicar/packs/<folder name>-<time>/`; `rumicar-activate pair py_drive-0.1.1 <pack>` switches to it over SSH (logic and data are switched as a pair).
@@ -452,6 +632,57 @@ To install on a car, use the Debian package (the CI artifact `rumicar-zero2cam-d
 Without libcamera, build with `-DRUMICAR_WITH_CAMERA=OFF` (that core does not start a camera and drives on the ToF sensors only).
 
 The driving logics are in `car/logic/`: `tof_drive` (ToF driving), `cam_drive` (camera-based decisions added to `tof_drive`: `vision_features` features, `vision_pack` for `vision.bin`, `vision_eval` detector evaluation with temporal confirmation, `cam_logic` the traffic-light, vehicle and intersection behaviours and their priorities) and `py_drive` (`runner.py` executes the pack's `drive.py` in a separate process, and `py_process` exchanges one line per frame; timeouts and abnormal termination brake; `test_py_drive` verifies it with the actual runner). The interface between the core and the logics is defined in `car/include/rumicar/logic_api.h` (ABI 2: the auxiliary output `aux` and `aux_name`). The Python implementation of the features and `vision.bin` is `car/tools/rumicar_vision.py`; `test_vision` verifies that it matches the C++ implementation exactly through the golden data in `car/tests/data/vision` (generated by `make_golden.py`). `car/tests/tools_smoke.py <build dir>` learns from synthetic recordings and verifies end to end with `rumicar-replay` stopping and starting, following and overtaking, and stopping at an intersection (also run in CI).
+
+## Control loop and the ToF driving logic
+
+Every 50 ms the core performs the processing of Figure 10. The state transitions of the driving logic `tof_drive` are shown in Figure 11 (spec 3.5, 3.7).
+
+**Figure 10** Processing of one control-loop frame (50 ms)
+
+<!-- figure: en/10-frame.mmd -->
+```mermaid
+flowchart TD
+    A["Read ToF ×3 (each within i2c.tof_read_timeout_ms, default 100 ms)<br/>number / 8190 = no target detected / −1 = read failure"] --> B["Attach the latest camera image<br/>(only frames with a new image)"]
+    B --> C["Logic step()<br/>(every frame, in every mode)"]
+    C --> E{"Emergency stop?<br/>Drive mode?"}
+    E -->|"E-stop active"| B1["Brake"]
+    E -->|"Record only"| B2["Brake"]
+    E -->|"Manual"| H["PC's manual_drive<br/>(limited to ±max_drive_permille)"]
+    E -->|"Auto"| F{"step() succeeded?"}
+    F -->|"Failed"| B3["Brake"]
+    F -->|"Succeeded"| G["Limit the drive to the permitted value<br/>permitted = min(increase from 0 at auto_accel_permille_per_s,<br/>auto limit, max_drive_permille)<br/>brake if the command has BRAKE / FAULT"]
+    B1 --> MO["Output to DRV8835"]
+    B2 --> MO
+    B3 --> MO
+    H --> MO
+    G --> MO
+    MO --> T["Status and JPEG to telemetry (if a client is receiving)<br/>→ next period (50 ms)"]
+```
+
+**Figure 11** State transitions of tof_drive
+
+<!-- figure: en/11-tof-states.mmd -->
+```mermaid
+stateDiagram-v2
+    state "TURN_LEFT / TURN_RIGHT" as TURN
+    [*] --> CRUISE
+    CRUISE --> TURN: steering left / right<br/>(turning or side-wall avoidance)
+    TURN --> CRUISE: steering back to centre
+    CRUISE --> EMERGENCY_BRAKE: centre < d_emergency_mm
+    TURN --> EMERGENCY_BRAKE: centre < d_emergency_mm
+    EMERGENCY_BRAKE --> CRUISE: brake_ms elapsed and<br/>centre ≥ d_min_mm
+    EMERGENCY_BRAKE --> RECOVER_REVERSE: brake_ms elapsed and<br/>centre < d_min_mm
+    CRUISE --> RECOVER_REVERSE: stuck detected<br/>(stuck_time_ms)
+    TURN --> RECOVER_REVERSE: stuck detected
+    RECOVER_REVERSE --> CRUISE: reverse_ms elapsed or<br/>(reversed ≥ 200 ms and centre ≥ d_turn_exit_mm)
+    note right of CRUISE
+        A read failure of any sensor longer than
+        invalid_hold_ms gives SENSOR_FAULT (stop);
+        on recovery, CRUISE
+    end note
+```
+
+The figure sources are the `.mmd` (Mermaid) files in `docs/figures/ja` (Japanese) and `docs/figures/en` (English). The figures in the READMEs are copies of them; after changing a source, run `python3 docs/figures/sync_readme.py --write` (CI checks that they match with `--check`).
 
 ## Building the PC side (Windows / .NET 10 SDK)
 

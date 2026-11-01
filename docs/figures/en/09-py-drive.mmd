@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant C as rumicar-core (libpy_drive.so)
+    participant R as runner.py (separate process)
+    Note over C,R: Activation (create)
+    C->>R: start: python3 -I -B -u runner.py pack
+    R->>R: load params.json and drive.py, setup(car)
+    R-->>C: READY (within 15 s) or ERROR message
+    loop every 50 ms
+        C->>R: F seq t_ms left centre right
+        alt response within 30 ms
+            R-->>C: C seq steer drive brake state
+            C->>C: output the command (core limits applied)
+        else exception in loop()
+            R-->>C: X seq message
+            C->>C: brake this frame (program continues)
+        else no response within 30 ms
+            C->>C: brake this frame (late response discarded)
+        end
+    end
+    Note over C,R: No response for 1 s or more since the last one → SIGKILL<br/>(also when the program ends: braked until the next activation)
