@@ -130,6 +130,7 @@ flowchart TD
 | 収録 | 保存先（既定 `C:\Users\<ユーザー>\RumiCarData`）、**シナリオ**（収録する場面の名前。例：「壁のみの走行データ」「信号機ありケース1」。入力するか、過去に使用した名前から選択）、**メモ**（任意）、「収録開始／収録停止」。**既定では接続時に収録を自動で開始し**（「接続したら自動で収録を開始する」）、切断時に終了します。シナリオとメモは収録開始時の値を `session.json` に記録します。受信した全フレームを保存します。「受信フレーム数」の（画像付き N）が増加していれば、カメラ画像を受信しています |
 | 動画を作る… | 収録フォルダを選択すると、その画像から `video.avi`（Motion JPEG、実時間、20 フレーム/秒）を同じフォルダに作成します。未接続でも使用可（6.4） |
 | 版の管理 | 車にインストールされたロジック／データの一覧（`[使用中]`、`[直前]`、検証失敗の表示。選択すると説明・対応機能・学習元・対象ロジックを下に表示）。「一覧更新」「送る…」「自分のプログラムを送る…」（11 章）「有効化」「削除」「ロジックを戻す」「データを戻す」（6 章）。データ（パック）は特定のロジック用に作成されるため、別のロジック用のデータを「有効化」するとロジックも同時に切り替わります（逆も同様）。戻す操作も同様に両方を戻します |
+| SD カード（車の本体の更新） | 最新の Release と、このアプリ・接続中の車の本体の版を表示します（起動時と接続時に GitHub を確認。PC がインターネットに接続していないときは確認できません）。「SD カードを作る…」で Release の一覧から版を選ぶと、イメージを `<保存先>\images` にダウンロードして SHA-256 で検証し、Raspberry Pi Imager をその版だけの一覧で開きます（2 章）。書き込みは Imager が行います。SD カードの新規作成と、本体の更新（9.1）に使います |
 | ログ | 接続・応答・イベント・エラーを時刻付きで記録。接続時に車の本体とこのアプリの版を記録し、異なる Release の組み合わせであれば警告を記録します（9.4） |
 
 ToF の表示値（RumiCar ライブラリの `RC_read()` の戻り値と同じ）：
@@ -482,7 +483,7 @@ sudo nano /etc/rumicar/core.json       # 設定（変更後は sudo systemctl re
 
 ### 9.1 イメージ全体の更新
 
-新しい Release のイメージを SD カードに書き込み直します（2 章）。収録データは PC 側にあるため失われません。
+新しい Release のイメージを SD カードに書き込み直します。走行管理アプリの「SD カードを作る…」（5 章）で版を選ぶと、ダウンロード・検証・Imager の起動までを行います（2 章の手順を手で行っても同じです）。収録データは PC 側にあるため失われません。車に送った判断データ・自分の走行プログラム・`core.json` やアクセスポイントの設定変更は消えて同梱の状態に戻るので、必要なものは書き込み後に PC 側のフォルダから送り直します。
 
 ### 9.2 パッケージのみの更新
 
@@ -510,11 +511,11 @@ sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 
 | 種類 | 例 | 対象・表示箇所 |
 |---|---|---|
-| 本体（製品）の版 | `v0.4.0` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
+| 本体（製品）の版 | `v0.4.1` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
 | ロジックの版 | `tof_drive-0.3.0`、`cam_drive-0.3.0` | ロジックごとの番号（`car/CMakeLists.txt` の `TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`／`PY_DRIVE_VERSION`、manifest の `version`）。「版の管理」の一覧と状態欄の「版（ロジック／データ）」 |
 | 判断データ（パック）の版 | `base-tof-0.2.0`、`cam-base-0.2.0`、自分で作成した `cam-signal-0.1.0` | パックごとの `manifest.json` の `version`。自分で学習させた版には、車にインストール済みの版と重複しない番号を付けます（7 章） |
 
-本体 0.4.0 の Release の同梱は `tof_drive-0.3.0`・`cam_drive-0.3.0`・`py_drive-0.2.0`・`base-tof-0.2.0`・`cam-base-0.2.0`・`py-sample-0.2.0` です。本体とロジックの番号が一致していても、両者は独立した番号です。
+本体 0.4.1 の Release の同梱は `tof_drive-0.3.0`・`cam_drive-0.3.0`・`py_drive-0.2.0`・`base-tof-0.2.0`・`cam-base-0.2.0`・`py-sample-0.2.0` です。本体とロジックの番号が一致していても、両者は独立した番号です。
 
 **Release ではないビルド**（GitHub Actions がタグ以外で作成した `.deb`・SD カードイメージ・アプリ）は、版の後ろに `+g` と commit の先頭 7 文字が付きます（例 `0.2.1+g1a2b3c4`）。タグの付いた Release のものと区別するためです。Debian の版の比較では `0.2.1` ＜ `0.2.1+g1a2b3c4` ＜ `0.2.2` です。車の本体とアプリの版の数値部分（`+` より前）が異なる場合は、接続時のログに警告を記録します。
 
@@ -710,13 +711,13 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 - 本体の版は、**次の Release の番号をソースに記述してからタグを付けます**。手順：(1) プルリクエストで `car/CMakeLists.txt` の `RUMICAR_VERSION`、`pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` の `<Version>`、`pc/RumiCar.DriveManager/app.manifest` の `assemblyIdentity version`（`X.Y.Z.0`）を同じ番号にする、(2) マージする、(3) そのマージの commit に `vX.Y.Z` のタグを付けて push する。`release.yml` は最初にタグとこの 3 か所の一致、およびタグが main の commit であることを検証し、不一致ならビルドせずに停止します（タグと内容の版が食い違った Release を作成しないため）。
 - タグ以外のビルド（main・プルリクエスト）では、CI が版の後ろに `+g<commit>` を付けます（`car.yml` の `-DRUMICAR_VERSION_SUFFIX`、`pc.yml` の `-p:InformationalVersion`）。手元でのビルドはソースの番号のままです。ロジックの版（`TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`／`PY_DRIVE_VERSION`）は本体の版とは独立に、ロジックを変更したときに上げます。ロジック・パックの内容（.so 以外のファイルや manifest の説明を含む）を変更したときも版を上げます（車は同じ版のディレクトリを上書きしないため。9.2）。
 
-## 本版（0.4.0）の範囲
+## 本版（0.4.1）の範囲
 
 - 車：ToF 走行ロジック、制御ループと安全制御、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときのみ動作）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序制御して起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中の差し替え（PC または SSH から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、走行モード、非常停止、手動操作（操縦パッド・スクロール・キー）、自動の最大出力、PC の Wi-Fi の表示、シナリオ付き収録、版の管理（ロジックとデータの組での切り替え）、自作プログラムの送信、収録からの動画作成）
 - 車：画像ロジック `cam_drive`（信号機での停止・発進、前方車両への追従と駐車車両の追い越し、交差点での停止・直進・右左折）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジックのインターフェース ABI 3
 - 車：自作の走行プログラム（Python の `drive.py`）を実行するロジック `py_drive` と見本 `py-sample`、自動モードの駆動許容値の増加制限と最大出力（`set_auto_limit`）、ロジックとデータの組での切り替え（`activate_pair`）
-- 配布：標準 SD カードイメージ、タグによる GitHub Release（0.2.0：ロジックのインターフェースが ABI 1 から 2 に変わり、自作ロジックの再ビルドが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに変更、タグとソースの版の一致を Release で検証、Release ではないビルドに `+g<commit>`。0.3.0：自作の走行プログラム、自動の最大出力と急発進の防止、PC の Wi-Fi の表示。0.3.1：文書・画面表示・メッセージの表記を技術的に正確な表現に統一（`py_drive` 0.1.1、`py-sample` 0.1.1、`cam-base` 0.1.1。動作の変更なし）。0.3.2：図の追加（README・仕様書、日本語・英語。動作の変更なし）。0.4.0：値の表し方を RumiCar ライブラリ（Arduino の RumiCar-lib、Raspberry Pi の RumiCar.py）に統一——ToF は `RC_read` の値（0〜200 mm、−1 タイムアウト、−3 範囲外＝20 cm 以内に何もない）、操舵は `RC_steer` の LEFT=0／CENTER=1／RIGHT=2、駆動は `RC_drive` の FREE／REVERSE／FORWARD／BRAKE と 0〜255。ロジックのインターフェースは ABI 3、制御の通信は protocol 2、`core.json` は `max_drive_pwm`／`auto_accel_pwm_per_s`／`kick_pwm`、`drive.py` は RumiCar ライブラリの API。0.3.x の PC アプリ・収録・自作ロジックとは互換性がなく、収録は取り直しが必要）
+- 配布：標準 SD カードイメージ、タグによる GitHub Release（0.2.0：ロジックのインターフェースが ABI 1 から 2 に変わり、自作ロジックの再ビルドが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに変更、タグとソースの版の一致を Release で検証、Release ではないビルドに `+g<commit>`。0.3.0：自作の走行プログラム、自動の最大出力と急発進の防止、PC の Wi-Fi の表示。0.3.1：文書・画面表示・メッセージの表記を技術的に正確な表現に統一（`py_drive` 0.1.1、`py-sample` 0.1.1、`cam-base` 0.1.1。動作の変更なし）。0.3.2：図の追加（README・仕様書、日本語・英語。動作の変更なし）。0.4.0：値の表し方を RumiCar ライブラリ（Arduino の RumiCar-lib、Raspberry Pi の RumiCar.py）に統一——ToF は `RC_read` の値（0〜200 mm、−1 タイムアウト、−3 範囲外＝20 cm 以内に何もない）、操舵は `RC_steer` の LEFT=0／CENTER=1／RIGHT=2、駆動は `RC_drive` の FREE／REVERSE／FORWARD／BRAKE と 0〜255。ロジックのインターフェースは ABI 3、制御の通信は protocol 2、`core.json` は `max_drive_pwm`／`auto_accel_pwm_per_s`／`kick_pwm`、`drive.py` は RumiCar ライブラリの API。0.3.x の PC アプリ・収録・自作ロジックとは互換性がなく、収録は取り直しが必要。0.4.1：SD カードの作成と本体の更新を走行管理アプリから——Release に Raspberry Pi Imager の一覧（`rumicar-zero2cam.rpi-imager-manifest`）を添付し、アプリの「SD カードを作る…」がイメージのダウンロードと検証を行って Imager を開く。最新の Release の確認。車側の動作の変更なし）
 - 今後の作業：実車での収録と調整（追い越し・右左折の時間、交差点の画像の学習）、場面に応じた右左折の選択（現状は版ごとに固定、または検出した側へ）
 
 ## ライセンス
