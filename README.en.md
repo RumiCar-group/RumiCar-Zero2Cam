@@ -9,6 +9,7 @@ One repository holds the car side (C++), the PC drive manager (C# / .NET 10), th
 - Specification (settings, wire formats, distribution formats, builds): [docs/RumiCar-Zero2Cam 仕様書.docx](docs/RumiCar-Zero2Cam%20仕様書.docx) (Japanese)
 - Design record (investigations, options compared, rationale for decisions, design and implementation history of the image logic; reference material for learning): [docs/RumiCar-Zero2Cam 設計の記録.docx](docs/RumiCar-Zero2Cam%20設計の記録.docx) (Japanese)
 - Downloads: [Releases](https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases)
+- Explanatory videos (3, Japanese and English: ToF readings, start control in auto mode, overtaking a parked vehicle): [12. Explanatory videos](#12-explanatory-videos)
 
 ## Layout
 
@@ -626,6 +627,18 @@ sequenceDiagram
 - A sent pack is stored in `/var/lib/rumicar/packs/<folder name>-<time>/`; `rumicar-activate pair py_drive-0.2.0 <pack>` switches to it over SSH (logic and data are switched as a pair).
 - The ToF driving (`tof_drive`) is written in C++. To port processing written in Python to a full driving logic, use `car/logic/tof_drive/` as the reference.
 - The sample `py-sample` is also bundled with the car, so `py-sample-0.2.0` can be activated from 版の管理 to check its behaviour without the repository on the PC.
+
+## 12. Explanatory videos
+
+Short videos (30–45 s each, `docs/videos/`, 1280×720, no audio; a click plays them on GitHub's file page) of the points that are easiest to misread. Every number is a default from this version's sources.
+
+| Video | Content | 日本語 | English |
+|---|---|---|---|
+| ToF readings and their display | 0–200 mm, −3 (out of range) and −1 (timeout), and how the `tof_drive` logic treats them (the table in section 5, `RC_read()` values) | [01-tof-readings-ja.mp4](docs/videos/01-tof-readings-ja.mp4) | [01-tof-readings-en.mp4](docs/videos/01-tof-readings-en.mp4) |
+| Start control in auto mode (no sudden starts) | The permitted drive rising at `auto_accel_pwm_per_s` (287/s) and the auto limit (section 5) | [02-auto-start-ja.mp4](docs/videos/02-auto-start-ja.mp4) | [02-auto-start-en.mp4](docs/videos/02-auto-start-en.mp4) |
+| Overtaking a parked vehicle (`cam_drive` vehicle behaviour) | FOLLOW → OVERTAKE_OUT → OVERTAKE_PASS → OVERTAKE_IN; the side ToFs look 65° forward, so `pass_clear_ms` lets the rest of the car pass after the inner ToF loses the vehicle (7.5) | [03-overtaking-ja.mp4](docs/videos/03-overtaking-ja.mp4) | [03-overtaking-en.mp4](docs/videos/03-overtaking-en.mp4) |
+
+The videos are made by `docs/videos/make_videos.py` (Pillow + ffmpeg). When a default in the sources changes, the constants and captions in the script are updated and the videos regenerated (`python3 docs/videos/make_videos.py <out dir> [--lang ja|en]`). Values that may change after checks on the real car (`pass_clear_ms` and others, specification 8.3) are updated once confirmed.
 
 ---
 
