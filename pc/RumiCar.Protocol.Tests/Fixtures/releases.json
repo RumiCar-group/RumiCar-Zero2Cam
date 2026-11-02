@@ -1,0 +1,270 @@
+[
+ {
+  "url": "https://api.github.com/repos/RumiCar-group/RumiCar-Zero2Cam/releases/430640528",
+  "html_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/tag/v0.5.0",
+  "id": 2,
+  "tag_name": "v0.5.0",
+  "name": "RumiCar Zero2Cam v0.5.0",
+  "draft": true,
+  "prerelease": false,
+  "created_at": "2026-11-01T14:33:25Z",
+  "published_at": "2026-11-15T09:00:00Z",
+  "assets": [
+   {
+    "name": "rumicar-zero2cam-0.5.0-20261115.img.xz",
+    "size": 644872028,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.5.0/rumicar-zero2cam-0.5.0-20261115.img.xz",
+    "content_type": "application/x-xz"
+   },
+   {
+    "name": "rumicar-zero2cam.rpi-imager-manifest",
+    "size": 1234,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.5.0/rumicar-zero2cam.rpi-imager-manifest",
+    "content_type": "application/json"
+   },
+   {
+    "name": "rumicar-zero2cam-0.5.0-20261115.img.xz.sha256",
+    "size": 105,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.5.0/rumicar-zero2cam-0.5.0-20261115.img.xz.sha256",
+    "content_type": "application/octet-stream"
+   },
+   {
+    "name": "rumicar-zero2cam-0.5.0-20261115.txt",
+    "size": 401,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.5.0/rumicar-zero2cam-0.5.0-20261115.txt",
+    "content_type": "text/plain; charset=utf-8"
+   },
+   {
+    "name": "rumicar-zero2cam_0.5.0_arm64.deb",
+    "size": 712458,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.5.0/rumicar-zero2cam_0.5.0_arm64.deb",
+    "content_type": "application/x-debian-package"
+   },
+   {
+    "name": "RumiCarDriveManager-v0.5.0-win-x64.zip",
+    "size": 56044610,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.5.0/RumiCarDriveManager-v0.5.0-win-x64.zip",
+    "content_type": "application/zip"
+   },
+   {
+    "name": "SHA256SUMS.txt",
+    "size": 523,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.5.0/SHA256SUMS.txt",
+    "content_type": "text/plain; charset=utf-8"
+   }
+  ],
+  "body": "..."
+ },
+ {
+  "url": "https://api.github.com/repos/RumiCar-group/RumiCar-Zero2Cam/releases/430640528",
+  "html_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/tag/v0.4.2",
+  "id": 3,
+  "tag_name": "v0.4.2",
+  "name": "RumiCar Zero2Cam v0.4.2",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-11-01T14:33:25Z",
+  "published_at": "2026-11-15T09:00:00Z",
+  "assets": [
+   {
+    "name": "rumicar-zero2cam-0.4.2-20261115.img.xz",
+    "size": 644872028,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.2/rumicar-zero2cam-0.4.2-20261115.img.xz",
+    "content_type": "application/x-xz"
+   },
+   {
+    "name": "rumicar-zero2cam.rpi-imager-manifest",
+    "size": 1234,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.2/rumicar-zero2cam.rpi-imager-manifest",
+    "content_type": "application/json"
+   },
+   {
+    "name": "rumicar-zero2cam-0.4.2-20261115.img.xz.sha256",
+    "size": 105,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.2/rumicar-zero2cam-0.4.2-20261115.img.xz.sha256",
+    "content_type": "application/octet-stream"
+   },
+   {
+    "name": "rumicar-zero2cam-0.4.2-20261115.txt",
+    "size": 401,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.2/rumicar-zero2cam-0.4.2-20261115.txt",
+    "content_type": "text/plain; charset=utf-8"
+   },
+   {
+    "name": "rumicar-zero2cam_0.4.2_arm64.deb",
+    "size": 712458,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.2/rumicar-zero2cam_0.4.2_arm64.deb",
+    "content_type": "application/x-debian-package"
+   },
+   {
+    "name": "RumiCarDriveManager-v0.4.2-win-x64.zip",
+    "size": 56044610,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.2/RumiCarDriveManager-v0.4.2-win-x64.zip",
+    "content_type": "application/zip"
+   },
+   {
+    "name": "SHA256SUMS.txt",
+    "size": 523,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.2/SHA256SUMS.txt",
+    "content_type": "text/plain; charset=utf-8"
+   }
+  ],
+  "body": "..."
+ },
+ {
+  "url": "https://api.github.com/repos/RumiCar-group/RumiCar-Zero2Cam/releases/430640528",
+  "html_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/tag/v0.4.1",
+  "id": 1,
+  "tag_name": "v0.4.1",
+  "name": "RumiCar Zero2Cam v0.4.1",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-11-01T14:33:25Z",
+  "published_at": "2026-11-15T09:00:00Z",
+  "assets": [
+   {
+    "name": "rumicar-zero2cam-0.4.1-20261115.img.xz",
+    "size": 644872028,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/rumicar-zero2cam-0.4.1-20261115.img.xz",
+    "content_type": "application/x-xz"
+   },
+   {
+    "name": "rumicar-zero2cam.rpi-imager-manifest",
+    "size": 1234,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/rumicar-zero2cam.rpi-imager-manifest",
+    "content_type": "application/json"
+   },
+   {
+    "name": "rumicar-zero2cam-0.4.1-20261115.img.xz.sha256",
+    "size": 105,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/rumicar-zero2cam-0.4.1-20261115.img.xz.sha256",
+    "content_type": "application/octet-stream"
+   },
+   {
+    "name": "rumicar-zero2cam-0.4.1-20261115.txt",
+    "size": 401,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/rumicar-zero2cam-0.4.1-20261115.txt",
+    "content_type": "text/plain; charset=utf-8"
+   },
+   {
+    "name": "rumicar-zero2cam_0.4.1_arm64.deb",
+    "size": 712458,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/rumicar-zero2cam_0.4.1_arm64.deb",
+    "content_type": "application/x-debian-package"
+   },
+   {
+    "name": "RumiCarDriveManager-v0.4.1-win-x64.zip",
+    "size": 56044610,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/RumiCarDriveManager-v0.4.1-win-x64.zip",
+    "content_type": "application/zip"
+   },
+   {
+    "name": "SHA256SUMS.txt",
+    "size": 523,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/SHA256SUMS.txt",
+    "content_type": "text/plain; charset=utf-8"
+   }
+  ],
+  "body": "..."
+ },
+ {
+  "url": "https://api.github.com/repos/RumiCar-group/RumiCar-Zero2Cam/releases/430640528",
+  "html_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/tag/v0.4.0",
+  "id": 430640528,
+  "tag_name": "v0.4.0",
+  "name": "RumiCar Zero2Cam v0.4.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-11-01T14:33:25Z",
+  "published_at": "2026-11-01T14:34:38Z",
+  "assets": [
+   {
+    "name": "rumicar-zero2cam-0.4.0-20261101.img.xz",
+    "size": 644872028,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.0/rumicar-zero2cam-0.4.0-20261101.img.xz",
+    "content_type": "application/x-xz"
+   },
+   {
+    "name": "rumicar-zero2cam-0.4.0-20261101.img.xz.sha256",
+    "size": 105,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.0/rumicar-zero2cam-0.4.0-20261101.img.xz.sha256",
+    "content_type": "application/octet-stream"
+   },
+   {
+    "name": "rumicar-zero2cam-0.4.0-20261101.txt",
+    "size": 401,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.0/rumicar-zero2cam-0.4.0-20261101.txt",
+    "content_type": "text/plain; charset=utf-8"
+   },
+   {
+    "name": "rumicar-zero2cam_0.4.0_arm64.deb",
+    "size": 712458,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.0/rumicar-zero2cam_0.4.0_arm64.deb",
+    "content_type": "application/x-debian-package"
+   },
+   {
+    "name": "RumiCarDriveManager-v0.4.0-win-x64.zip",
+    "size": 56044610,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.0/RumiCarDriveManager-v0.4.0-win-x64.zip",
+    "content_type": "application/zip"
+   },
+   {
+    "name": "SHA256SUMS.txt",
+    "size": 523,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.0/SHA256SUMS.txt",
+    "content_type": "text/plain; charset=utf-8"
+   }
+  ],
+  "body": "..."
+ },
+ {
+  "url": "https://api.github.com/repos/RumiCar-group/RumiCar-Zero2Cam/releases/430326405",
+  "html_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/tag/v0.3.2",
+  "id": 430326405,
+  "tag_name": "v0.3.2",
+  "name": "RumiCar Zero2Cam v0.3.2",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-11-01T02:52:13Z",
+  "published_at": "2026-11-01T02:53:05Z",
+  "assets": [
+   {
+    "name": "rumicar-zero2cam-0.3.2-20261101.img.xz",
+    "size": 645411356,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.3.2/rumicar-zero2cam-0.3.2-20261101.img.xz",
+    "content_type": "application/x-xz"
+   },
+   {
+    "name": "rumicar-zero2cam-0.3.2-20261101.img.xz.sha256",
+    "size": 105,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.3.2/rumicar-zero2cam-0.3.2-20261101.img.xz.sha256",
+    "content_type": "application/octet-stream"
+   },
+   {
+    "name": "rumicar-zero2cam-0.3.2-20261101.txt",
+    "size": 401,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.3.2/rumicar-zero2cam-0.3.2-20261101.txt",
+    "content_type": "text/plain; charset=utf-8"
+   },
+   {
+    "name": "rumicar-zero2cam_0.3.2_arm64.deb",
+    "size": 710772,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.3.2/rumicar-zero2cam_0.3.2_arm64.deb",
+    "content_type": "application/x-debian-package"
+   },
+   {
+    "name": "RumiCarDriveManager-v0.3.2-win-x64.zip",
+    "size": 56042378,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.3.2/RumiCarDriveManager-v0.3.2-win-x64.zip",
+    "content_type": "application/zip"
+   },
+   {
+    "name": "SHA256SUMS.txt",
+    "size": 523,
+    "browser_download_url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.3.2/SHA256SUMS.txt",
+    "content_type": "text/plain; charset=utf-8"
+   }
+  ],
+  "body": "..."
+ }
+]

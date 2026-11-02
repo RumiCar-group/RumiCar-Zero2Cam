@@ -1,0 +1,37 @@
+{
+  "imager": {
+    "devices": [
+      {
+        "name": "Raspberry Pi Zero 2 W",
+        "description": "RumiCar Zero2Cam（Raspberry Pi Zero 2 W ＋ Camera Module 2）",
+        "tags": [
+          "pi3-64bit",
+          "pi3-32bit"
+        ],
+        "icon": "",
+        "default": true,
+        "matching_type": "inclusive",
+        "capabilities": []
+      }
+    ]
+  },
+  "os_list": [
+    {
+      "name": "RumiCar Zero2Cam 0.4.1",
+      "description": "Raspberry Pi OS Lite（64-bit、2026-10-01-raspios-trixie-arm64-lite）＋ 車載ソフト rumicar-zero2cam 0.4.1。ユーザー rumicar / rumicar、SSH 有効、Wi-Fi アクセスポイント「RumiCar」（車 10.42.0.1）。設定済みのため OS customisation は不要",
+      "icon": "https://raw.githubusercontent.com/RumiCar-group/RumiCar-Zero2Cam/main/car/image/icon.png",
+      "website": "https://github.com/RumiCar-group/RumiCar-Zero2Cam",
+      "url": "https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases/download/v0.4.1/rumicar-zero2cam-0.4.1-20261101.img.xz",
+      "extract_size": 32000000,
+      "extract_sha256": "519e74b5d938fa9dbc99afdd00de3e051557c2e853c458fb4ba982d371fc4168",
+      "image_download_size": 2005744,
+      "image_download_sha256": "fc8558d0f9ebc3ffcef56936e90d63e19e646308ce71a001605a8492b0e98e44",
+      "release_date": "2026-11-01",
+      "init_format": "none",
+      "architecture": "armv8",
+      "devices": [
+        "pi3-64bit"
+      ]
+    }
+  ]
+}

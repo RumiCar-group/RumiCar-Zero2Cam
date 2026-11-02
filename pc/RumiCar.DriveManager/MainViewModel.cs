@@ -216,6 +216,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
     public string RecordingStatus { get => _recordingStatus; set => Set(ref _recordingStatus, value); }
     public string PushStatus { get => _pushStatus; set => Set(ref _pushStatus, value); }
+
+    private string _sdCardStatus = "最新の Release を確認していません";
+    /// <summary>The newest Release against this application and the car (docs 6.5).</summary>
+    public string SdCardStatus { get => _sdCardStatus; set => Set(ref _sdCardStatus, value); }
     public VersionRow? SelectedVersion { get => _selectedVersion; set => Set(ref _selectedVersion, value); }
     public ObservableCollection<VersionRow> InstalledVersions { get; } = new();
     public BitmapImage? Image { get => _image; set => Set(ref _image, value); }

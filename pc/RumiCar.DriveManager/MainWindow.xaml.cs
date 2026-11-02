@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.IO;
+using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
 using System.Windows;
@@ -11,6 +12,7 @@ using RumiCar.Protocol;
 using RumiCar.Protocol.Control;
 using RumiCar.Protocol.Packs;
 using RumiCar.Protocol.Recording;
+using RumiCar.Protocol.Releases;
 using RumiCar.Protocol.Telemetry;
 
 namespace RumiCar.DriveManager;
@@ -72,6 +74,13 @@ public partial class MainWindow : Window
         typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "?";
 
+    // GitHub Releases (docs 6.5): the SD-card dialog and the update check share one client.
+    // No overall timeout (an image is 600 MB); each operation cancels itself.
+    private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly ReleaseDownloader _releases = new(Http, ProductVersion.Release(AppVersion));
+    private IReadOnlyList<ReleaseInfo>? _releaseList;   // the last successful fetch, for the dialog
+    private ReleaseInfo? _latestRelease;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -105,6 +114,56 @@ public partial class MainWindow : Window
         _wifiTimer.Start();
         _ = RefreshWifiAsync();
         LoadScenarioHistory();
+        _ = CheckLatestReleaseAsync();
+    }
+
+    // --- SD card and updates (docs 6.5) ---------------------------------------------------------
+
+    /// <summary>
+    /// Looks up the newest Release once at start-up, quietly: the PC is often on
+    /// the car's access point without internet, so a failure only leaves the
+    /// status at "unknown" and the dialog offers to fetch again.
+    /// </summary>
+    private async Task CheckLatestReleaseAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            _releaseList = await _releases.FetchReleasesAsync(cts.Token);
+            _latestRelease = ReleaseCatalog.Latest(_releaseList);
+            UpdateSdCardStatus();
+            if (_latestRelease is not null && ReleaseCatalog.CompareVersions(AppVersion, _latestRelease.Version) < 0)
+                _vm.AddLog($"新しい Release {_latestRelease.Tag} があります（このアプリは {AppVersion}）。「SD カードを作る…」から車の SD カードを作り直し、アプリは {ReleaseCatalog.ReleasesPageUrl} から入れ替えてください");
+        }
+        catch (Exception)
+        {
+            _vm.SdCardStatus = "最新の Release を確認できませんでした（インターネット未接続。「SD カードを作る…」で再取得できます）";
+        }
+    }
+
+    /// <summary>One line: newest Release vs. this application and the connected car.</summary>
+    private void UpdateSdCardStatus()
+    {
+        var latest = _latestRelease;
+        if (latest is null) return;
+        var car = CarConnection.GetString(_car?.HelloResult, "core_version");
+        var text = $"最新の Release {latest.Tag}（{latest.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) ?? "日付不明"}）　／　このアプリ {AppVersion}";
+        if (car is not null)
+        {
+            var cmp = ReleaseCatalog.CompareVersions(car, latest.Version);
+            text += cmp < 0 ? $"　／　車の本体 {car}：新しい版があります。SD カードを作り直すと更新できます"
+                  : cmp == 0 ? $"　／　車の本体 {car}：最新です"
+                  : $"　／　車の本体 {car}";
+        }
+        _vm.SdCardStatus = text;
+    }
+
+    private void OnSdCardClick(object sender, RoutedEventArgs e)
+    {
+        var car = CarConnection.GetString(_car?.HelloResult, "core_version");
+        var dialog = new SdCardWindow(this, _releases, AppVersion, car, _vm.DataRoot, _releaseList, _vm.AddLog);
+        dialog.ShowDialog();
+        UpdateSdCardStatus();
     }
 
     // Horizontal scrolling (two fingers sideways on a touchpad, a tilting wheel)
@@ -178,6 +237,9 @@ public partial class MainWindow : Window
             if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}, このアプリ {AppVersion}");
             if (coreVersion is not null && !ProductVersion.SameRelease(coreVersion, AppVersion))
                 _vm.AddLog($"警告：車の本体（{coreVersion}）とこのアプリ（{AppVersion}）の版が異なります。同じ Release の SD カードイメージ（または .deb）とアプリを使用してください");
+            if (coreVersion is not null && _latestRelease is not null && ReleaseCatalog.CompareVersions(coreVersion, _latestRelease.Version) < 0)
+                _vm.AddLog($"車の本体 {coreVersion} より新しい Release {_latestRelease.Tag} があります（「SD カードを作る…」で更新できます）");
+            UpdateSdCardStatus();
             var status = await car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None);
             if (status.Ok && status.Result is JsonElement result)
             {
@@ -216,6 +278,7 @@ public partial class MainWindow : Window
         _vm.InstalledVersions.Clear();
         _vm.PushStatus = "-";
         _lastStatus = null;
+        UpdateSdCardStatus();
         if (car is not null) await car.DisposeAsync();
     }
 
