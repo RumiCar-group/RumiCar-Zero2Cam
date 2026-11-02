@@ -177,9 +177,10 @@ public class NewRequestTests
     [Fact]
     public void AutoLimitPairAndRollbackBoth()
     {
-        var p = Params(ControlCodec.SetAutoLimit(1, 600));
-        Assert.Equal(600, p.GetProperty("drive_permille").GetInt32());
-        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetAutoLimit(1, 1001));
+        var p = Params(ControlCodec.SetAutoLimit(1, 153));
+        Assert.Equal(153, p.GetProperty("drive_pwm").GetInt32());
+        Assert.False(p.TryGetProperty("drive_permille", out _));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetAutoLimit(1, 256));
         p = Params(ControlCodec.ActivatePair(2, "py_drive-0.1.0", "py-sample-0.1.0"));
         Assert.Equal("py_drive-0.1.0", p.GetProperty("logic").GetString());
         Assert.Equal("py-sample-0.1.0", p.GetProperty("pack").GetString());

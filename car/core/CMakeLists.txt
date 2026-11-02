@@ -43,7 +43,7 @@ add_library(rumicar_hw STATIC
   src/hw/drv8835.cpp
 )
 target_include_directories(rumicar_hw PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(rumicar_hw PUBLIC PkgConfig::GPIOD)
+target_link_libraries(rumicar_hw PUBLIC rumicar_api PkgConfig::GPIOD)
 
 # Camera layer: JPEG encoding (always) and the image source compiled in.
 add_library(rumicar_camera STATIC src/camera/jpeg.cpp src/camera/camera_control.cpp)

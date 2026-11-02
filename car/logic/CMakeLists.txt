@@ -29,7 +29,7 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E make_directory ${TOF_DRIVE_STAGE}
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:tof_drive> ${TOF_DRIVE_STAGE}/libtof_drive.so
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${TOF_DRIVE_STAGE}
-          --name tof_drive --version ${TOF_DRIVE_VERSION} --entry libtof_drive.so --abi 2
+          --name tof_drive --version ${TOF_DRIVE_VERSION} --entry libtof_drive.so --abi 3
           --description "ToF driving logic: avoids walls and obstacles with the three distance sensors; the camera image is not used"
   DEPENDS tof_drive ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
   COMMENT "Writing manifest.json for tof_drive ${TOF_DRIVE_VERSION}"
@@ -74,7 +74,7 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CAM_DRIVE_STAGE}
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:cam_drive> ${CAM_DRIVE_STAGE}/libcam_drive.so
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${CAM_DRIVE_STAGE}
-          --name cam_drive --version ${CAM_DRIVE_VERSION} --entry libcam_drive.so --abi 2
+          --name cam_drive --version ${CAM_DRIVE_VERSION} --entry libcam_drive.so --abi 3
           --description "Camera driving logic: the ToF logic plus traffic lights learned from recordings (stops at red, goes on green); packs may carry vision.bin"
   DEPENDS cam_drive ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
   COMMENT "Writing manifest.json for cam_drive ${CAM_DRIVE_VERSION}"
@@ -107,8 +107,8 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:py_drive> ${PY_DRIVE_STAGE}/libpy_drive.so
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/py_drive/runner.py ${PY_DRIVE_STAGE}/runner.py
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${PY_DRIVE_STAGE}
-          --name py_drive --version ${PY_DRIVE_VERSION} --entry libpy_drive.so --abi 2
-          --description "Runs your own driving program: drive.py (Python) in the pack decides steering and drive from the three distance sensors every frame"
+          --name py_drive --version ${PY_DRIVE_VERSION} --entry libpy_drive.so --abi 3
+          --description "Runs your own driving program: drive.py (Python) in the pack decides steering and drive from the three distance sensors every frame, with the RumiCar library API (RC_read / RC_steer / RC_drive)"
   DEPENDS py_drive ${CMAKE_CURRENT_SOURCE_DIR}/py_drive/runner.py ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
   COMMENT "Writing manifest.json for py_drive ${PY_DRIVE_VERSION}"
   VERBATIM)

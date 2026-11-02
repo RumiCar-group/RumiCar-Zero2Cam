@@ -76,6 +76,7 @@ jobs:
             echo "RumiCar Zero2Cam ${GITHUB_REF_NAME}"
             echo
             echo "- \`rumicar-zero2cam-*.img.xz\`: 標準 SD カードイメージ（Raspberry Pi OS Lite 64bit ＋ 車載ソフト。Raspberry Pi Imager の「Use custom」で書き込み）"
+            echo "- \`rumicar-zero2cam.rpi-imager-manifest\`: Raspberry Pi Imager の OS 一覧。Imager の App Options → Content Repository に \`https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/rumicar-zero2cam.rpi-imager-manifest\` を登録する（またはダウンロードしてダブルクリック）と、一覧から RumiCar Zero2Cam を選んで書き込める（ダウンロードと検証は Imager が行う）"
             echo "- \`rumicar-zero2cam_*_arm64.deb\`: 車載ソフトのパッケージ（既存の Raspberry Pi OS に入れる場合）"
             echo "- \`RumiCarDriveManager-*-win-x64.zip\`: PC の走行管理アプリ（Windows x64、単一の exe）"
             echo "- \`SHA256SUMS.txt\`: 各ファイルのダイジェスト"

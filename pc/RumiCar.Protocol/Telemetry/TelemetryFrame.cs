@@ -11,22 +11,26 @@ namespace RumiCar.Protocol.Telemetry;
 /// </summary>
 public sealed class TelemetryHeader
 {
+    /// <summary>ABI of the car's logic interface: the meaning of the values below (<see cref="RumiCarApi.Abi"/>). Absent (0) in recordings of older cars.</summary>
+    [JsonPropertyName("abi")] public int Abi { get; set; }
     [JsonPropertyName("seq")] public uint Seq { get; set; }
     [JsonPropertyName("t_us")] public ulong TimestampMicroseconds { get; set; }
+    /// <summary>RC_read values: 0..200 mm, -1 timeout, -3 nothing within 20 cm (<see cref="RumiCarApi"/>).</summary>
     [JsonPropertyName("tof_mm")] public int[] TofMm { get; set; } = new int[3];
-    /// <summary>What was actually sent to the motors: steer -1/0/1, drive as PWM duty in per mille (negative = reverse), brake = both bridge inputs high.</summary>
-    [JsonPropertyName("steer")] public int Steer { get; set; }
-    [JsonPropertyName("drive_permille")] public int DrivePermille { get; set; }
-    [JsonPropertyName("brake")] public bool Brake { get; set; }
+    /// <summary>What was actually sent to the motors, as RC_steer / RC_drive values: steer LEFT=0 CENTER=1 RIGHT=2, drive_dir FREE=0 REVERSE=1 FORWARD=2 BRAKE=3, drive_pwm 0..255.</summary>
+    [JsonPropertyName("steer")] public int Steer { get; set; } = RumiCarApi.Center;
+    [JsonPropertyName("drive_dir")] public int DriveDir { get; set; } = RumiCarApi.Free;
+    [JsonPropertyName("drive_pwm")] public int DrivePwm { get; set; }
     [JsonPropertyName("state")] public int State { get; set; }
     [JsonPropertyName("state_name")] public string StateName { get; set; } = "";
     [JsonPropertyName("flags")] public uint Flags { get; set; }
     [JsonPropertyName("mode")] public string Mode { get; set; } = "";
     /// <summary>Emergency stop latched on the car (estop request, heartbeat loss, disconnect in manual mode).</summary>
     [JsonPropertyName("estop")] public bool EStop { get; set; }
-    /// <summary>What the driving logic decided this frame, even when it was not applied (manual / record_only / e-stop).</summary>
-    [JsonPropertyName("logic_steer")] public int LogicSteer { get; set; }
-    [JsonPropertyName("logic_drive_permille")] public int LogicDrivePermille { get; set; }
+    /// <summary>What the driving logic decided this frame (same values as above), even when it was not applied (manual / record_only / e-stop).</summary>
+    [JsonPropertyName("logic_steer")] public int LogicSteer { get; set; } = RumiCarApi.Center;
+    [JsonPropertyName("logic_drive_dir")] public int LogicDriveDir { get; set; } = RumiCarApi.Free;
+    [JsonPropertyName("logic_drive_pwm")] public int LogicDrivePwm { get; set; }
     /// <summary>Identity of the logic and pack that produced this frame (recorded with every frame so a session's lineage is known).</summary>
     [JsonPropertyName("logic_name")] public string LogicName { get; set; } = "";
     [JsonPropertyName("logic_version")] public string LogicVersion { get; set; } = "";

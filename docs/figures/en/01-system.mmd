@@ -1,0 +1,17 @@
+flowchart TB
+    subgraph CAR["Car (Raspberry Pi Zero 2 W)"]
+        direction TB
+        SEN["VL53L0X ×3<br/>(left, centre, right)"] --> CORE
+        CAM["Camera Module 2<br/>(320×240, 20 fps)"] --> CORE
+        CORE["rumicar-core<br/>control loop 50 ms"] <--> LOGIC["Driving logic (.so)<br/>tof_drive / cam_drive / py_drive"]
+        PACK["Decision data (pack)<br/>params.json / vision.bin / drive.py"] --> LOGIC
+        CORE --> MOT["DRV8835<br/>steering and drive motors"]
+    end
+    subgraph PCSIDE["PC (Windows)"]
+        direction TB
+        APP["Drive manager<br/>status and image display, drive mode,<br/>emergency stop, version management"] --> REC["Recording folder<br/>frames/, meta.jsonl, session.json"]
+    end
+    CORE <-->|"Wi-Fi AP (SSID RumiCar, 10.42.0.1)<br/>control TCP 5600 / telemetry TCP 5601"| APP
+    REC --> CL["Claude desktop app<br/>labelling, learning with train_pack.py"]
+    CL --> NEW["New pack<br/>(with manifest.json)"]
+    NEW -->|"送る… (send) → 有効化 (activate)<br/>(swappable while driving)"| APP

@@ -23,6 +23,7 @@
 #include "net/telemetry_frame.hpp"
 #include "net/telemetry_server.hpp"
 #include "request_handler.hpp"
+#include "rumicar/logic_api.h"
 #include "sha256.hpp"
 #include "version_store.hpp"
 #include "wifi.hpp"
@@ -313,7 +314,7 @@ void test_servers(const fs::path& base_pack) {
     CHECK(store.link_target("previous", "pack").empty());
 
     CarState state(300);   // short heartbeat timeout for the test
-    state.set_max_drive(800);
+    state.set_max_drive(204);
     WifiAp wifi("/usr/bin/nmcli", "");   // no access point profile on the test host
     RequestHandler handler(state, store, wifi, "TestCar", "9.9.9", 2000ms);
     std::atomic<int> connects{0}, disconnects{0};
@@ -337,13 +338,13 @@ void test_servers(const fs::path& base_pack) {
     json r = request(c, "get_status", nullptr);
     CHECK(!r["ok"].get<bool>());
     CHECK(r["error"].get<std::string>().find("hello") != std::string::npos);
-    r = request(c, "hello", {{"client", "test"}, {"protocol", 2}});
+    r = request(c, "hello", {{"client", "test"}, {"protocol", 1}});   // the 0.3.x PC: per-mille values
     CHECK(!r["ok"].get<bool>());
-    r = request(c, "hello", {{"client", "test"}, {"protocol", 1}});
+    r = request(c, "hello", {{"client", "test"}, {"protocol", 2}});
     CHECK(r["ok"].get<bool>());
     CHECK(r["result"]["car"] == "TestCar");
     CHECK(r["result"]["core_version"] == "9.9.9");
-    CHECK(r["result"]["protocol"] == 1);
+    CHECK(r["result"]["protocol"] == 2);
     for (int i = 0; i < 100 && connects.load() == 0; ++i) std::this_thread::sleep_for(10ms);
     CHECK(connects.load() == 1);
     CHECK(control.client_connected());
@@ -376,7 +377,7 @@ void test_servers(const fs::path& base_pack) {
     CHECK(state.update_throttled(0));
 
     // --- modes, manual drive, heartbeat -----------------------------------------
-    r = request(c, "manual_drive", {{"steer", 1}, {"drive_permille", 500}});
+    r = request(c, "manual_drive", {{"steer", 2}, {"drive_dir", 2}, {"drive_pwm", 128}});
     CHECK(!r["ok"].get<bool>());   // not in manual mode
     r = request(c, "set_mode", {{"mode", "sideways"}});
     CHECK(!r["ok"].get<bool>());
@@ -385,15 +386,20 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["ok"].get<bool>());
     json ev = wait_event(c, "status");
     CHECK(!ev.is_null() && ev["data"]["mode"] == "manual");
-    r = request(c, "manual_drive", {{"steer", 1}, {"drive_permille", 500}});
+    // RC_steer / RC_drive values: steer 0..2, drive_dir 0..3, drive_pwm 0..255.
+    r = request(c, "manual_drive", {{"steer", 2}, {"drive_dir", 2}, {"drive_pwm", 128}});
     CHECK(r["ok"].get<bool>());
     auto in = state.frame_inputs(CarState::Clock::now());
     CHECK(in.mode == DriveMode::Manual);
-    CHECK(in.manual_steer == 1 && in.manual_drive == 500);
+    CHECK(in.manual_steer == 2 && in.manual_drive_dir == 2 && in.manual_drive_pwm == 128);
     CHECK(!in.manual_timed_out);
-    r = request(c, "manual_drive", {{"steer", 2}, {"drive_permille", 0}});
+    r = request(c, "manual_drive", {{"steer", 3}, {"drive_dir", 0}, {"drive_pwm", 0}});
     CHECK(!r["ok"].get<bool>());
-    r = request(c, "manual_drive", {{"steer", 0}, {"drive_permille", 1001}});
+    r = request(c, "manual_drive", {{"steer", 0}, {"drive_dir", 4}, {"drive_pwm", 0}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "manual_drive", {{"steer", 0}, {"drive_dir", 2}, {"drive_pwm", 256}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "manual_drive", {{"steer", 1}, {"drive_permille", 500}});   // the 0.3.x form
     CHECK(!r["ok"].get<bool>());
     std::this_thread::sleep_for(400ms);   // longer than the 300 ms heartbeat timeout
     in = state.frame_inputs(CarState::Clock::now());
@@ -410,7 +416,7 @@ void test_servers(const fs::path& base_pack) {
     CHECK(!ev.is_null() && ev["data"]["active"] == true && ev["data"]["reason"] == "request");
     in = state.frame_inputs(CarState::Clock::now());
     CHECK(in.estop);
-    CHECK(in.manual_drive == 0);   // the manual command is cleared by an e-stop
+    CHECK(in.manual_drive_dir == RUMI_DRIVE_FREE && in.manual_drive_pwm == 0 && in.manual_steer == RUMI_STEER_CENTER);   // the manual command is cleared by an e-stop
     r = request(c, "get_status", nullptr);
     CHECK(r["result"]["estop"] == true && r["result"]["estop_reason"] == "request");
     r = request(c, "estop_clear", nullptr);
@@ -422,17 +428,19 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["ok"].get<bool>());
     CHECK(state.mode() == DriveMode::Auto);
 
-    // --- auto limit (docs 5.2): within max_drive_permille, reported in the status ---------------
+    // --- auto limit (docs 5.2): within max_drive_pwm, reported in the status ---------------
     r = request(c, "get_status", nullptr);
-    CHECK(r["result"]["auto_limit"] == 800 && r["result"]["max_drive_permille"] == 800);
-    r = request(c, "set_auto_limit", {{"drive_permille", 450}}, &events);
-    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 450);
+    CHECK(r["result"]["auto_limit"] == 204 && r["result"]["max_drive_pwm"] == 204);
+    r = request(c, "set_auto_limit", {{"drive_pwm", 115}}, &events);
+    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 115);
     ev = wait_event(c, "status");
-    CHECK(!ev.is_null() && ev["data"]["auto_limit"] == 450);
-    CHECK(state.frame_inputs(CarState::Clock::now()).auto_limit == 450);
-    r = request(c, "set_auto_limit", {{"drive_permille", 1000}});
-    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 800);   // clamped to the maximum
-    r = request(c, "set_auto_limit", {{"drive_permille", -1}});
+    CHECK(!ev.is_null() && ev["data"]["auto_limit"] == 115);
+    CHECK(state.frame_inputs(CarState::Clock::now()).auto_limit == 115);
+    r = request(c, "set_auto_limit", {{"drive_pwm", 255}});
+    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 204);   // clamped to the maximum
+    r = request(c, "set_auto_limit", {{"drive_pwm", -1}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "set_auto_limit", {{"drive_permille", 450}});   // the 0.3.x form
     CHECK(!r["ok"].get<bool>());
     r = request(c, "set_auto_limit", nullptr);
     CHECK(!r["ok"].get<bool>());
@@ -691,7 +699,7 @@ void test_servers(const fs::path& base_pack) {
     // One frame at a time: the test server keeps only 2 frames per client, so
     // publishing several before the reader catches up would (correctly) drop some.
     for (uint32_t seq = 1; seq <= 3; ++seq) {
-        const json header = {{"seq", seq}, {"tof_mm", {100, 200, 300}}, {"state_name", "CRUISE"}};
+        const json header = {{"abi", 3}, {"seq", seq}, {"tof_mm", {100, 200, -3}}, {"state_name", "CRUISE"}};
         telemetry.publish(std::make_shared<const std::vector<uint8_t>>(net::encode_telemetry_frame(header.dump(), {})));
         const auto fixed = t.read_exact(11);
         CHECK(fixed.size() == 11);
@@ -739,7 +747,7 @@ void test_servers(const fs::path& base_pack) {
     {
         Client again(control.port());
         CHECK(again.connected());
-        r = request(again, "hello", {{"client", "test2"}, {"protocol", 1}});
+        r = request(again, "hello", {{"client", "test2"}, {"protocol", 2}});
         CHECK(r["ok"].get<bool>());
         r = request(again, "get_status", nullptr);
         CHECK(r["ok"].get<bool>() && r["result"]["mode"] == "manual");

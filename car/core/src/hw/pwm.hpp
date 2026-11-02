@@ -14,14 +14,15 @@ public:
     PwmChannel(const PwmChannel&) = delete;
     PwmChannel& operator=(const PwmChannel&) = delete;
 
-    // Duty in per mille [0, 1000].  Throws std::runtime_error on failure.
-    void set_duty_permille(int permille);
+    // Duty as a share of full on [0, 255] (the RC_drive scale: 150 = 150/255
+    // of the period).  Throws std::runtime_error on failure.
+    void set_duty(int pwm);
 
 private:
     void write(const std::string& file, long value) const;
     std::string dir_;
     long period_ns_ = 0;
-    int last_permille_ = -1;
+    int last_pwm_ = -1;
 };
 
 } // namespace rumicar::hw

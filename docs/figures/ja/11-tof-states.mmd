@@ -1,0 +1,17 @@
+stateDiagram-v2
+    state "TURN_LEFT / TURN_RIGHT" as TURN
+    [*] --> CRUISE
+    CRUISE --> TURN: 左／右へ操舵<br/>（旋回 または 側壁回避）
+    TURN --> CRUISE: 操舵が中央に戻る
+    CRUISE --> EMERGENCY_BRAKE: 中央 < d_emergency_mm
+    TURN --> EMERGENCY_BRAKE: 中央 < d_emergency_mm
+    EMERGENCY_BRAKE --> CRUISE: brake_ms 経過 かつ<br/>中央 ≥ d_min_mm
+    EMERGENCY_BRAKE --> RECOVER_REVERSE: brake_ms 経過 かつ<br/>中央 < d_min_mm
+    CRUISE --> RECOVER_REVERSE: スタック検出<br/>（stuck_time_ms）
+    TURN --> RECOVER_REVERSE: スタック検出
+    RECOVER_REVERSE --> CRUISE: reverse_ms 経過 または<br/>（200 ms 以上後退 かつ 中央 ≥ d_turn_exit_mm）
+    note right of CRUISE
+        いずれかのセンサーの読み取り失敗が
+        invalid_hold_ms を超えると SENSOR_FAULT（停止）、
+        回復すると CRUISE
+    end note

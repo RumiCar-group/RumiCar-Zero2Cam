@@ -68,7 +68,7 @@ def make_frame(rng, kind, k, n):
     return img, box
 
 
-OPEN = (8190, 8190, 8190)
+OPEN = (-3, -3, -3)      # RC_read: nothing within 20 cm
 
 
 def write_session(path, plan, scenario, seed):
@@ -85,11 +85,11 @@ def write_session(path, plan, scenario, seed):
             img, box = make_frame(rng, kind, k, n)
             name = f"{idx:06d}.jpg"
             img.save(os.path.join(path, "frames", name), "JPEG", quality=80)
-            hdr = {"seq": idx, "t_us": t, "tof_mm": tof, "steer": 0, "drive_permille": 900, "brake": False,
-                   "state": 0, "state_name": "CRUISE", "flags": 0, "mode": "auto", "estop": False, "logic_steer": 0,
-                   "logic_drive_permille": 900, "logic_name": "tof_drive", "logic_version": "0.2.0", "pack_id": "base-tof",
-                   "pack_version": "0.1.1", "battery_mv": 0, "throttled": 0, "image_w": W, "image_h": H, "image_seq": idx,
-                   "image_t_us": t + 100}
+            hdr = {"abi": 3, "seq": idx, "t_us": t, "tof_mm": tof, "steer": 1, "drive_dir": 2, "drive_pwm": 230,
+                   "state": 0, "state_name": "CRUISE", "flags": 0, "mode": "auto", "estop": False, "logic_steer": 1,
+                   "logic_drive_dir": 2, "logic_drive_pwm": 230, "logic_name": "tof_drive", "logic_version": "0.3.0",
+                   "pack_id": "base-tof", "pack_version": "0.2.0", "battery_mv": 0, "throttled": 0, "image_w": W, "image_h": H,
+                   "image_seq": idx, "image_t_us": t + 100}
             meta.append({"index": idx, "image": name, "received": "x", "header": hdr})
             if kind == "red":
                 labels.append({"index": idx, "objects": [{"name": "traffic_light_red", "box": box}]})
@@ -139,7 +139,7 @@ def main() -> int:
     with open(os.path.join(pack, "manifest.json"), encoding="utf-8") as f:
         manifest = json.load(f)
     assert manifest["capabilities"] == ["walls", "traffic_light"], manifest["capabilities"]
-    assert manifest["parent"] == "cam-base-0.1.1" and "信号機ありケース1" in manifest["scenarios"]
+    assert manifest["parent"] == "cam-base-0.2.0" and "信号機ありケース1" in manifest["scenarios"]
     with open(os.path.join(pack, "training.json"), encoding="utf-8") as f:
         report = json.load(f)
     for name in ("traffic_light_red", "traffic_light_green"):
@@ -163,8 +163,8 @@ def main() -> int:
     assert seq == ["CRUISE", "SIGNAL_APPROACH", "SIGNAL_STOP", "SIGNAL_RESUME"] or seq == ["CRUISE", "SIGNAL_STOP", "SIGNAL_RESUME"], seq
     rows = [json.loads(l) for l in open(out_path, encoding="utf-8")]
     stop_rows = [r for r in rows if r["state_name"] == "SIGNAL_STOP"]
-    assert stop_rows[-1]["drive_permille"] == 0 and stop_rows[-1]["flags"] & 1, stop_rows[-1]
-    assert rows[-1]["drive_permille"] > 0
+    assert stop_rows[-1]["drive_dir"] == 3 and stop_rows[-1]["drive_pwm"] == 0, stop_rows[-1]   # BRAKE
+    assert rows[-1]["drive_dir"] == 2 and rows[-1]["drive_pwm"] > 0
     assert all(r["rc"] == 0 for r in rows)
     with open(os.path.join(pack, "params.json"), encoding="utf-8") as f:
         params = json.load(f)
@@ -174,12 +174,12 @@ def main() -> int:
     # Every detector is learned again from all the sessions: the new scenes are negatives
     # for the old detectors (a vehicle's red tail lights are not a red light).
     s4, s5 = (os.path.join(sessions, n) for n in ("RumiCar_town1", "RumiCar_town2"))
-    write_session(s4, [("walls", 20), ("vehicle", 40, (8190, 180, 8190)), ("walls", 10), ("xleft", 30, (120, 8190, 120)),
-                       ("walls", 10, (120, 8190, 120))], "車両と交差点ケース1", 4)
+    write_session(s4, [("walls", 20), ("vehicle", 40, (-3, 180, -3)), ("walls", 10), ("xleft", 30, (120, -3, 120)),
+                       ("walls", 10, (120, -3, 120))], "車両と交差点ケース1", 4)
     # a scripted drive: following a vehicle that stops (parked) with both sides open, then an intersection on the left
-    write_session(s5, [("walls", 20), ("vehicle", 4, (8190, 240, 8190)), ("vehicle", 4, (8190, 200, 8190)),
-                       ("vehicle", 70, (8190, 150, 8190)), ("walls", 10, (60, 8190, 8190)), ("walls", 30),
-                       ("xleft", 20, (120, 8190, 120)), ("xleft", 25, (8190, 8190, 120)), ("walls", 20, (120, 8190, 120))],
+    write_session(s5, [("walls", 20), ("vehicle", 4, (-3, 195, -3)), ("vehicle", 4, (-3, 175, -3)),
+                       ("vehicle", 70, (-3, 150, -3)), ("walls", 10, (60, -3, -3)), ("walls", 30),
+                       ("xleft", 20, (120, -3, 120)), ("xleft", 25, (-3, -3, 120)), ("walls", 20, (120, -3, 120))],
                   "車両と交差点ケース1", 5)
     pack2 = os.path.join(work, "cam-town-0.1.0")
     out = run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "train", pack2, "--parent", pack,
@@ -217,7 +217,7 @@ def main() -> int:
     out = run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "propose", s5, "--detector", "vehicle"]).stdout
     print(out)
     near = [json.loads(l) for l in open(os.path.join(s5, "proposals_vehicle.jsonl"), encoding="utf-8")]
-    assert len(near) == 78 and near[0]["objects"][0]["name"] == "vehicle" and near[0]["tof_mm"] == 240, (len(near), near[:1])
+    assert len(near) == 78 and near[0]["objects"][0]["name"] == "vehicle" and near[0]["tof_mm"] == 195, (len(near), near[:1])
     out = run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "propose", s5, "--detector", "intersection_left"]).stdout
     print(out)
     stretches = [json.loads(l) for l in open(os.path.join(s5, "proposals_intersection_left.jsonl"), encoding="utf-8")]
@@ -233,12 +233,12 @@ def main() -> int:
     cam = [s for s in seq if s.startswith(("FOLLOW", "OVERTAKE", "INTERSECTION"))]
     assert cam == ["FOLLOW", "OVERTAKE_OUT", "OVERTAKE_PASS", "OVERTAKE_IN", "INTERSECTION_APPROACH", "INTERSECTION_STOP"], cam
     follow_rows = [r for r in rows if r["state_name"] == "FOLLOW"]
-    assert follow_rows[-1]["drive_permille"] == 0 and follow_rows[-1]["flags"] & 1, follow_rows[-1]
-    assert all(r["steer"] == 1 for r in rows if r["state_name"] == "OVERTAKE_OUT")   # both sides open: pass on the right
-    assert all(r["steer"] == -1 for r in rows if r["state_name"] == "OVERTAKE_IN")
+    assert follow_rows[-1]["drive_dir"] == 3 and follow_rows[-1]["drive_pwm"] == 0, follow_rows[-1]   # BRAKE
+    assert all(r["steer"] == 2 for r in rows if r["state_name"] == "OVERTAKE_OUT")   # both sides open: pass on the RIGHT (2)
+    assert all(r["steer"] == 0 for r in rows if r["state_name"] == "OVERTAKE_IN")    # back to the LEFT (0)
     istop = [r for r in rows if r["state_name"] == "INTERSECTION_STOP"]
-    assert istop[-1]["drive_permille"] == 0 and istop[-1]["flags"] & 1, istop[-1]
-    assert seq[-1] == "CRUISE" and rows[-1]["drive_permille"] > 0
+    assert istop[-1]["drive_dir"] == 3 and istop[-1]["drive_pwm"] == 0, istop[-1]
+    assert seq[-1] == "CRUISE" and rows[-1]["drive_dir"] == 2 and rows[-1]["drive_pwm"] > 0
     assert all(r["rc"] == 0 for r in rows)
     print("tools smoke test passed:", work)
     return 0

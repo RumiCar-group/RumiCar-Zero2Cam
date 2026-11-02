@@ -1,0 +1,10 @@
+flowchart TD
+    A["1. Record (with a scenario name)<br/>for learning, for validation, walls only (negatives)"] --> B["2. Propose candidates<br/>train_pack.py propose"]
+    B --> C["3. Label (Claude checks the candidates)<br/>labels.jsonl"]
+    C --> D["4. Learn<br/>train_pack.py train<br/>→ params.json, vision.bin, training.json, manifest.json"]
+    D --> E{"5. Check before sending<br/>show, replay, rumicar-replay"}
+    E -->|"Low recall / many false detections"| X["Add labels / negatives"]
+    X --> D
+    E -->|"OK"| F["6. 送る… (send) → 有効化 (activate) in the drive manager"]
+    F --> G["7. Drive and record on the real car"]
+    G -->|"New scenes added:<br/>re-learn all detectors"| A

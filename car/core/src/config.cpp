@@ -13,6 +13,8 @@ using json = nlohmann::json;
 
 namespace {
 
+std::string unknown_key_message(const std::string& key);
+
 struct Section {
     const json& j;
     std::string name;
@@ -75,10 +77,23 @@ struct Section {
 
     void reject_unknown() {
         for (auto it = j.begin(); it != j.end(); ++it) {
-            if (!seen.count(it.key())) throw std::runtime_error("core.json: unknown key " + name + "." + it.key());
+            if (!seen.count(it.key())) throw std::runtime_error(unknown_key_message(name.empty() ? it.key() : name + "." + it.key()));
         }
     }
 };
+
+// The message for a key core.json must not have.  The per-mille keys of 0.3.x
+// get their replacement named (the values are on the RC_drive scale 0..255 now).
+std::string unknown_key_message(const std::string& key) {
+    const std::string leaf = key.substr(key.rfind('.') == std::string::npos ? 0 : key.rfind('.') + 1);
+    const char* renamed = leaf == "max_drive_permille"       ? "max_drive_pwm (0..255)"
+                        : leaf == "auto_accel_permille_per_s" ? "auto_accel_pwm_per_s (0..255 per second)"
+                        : leaf == "kick_permille"             ? "kick_pwm (0..255)"
+                                                              : nullptr;
+    if (renamed)
+        return "core.json: " + key + " was renamed in 0.4.0 to " + renamed + "; edit /etc/rumicar/core.json (see car/deploy/core.json)";
+    return "core.json: unknown key " + key;
+}
 
 const json& section(const json& root, const char* key, std::set<std::string>& seen_top) {
     static const json empty = json::object();
@@ -109,8 +124,8 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.loop_period_ms = s.get_int("loop_period_ms", c.loop_period_ms, 10, 500);
         c.watchdog_ms = s.get_int("watchdog_ms", c.watchdog_ms, 50, 2000);
         c.activation_poll_ms = s.get_int("activation_poll_ms", c.activation_poll_ms, 100, 10000);
-        c.max_drive_permille = s.get_int("max_drive_permille", c.max_drive_permille, 0, 1000);
-        c.auto_accel_permille_per_s = s.get_int("auto_accel_permille_per_s", c.auto_accel_permille_per_s, 0, 100000);
+        c.max_drive_pwm = s.get_int("max_drive_pwm", c.max_drive_pwm, 0, 255);
+        c.auto_accel_pwm_per_s = s.get_int("auto_accel_pwm_per_s", c.auto_accel_pwm_per_s, 0, 25500);
         c.car_name = s.get_string("car_name", c.car_name);
         c.startup_mode = s.get_string("startup_mode", c.startup_mode);
         seen_top.insert(s.seen.begin(), s.seen.end());
@@ -134,7 +149,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.drive_in1 = static_cast<unsigned>(s.get_int("drive_in1", static_cast<int>(c.drive_in1), 0, 7));
         c.drive_in2 = static_cast<unsigned>(s.get_int("drive_in2", static_cast<int>(c.drive_in2), 0, 7));
         c.pwm_frequency_hz = s.get_int("frequency_hz", c.pwm_frequency_hz, 20, 50000);
-        c.kick_permille = s.get_int("kick_permille", c.kick_permille, 0, 1000);
+        c.kick_pwm = s.get_int("kick_pwm", c.kick_pwm, 0, 255);
         c.kick_ms = s.get_int("kick_ms", c.kick_ms, 0, 200);
         s.reject_unknown();
     }
@@ -177,7 +192,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
         s.reject_unknown();
     }
     for (auto it = root.begin(); it != root.end(); ++it) {
-        if (!seen_top.count(it.key())) throw std::runtime_error("core.json: unknown key " + it.key());
+        if (!seen_top.count(it.key())) throw std::runtime_error(unknown_key_message(it.key()));
     }
 
     if (c.steer_in1 == c.steer_in2) throw std::runtime_error("core.json: gpio.steer_in1 and steer_in2 must differ");

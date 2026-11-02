@@ -123,37 +123,37 @@ void test_throttled_parsing() {
 void test_auto_output_start_ramp() {
     // Switching to auto while the logic already asks for full speed: the drive
     // grows from 0 at the configured rate instead of jumping (docs 3.5).
-    AutoOutputLimiter lim(1125);
-    int out = lim.drive(900, 1000, 0.05);
-    CHECK(out == 56);   // 1125 * 0.05
+    // Values on the RC_drive scale (duty 0..255); the direction is not the limiter's business.
+    AutoOutputLimiter lim(287);
+    int out = lim.drive(230, 255, 0.05);
+    CHECK(out == 14);   // 287 * 0.05
     int prev = out;
     int frames = 1;
-    while (out < 900 && frames < 100) {
-        out = lim.drive(900, 1000, 0.05);
-        CHECK(out >= prev && out - prev <= 57);
+    while (out < 230 && frames < 100) {
+        out = lim.drive(230, 255, 0.05);
+        CHECK(out >= prev && out - prev <= 15);
         prev = out;
         ++frames;
     }
-    CHECK(out == 900 && frames >= 15 && frames <= 17);   // 0.8 s
-    CHECK(lim.drive(-700, 1000, 0.05) == -700);           // later the logic's own control is untouched
-    CHECK(lim.drive(0, 1000, 0.05) == 0);
-    for (int i = 0; i < 20; ++i) lim.drive(900, 1000, 0.05);
+    CHECK(out == 230 && frames >= 15 && frames <= 17);   // 0.8 s
+    CHECK(lim.drive(179, 255, 0.05) == 179);             // later the logic's own control is untouched
+    CHECK(lim.drive(0, 255, 0.05) == 0);
+    for (int i = 0; i < 20; ++i) lim.drive(230, 255, 0.05);
     CHECK(!lim.ramping());
     // Not driving (manual, record_only, e-stop, error): the next run starts from rest again.
     lim.idle();
-    CHECK(lim.drive(900, 1000, 0.05) == 56 && lim.ramping());
-    // The auto limit caps at any time, also during the ramp; reverse too.
-    AutoOutputLimiter capped(1125);
-    for (int i = 0; i < 40; ++i) out = capped.drive(900, 400, 0.05);
-    CHECK(out == 400);
-    CHECK(capped.drive(-900, 400, 0.05) == -400);
-    CHECK(capped.drive(300, 400, 0.05) == 300);
+    CHECK(lim.drive(230, 255, 0.05) == 14 && lim.ramping());
+    // The auto limit caps at any time, also during the ramp.
+    AutoOutputLimiter capped(287);
+    for (int i = 0; i < 40; ++i) out = capped.drive(230, 102, 0.05);
+    CHECK(out == 102);
+    CHECK(capped.drive(77, 102, 0.05) == 77);
     // Without a ramp (0): only the limit.
     AutoOutputLimiter none(0);
-    CHECK(none.drive(900, 1000, 0.05) == 900 && none.drive(900, 600, 0.05) == 600);
+    CHECK(none.drive(230, 255, 0.05) == 230 && none.drive(230, 153, 0.05) == 153);
     // A long pause between frames does not make a big step.
-    AutoOutputLimiter pause(1125);
-    CHECK(pause.drive(900, 1000, 5.0) == 225);   // dt clamped to 0.2 s
+    AutoOutputLimiter pause(287);
+    CHECK(pause.drive(230, 255, 5.0) == 57);   // dt clamped to 0.2 s
 }
 
 } // namespace

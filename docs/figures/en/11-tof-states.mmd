@@ -1,0 +1,17 @@
+stateDiagram-v2
+    state "TURN_LEFT / TURN_RIGHT" as TURN
+    [*] --> CRUISE
+    CRUISE --> TURN: steering left / right<br/>(turning or side-wall avoidance)
+    TURN --> CRUISE: steering back to centre
+    CRUISE --> EMERGENCY_BRAKE: centre < d_emergency_mm
+    TURN --> EMERGENCY_BRAKE: centre < d_emergency_mm
+    EMERGENCY_BRAKE --> CRUISE: brake_ms elapsed and<br/>centre ≥ d_min_mm
+    EMERGENCY_BRAKE --> RECOVER_REVERSE: brake_ms elapsed and<br/>centre < d_min_mm
+    CRUISE --> RECOVER_REVERSE: stuck detected<br/>(stuck_time_ms)
+    TURN --> RECOVER_REVERSE: stuck detected
+    RECOVER_REVERSE --> CRUISE: reverse_ms elapsed or<br/>(reversed ≥ 200 ms and centre ≥ d_turn_exit_mm)
+    note right of CRUISE
+        A read failure of any sensor longer than
+        invalid_hold_ms gives SENSOR_FAULT (stop);
+        on recovery, CRUISE
+    end note

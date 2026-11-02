@@ -50,8 +50,8 @@ Params parse_params_json(const std::string& json_text) {
     take(j, seen, "v_max", p.v_max);
     take(j, seen, "v_turn_cap", p.v_turn_cap);
     take(j, seen, "v_reverse", p.v_reverse);
-    take(j, seen, "accel_permille_per_s", p.accel_permille_per_s);
-    take(j, seen, "decel_permille_per_s", p.decel_permille_per_s);
+    take(j, seen, "accel_pwm_per_s", p.accel_pwm_per_s);
+    take(j, seen, "decel_pwm_per_s", p.decel_pwm_per_s);
     take(j, seen, "ttc_slow_s", p.ttc_slow_s);
 
     take(j, seen, "d_turn_enter_mm", p.d_turn_enter_mm);
@@ -88,8 +88,8 @@ std::string params_to_json(const Params& p) {
     j["v_max"] = p.v_max;
     j["v_turn_cap"] = p.v_turn_cap;
     j["v_reverse"] = p.v_reverse;
-    j["accel_permille_per_s"] = p.accel_permille_per_s;
-    j["decel_permille_per_s"] = p.decel_permille_per_s;
+    j["accel_pwm_per_s"] = p.accel_pwm_per_s;
+    j["decel_pwm_per_s"] = p.decel_pwm_per_s;
     j["ttc_slow_s"] = p.ttc_slow_s;
     j["d_turn_enter_mm"] = p.d_turn_enter_mm;
     j["d_turn_exit_mm"] = p.d_turn_exit_mm;

@@ -122,20 +122,29 @@ void publish_running(rumicar::CarState& state, const Active& active, uint8_t log
     state.update_running(s);
 }
 
+// RC_read value of a sensor reading (logic_api.h): 0..200 mm, -3 beyond
+// 200 mm or no target (nothing within 20 cm), -1 when the sensor gave no reading.
 int32_t to_tof_value(const rumicar::hw::Vl53l0x::Reading& r) {
     switch (r.status) {
-    case rumicar::hw::Vl53l0x::Status::Ok:       return r.mm;
-    case rumicar::hw::Vl53l0x::Status::NoTarget: return RUMI_TOF_NO_TARGET;
+    case rumicar::hw::Vl53l0x::Status::Ok:       return r.mm > RUMI_TOF_MAX_MM ? RUMI_TOF_OUT_OF_RANGE : r.mm;
+    case rumicar::hw::Vl53l0x::Status::NoTarget: return RUMI_TOF_OUT_OF_RANGE;
     case rumicar::hw::Vl53l0x::Status::Timeout:
-    case rumicar::hw::Vl53l0x::Status::Error:    return RUMI_TOF_INVALID;
+    case rumicar::hw::Vl53l0x::Status::Error:    return RUMI_TOF_TIMEOUT;
     }
-    return RUMI_TOF_INVALID;
+    return RUMI_TOF_TIMEOUT;
+}
+
+// Whether the sensor gave a reading (a distance or "nothing within 20 cm")
+// or not (timeout, bus error).  Only changes of this are logged: out of
+// range is a normal value on open road, not an event.
+bool tof_reading_ok(rumicar::hw::Vl53l0x::Status s) {
+    return s == rumicar::hw::Vl53l0x::Status::Ok || s == rumicar::hw::Vl53l0x::Status::NoTarget;
 }
 
 const char* status_name(rumicar::hw::Vl53l0x::Status s) {
     switch (s) {
-    case rumicar::hw::Vl53l0x::Status::Ok:       return "ok";
-    case rumicar::hw::Vl53l0x::Status::NoTarget: return "no-target";
+    case rumicar::hw::Vl53l0x::Status::Ok:
+    case rumicar::hw::Vl53l0x::Status::NoTarget: return "ok";
     case rumicar::hw::Vl53l0x::Status::Timeout:  return "timeout";
     case rumicar::hw::Vl53l0x::Status::Error:    return "error";
     }
@@ -188,7 +197,7 @@ int main(int argc, char** argv) {
         gpio = std::make_unique<hw::GpioOutputs>(cfg.gpio_chip, lines, "rumicar-core");
         motors = std::make_unique<hw::Drv8835>(*gpio, cfg.pwm_chip, cfg.pwm_frequency_hz,
                                                hw::Drv8835::Pins{cfg.steer_in1, cfg.steer_in2, cfg.drive_in1, cfg.drive_in2},
-                                               hw::Drv8835::Kick{cfg.kick_permille, cfg.kick_ms});
+                                               hw::Drv8835::Kick{cfg.kick_pwm, cfg.kick_ms});
         motors->stop();
         bus = std::make_unique<hw::I2cBus>(cfg.i2c_bus);
         static const char* names[3] = {"tof-left", "tof-centre", "tof-right"};
@@ -210,7 +219,7 @@ int main(int argc, char** argv) {
     DriveMode startup_mode = DriveMode::RecordOnly;
     parse_drive_mode(cfg.startup_mode, startup_mode);   // validated by the config parser
     CarState state(cfg.heartbeat_timeout_ms, startup_mode);
-    state.set_max_drive(cfg.max_drive_permille);
+    state.set_max_drive(cfg.max_drive_pwm);
     log::info(std::string("start-up mode ") + drive_mode_name(startup_mode) +
               (startup_mode == DriveMode::RecordOnly ? " (motors braked until the PC selects auto)" : " (drives as soon as the logic runs)"));
     Active active;
@@ -344,7 +353,7 @@ int main(int argc, char** argv) {
     int overruns = 0;
     const std::vector<uint8_t> no_image;
     uint32_t last_image_seq = 0;
-    AutoOutputLimiter auto_output(cfg.auto_accel_permille_per_s);
+    AutoOutputLimiter auto_output(cfg.auto_accel_pwm_per_s);
     auto last_frame_time = Clock::now();
 
     log::info("control loop started, period " + std::to_string(cfg.loop_period_ms) + " ms");
@@ -358,10 +367,10 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < 3; ++i) {
             const auto r = sensors[i]->read(cfg.tof_read_timeout_ms);
             frame.tof_mm[i] = to_tof_value(r);
-            if (r.status != last_status[i]) {
+            if (tof_reading_ok(r.status) != tof_reading_ok(last_status[i])) {
                 log::warn(sensors[i]->label() + ": " + status_name(last_status[i]) + " -> " + status_name(r.status));
-                last_status[i] = r.status;
             }
+            last_status[i] = r.status;
         }
 
         // Camera on demand: images are needed while a PC is connected (to see
@@ -401,9 +410,10 @@ int main(int argc, char** argv) {
             if (state.set_estop(true, "heartbeat")) log::warn("no heartbeat from the PC in manual mode: emergency stop");
             in.estop = true;
         }
-        int8_t out_steer = RUMI_STEER_CENTER;
-        int out_drive = 0;
-        bool out_brake = true;
+        // RC_steer / RC_drive values; braked unless a mode says otherwise.
+        uint8_t out_steer = RUMI_STEER_CENTER;
+        uint8_t out_dir = RUMI_DRIVE_BRAKE;
+        uint8_t out_pwm = 0;
         const double dt_s = std::chrono::duration<double>(t0 - last_frame_time).count();
         last_frame_time = t0;
         const bool auto_driving = !in.estop && in.mode == DriveMode::Auto && rc == 0;
@@ -413,17 +423,22 @@ int main(int argc, char** argv) {
         } else if (in.mode == DriveMode::Auto) {
             if (rc == 0) {
                 out_steer = cmd.steer;
-                // Start ramp and the PC's auto limit (within max_drive_permille, see CarState).
-                out_drive = auto_output.drive(cmd.drive_permille, std::min(in.auto_limit, cfg.max_drive_permille), dt_s);
-                out_brake = (cmd.flags & (RUMI_CMD_FLAG_BRAKE | RUMI_CMD_FLAG_FAULT)) != 0;
+                if (cmd.flags & RUMI_CMD_FLAG_FAULT) {
+                    out_dir = RUMI_DRIVE_BRAKE;
+                } else {
+                    out_dir = cmd.drive_dir;
+                    // Start ramp and the PC's auto limit (within max_drive_pwm, see CarState).
+                    out_pwm = static_cast<uint8_t>(
+                        auto_output.drive(cmd.drive_pwm, std::min(in.auto_limit, cfg.max_drive_pwm), dt_s));
+                }
             }
         } else if (in.mode == DriveMode::Manual) {
             out_steer = in.manual_steer;
-            out_drive = std::clamp<int>(in.manual_drive, -cfg.max_drive_permille, cfg.max_drive_permille);
-            out_brake = false;
+            out_dir = in.manual_drive_dir;
+            out_pwm = static_cast<uint8_t>(std::min<int>(in.manual_drive_pwm, cfg.max_drive_pwm));
         } // RecordOnly: braked
         try {
-            motors->apply(out_steer, out_drive, out_brake, t0);
+            motors->apply(out_steer, out_dir, out_pwm, t0);
         } catch (const std::exception& e) {
             log::error(std::string("motor output failed: ") + e.what());
         }
@@ -449,20 +464,25 @@ int main(int argc, char** argv) {
         publish_running(state, active, rc == 0 ? cmd.state : last_state, rc == 0 ? cmd.flags : 0u);
         if (network_up) {
             try {
+                // Values as in the RumiCar library: tof_mm = RC_read (0..200, -1, -3),
+                // steer = RC_steer (0/1/2), drive_dir / drive_pwm = RC_drive (0..3, 0..255).
+                // "abi" tells recordings of this format apart from older ones.
                 json header = {
+                    {"abi", RUMI_LOGIC_ABI_VERSION},
                     {"seq", frame.seq},
                     {"t_us", frame.t_us},
                     {"tof_mm", {frame.tof_mm[0], frame.tof_mm[1], frame.tof_mm[2]}},
                     {"steer", out_steer},
-                    {"drive_permille", out_drive},
-                    {"brake", out_brake},
+                    {"drive_dir", out_dir},
+                    {"drive_pwm", out_pwm},
                     {"state", rc == 0 ? cmd.state : last_state},
                     {"state_name", active.instance->state_name(rc == 0 ? cmd.state : last_state)},
                     {"flags", rc == 0 ? cmd.flags : 0u},
                     {"mode", drive_mode_name(in.mode)},
                     {"estop", in.estop},
-                    {"logic_steer", rc == 0 ? cmd.steer : 0},
-                    {"logic_drive_permille", rc == 0 ? cmd.drive_permille : 0},
+                    {"logic_steer", rc == 0 ? cmd.steer : RUMI_STEER_CENTER},
+                    {"logic_drive_dir", rc == 0 ? cmd.drive_dir : RUMI_DRIVE_FREE},
+                    {"logic_drive_pwm", rc == 0 ? cmd.drive_pwm : 0},
                     {"logic_name", active.lib->manifest().id},
                     {"logic_version", active.lib->manifest().version},
                     {"pack_id", active.instance->pack_manifest().id},

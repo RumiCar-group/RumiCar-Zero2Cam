@@ -1,0 +1,19 @@
+stateDiagram-v2
+    state "Normal" as NORMAL
+    [*] --> NORMAL
+    NORMAL --> FOLLOW: vehicle confirmed in the own lane<br/>(after the ignore time ignore_ms)
+    FOLLOW --> NORMAL: vehicle not detected and ToF open<br/>or not detected for ignore_ms
+    FOLLOW --> OVERTAKE_OUT: classified as parked<br/>(stopped, gap unchanged for parked_confirm_ms)<br/>and passing-side ToF ≥ side_clear_mm
+    FOLLOW --> FOLLOW_WAIT: classified as parked<br/>no side to pass on
+    FOLLOW_WAIT --> FOLLOW: gap widened by more than still_delta_mm
+    FOLLOW_WAIT --> OVERTAKE_OUT: passing-side ToF ≥ side_clear_mm
+    FOLLOW_WAIT --> NORMAL: vehicle not detected and ToF open<br/>or not detected for ignore_ms
+    OVERTAKE_OUT --> OVERTAKE_PASS: out_ms elapsed
+    OVERTAKE_PASS --> OVERTAKE_IN: passed (inner ToF below pass_clear_mm, then<br/>at or above it for pass_clear_ms, and ≥ pass_min_ms)<br/>or pass_max_ms elapsed
+    OVERTAKE_IN --> NORMAL: in_ms elapsed
+    note right of OVERTAKE_PASS
+        During OVERTAKE_OUT / PASS / IN, a red light or an intersection being handled,
+        or the ToF logic's emergency brake, reversing or sensor fault,
+        aborts the manoeuvre (back to Normal).
+        After returning to Normal, vehicle detections are ignored for ignore_ms
+    end note

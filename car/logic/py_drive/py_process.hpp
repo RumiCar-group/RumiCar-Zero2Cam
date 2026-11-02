@@ -7,7 +7,9 @@
 //   to the runner:    F <seq> <t_ms> <left> <centre> <right>       a frame
 //                     P                                            ping (self-test)
 //   from the runner:  READY | ERROR <message>                      after loading drive.py
-//                     C <seq> <steer> <drive> <brake> <state>      the command for frame <seq>
+//                     C <seq> <steer> <drive_dir> <drive_pwm> <state>
+//                                                                  the command for frame <seq>
+//                                                                  (RC_steer / RC_drive values)
 //                     X <seq> <message>                            drive.py raised an exception
 //                     PONG
 //
@@ -29,9 +31,9 @@ namespace rumicar::py {
 
 struct Reply {
     enum class Kind { Command, Error, None } kind = Kind::None;
-    int8_t steer = 0;
-    int16_t drive = 0;
-    bool brake = false;
+    uint8_t steer = 1;        // RUMI_STEER_* (1 = CENTER)
+    uint8_t drive_dir = 0;    // RUMI_DRIVE_* (0 = FREE)
+    uint8_t drive_pwm = 0;    // 0..255
     std::string state;    // Command: state name ("-" = none); Error: message
 };
 

@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant C as rumicar-core（libpy_drive.so）
+    participant R as runner.py（別プロセス）
+    Note over C,R: 有効化（create）
+    C->>R: 起動：python3 -I -B -u runner.py パック
+    R->>R: params.json と drive.py の読み込み、setup()
+    R-->>C: READY（最長 15 秒）または ERROR メッセージ
+    loop 50 ms ごと
+        C->>R: F seq t_ms 左 中央 右
+        alt 30 ms 以内に応答
+            R-->>C: C seq steer drive_dir drive_pwm state
+            C->>C: 指令を出力（本体の制限を適用）
+        else loop() で例外
+            R-->>C: X seq メッセージ
+            C->>C: このフレームはブレーキ（プログラムは継続）
+        else 30 ms 以内に応答なし
+            C->>C: このフレームはブレーキ（遅れた応答は破棄）
+        end
+    end
+    Note over C,R: 最後の応答から 1 秒以上応答なし → SIGKILL<br/>（プログラムが終了した場合も含め、次の有効化までブレーキ）

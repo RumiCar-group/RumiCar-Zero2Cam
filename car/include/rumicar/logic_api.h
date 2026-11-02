@@ -17,6 +17,12 @@
  *
  * ABI history: 1 = sensors + camera image in, steer/drive/state/flags out.
  *              2 = adds the aux output in rumi_command and aux_name() (docs 3.6).
+ *              3 = the values follow the RumiCar library API (RC_read /
+ *                  RC_steer / RC_drive of RumiCar-lib and RasPi/RumiCar.py):
+ *                  ToF 0..200 mm or -1 / -3, steer LEFT=0 CENTER=1 RIGHT=2,
+ *                  drive as FREE / REVERSE / FORWARD / BRAKE plus a PWM
+ *                  duty 0..255.  The brake flag is gone (it is a drive
+ *                  direction now).
  */
 #ifndef RUMICAR_LOGIC_API_H
 #define RUMICAR_LOGIC_API_H
@@ -28,7 +34,7 @@
 extern "C" {
 #endif
 
-#define RUMI_LOGIC_ABI_VERSION 2u
+#define RUMI_LOGIC_ABI_VERSION 3u
 
 /* Name of the exported entry point. */
 #define RUMI_LOGIC_ENTRY_SYMBOL "rumi_logic_get_api"
@@ -39,25 +45,37 @@ extern "C" {
 #define RUMI_TOF_RIGHT  2
 #define RUMI_TOF_COUNT  3
 
-/* Time-of-flight reading conventions (millimetres).
- *   >= 0                : measured distance
- *   RUMI_TOF_NO_TARGET  : sensor reports no target within its range
- *   RUMI_TOF_INVALID    : no reading (communication error, timeout)
+/* Time-of-flight reading conventions in rumi_sensor_frame::tof_mm: the
+ * return value of RC_read() of the RumiCar library.
+ *   0 .. RUMI_TOF_MAX_MM   : measured distance in millimetres
+ *   RUMI_TOF_TIMEOUT       : no reading (timeout, communication error)
+ *   RUMI_TOF_OUT_OF_RANGE  : farther than RUMI_TOF_MAX_MM, including "no
+ *                            target": nothing within 20 cm.  The sensor's beam
+ *                            spreads out and picks up the floor beyond that,
+ *                            so longer readings are not trusted.  Driving
+ *                            logic treats it as open road (not as a fault).
+ * (-2, RC_read's bad-argument code, never appears in a frame.)
  */
-#define RUMI_TOF_NO_TARGET 8190
-#define RUMI_TOF_INVALID   (-1)
+#define RUMI_TOF_MAX_MM       200
+#define RUMI_TOF_TIMEOUT      (-1)
+#define RUMI_TOF_OUT_OF_RANGE (-3)
 
-/* Steering values in rumi_command::steer. */
-#define RUMI_STEER_LEFT   (-1)
-#define RUMI_STEER_CENTER 0
-#define RUMI_STEER_RIGHT  1
+/* Steering values in rumi_command::steer (RC_steer). */
+#define RUMI_STEER_LEFT   0
+#define RUMI_STEER_CENTER 1
+#define RUMI_STEER_RIGHT  2
 
-/* Drive range in rumi_command::drive_permille (per mille of full duty). */
-#define RUMI_DRIVE_MAX 1000
-#define RUMI_DRIVE_MIN (-1000)
+/* Drive direction in rumi_command::drive_dir (RC_drive) ... */
+#define RUMI_DRIVE_FREE    0 /* coast: both bridge inputs low */
+#define RUMI_DRIVE_REVERSE 1
+#define RUMI_DRIVE_FORWARD 2
+#define RUMI_DRIVE_BRAKE   3 /* both bridge inputs high; drive_pwm is ignored */
+/* ... and the PWM duty in rumi_command::drive_pwm: 0 .. RUMI_PWM_MAX, the
+ * share of full duty (150 = 150/255).  The same number on every computer
+ * module; the speed it gives is not. */
+#define RUMI_PWM_MAX 255
 
 /* Bits in rumi_command::flags. */
-#define RUMI_CMD_FLAG_BRAKE   0x1u /* hold the drive motor braked (both inputs high) */
 #define RUMI_CMD_FLAG_FAULT   0x2u /* logic has detected a sensor fault; core must keep motors stopped */
 
 /*
@@ -84,8 +102,9 @@ typedef struct rumi_sensor_frame {
 /* Command produced by the logic for this frame. */
 typedef struct rumi_command {
     uint32_t size;
-    int8_t   steer;          /* RUMI_STEER_* */
-    int16_t  drive_permille; /* RUMI_DRIVE_MIN .. RUMI_DRIVE_MAX, negative = reverse */
+    uint8_t  steer;          /* RUMI_STEER_* */
+    uint8_t  drive_dir;      /* RUMI_DRIVE_* */
+    uint8_t  drive_pwm;      /* 0 .. RUMI_PWM_MAX */
     uint8_t  state;          /* logic-defined state id, reported in telemetry */
     uint32_t flags;          /* RUMI_CMD_FLAG_* */
     /* Auxiliary output (ABI 2): logic-defined bytes the core forwards unchanged

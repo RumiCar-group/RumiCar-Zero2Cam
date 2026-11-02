@@ -25,7 +25,7 @@ public:
     // The control client went away: an unfinished upload is discarded.
     void on_client_disconnected();
 
-    static constexpr int kProtocolVersion = 1;
+    static constexpr int kProtocolVersion = 2;   // 2 = RC_steer / RC_drive values (manual_drive, set_auto_limit), ABI 3
     static constexpr int kMaxLogLines = 500;
 
 private:

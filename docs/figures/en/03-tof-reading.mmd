@@ -1,0 +1,11 @@
+flowchart TD
+    R["Read VL53L0X"] --> Q{"Measurement within<br/>i2c.tof_read_timeout_ms?<br/>I2C OK?"}
+    Q -->|"No"| F["Read failure → −1 (timeout)<br/>display -1 タイムアウト, RC_read() gives −1"]
+    Q -->|"Yes"| V{"Range beyond 200 mm?<br/>(including no target, 8190)"}
+    V -->|"Yes"| O["Out of range → −3<br/>display -3 範囲外, RC_read() gives −3<br/>(nothing within 20 cm; mounted this low, the beam<br/>tends to pick up the floor beyond that, so longer readings are not trusted)"]
+    V -->|"No"| D["Range 0..200 [mm]"]
+    D --> T{"tof_drive:<br/>≥ conf_max_mm (default 200)?"}
+    T -->|"Yes"| OPEN["tof_drive: open<br/>(no obstacle within the decision range)"]
+    O --> OPEN
+    T -->|"No"| USE["tof_drive: use as distance<br/>(median filter, exponential smoothing)"]
+    F --> HOLD["tof_drive: hold the previous value for invalid_hold_ms (default 300 ms)<br/>then SENSOR_FAULT (stop)"]

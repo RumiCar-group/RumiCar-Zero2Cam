@@ -27,8 +27,8 @@ void write_file(const fs::path& p, const std::string& content) {
     out << content;
 }
 
-bool throws(const std::function<void()>& f) {
-    try { f(); } catch (const std::exception&) { return true; }
+bool throws(const std::function<void()>& f, std::string* msg = nullptr) {
+    try { f(); } catch (const std::exception& e) { if (msg) *msg = e.what(); return true; }
     return false;
 }
 
@@ -44,7 +44,7 @@ void test_committed_base_pack_is_consistent(const fs::path& pack_dir) {
     CHECK(m.kind == Manifest::Kind::Pack);
     CHECK(m.id == "base-tof");
     CHECK(m.logic_name == "tof_drive");
-    CHECK(m.logic_min_abi >= 1 && m.logic_min_abi <= RUMI_LOGIC_ABI_VERSION);   // packs made for ABI 1 stay valid
+    CHECK(m.logic_min_abi == RUMI_LOGIC_ABI_VERSION);   // the values changed in ABI 3: the shipped pack is for ABI 3
     CHECK(m.files.size() == 1 && m.files[0].path == "params.json");
     // The shipped pack says what it is (shown by the PC, docs 4.1).
     CHECK(!m.description.empty());
@@ -152,7 +152,7 @@ void test_logic_library_loads(const fs::path& tmp, const fs::path& so, const fs:
     rumi_sensor_frame f{};
     f.size = sizeof(f);
     f.t_us = 1000000;
-    f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_NO_TARGET;
+    f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_OUT_OF_RANGE;
     rumi_command c{};
     CHECK(inst.step(f, c) == 0);
     CHECK(std::string(inst.state_name(c.state)) == "CRUISE");
@@ -203,14 +203,14 @@ void test_cam_drive_library_loads(const fs::path& tmp, const fs::path& so, const
     auto lib = std::make_shared<LogicLibrary>(d.string());
     CHECK(std::string(lib->api().name) == "cam_drive");
     const Manifest cm = load_and_verify_manifest(cam_pack_dir.string());
-    CHECK(cm.id == "cam-base" && cm.logic_name == "cam_drive" && cm.logic_min_abi == 2);
+    CHECK(cm.id == "cam-base" && cm.logic_name == "cam_drive" && cm.logic_min_abi == 3);
     CHECK(cm.capabilities.size() == 1 && cm.capabilities[0] == "walls");
     LogicInstance inst(lib, cam_pack_dir.string());
     CHECK(inst.aux_names().empty());   // no vision.bin: nothing to show
     rumi_sensor_frame f{};
     f.size = sizeof(f);
     f.t_us = 1000000;
-    f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_NO_TARGET;
+    f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_OUT_OF_RANGE;
     rumi_command c{};
     CHECK(inst.step(f, c) == 0);
     CHECK(std::string(inst.state_name(c.state)) == "CRUISE");
@@ -223,6 +223,15 @@ void test_cam_drive_library_loads(const fs::path& tmp, const fs::path& so, const
 void test_core_config() {
     CoreConfig c = parse_core_config("{}");
     CHECK(c.loop_period_ms == 50 && c.steer_in1 == 17 && c.tof_addresses[1] == 0x2D);
+    CHECK(c.max_drive_pwm == 255 && c.auto_accel_pwm_per_s == 287 && c.kick_pwm == 200 && c.kick_ms == 20);   // RC_drive scale (0..255)
+    {
+        // The per-mille keys of 0.3.x are gone; the error names the new key.
+        std::string msg;
+        CHECK(throws([] { parse_core_config("{\"max_drive_permille\": 1000}"); }, &msg) && msg.find("max_drive_pwm") != std::string::npos);
+        CHECK(throws([] { parse_core_config("{\"pwm\": {\"kick_permille\": 784}}"); }, &msg) && msg.find("pwm.kick_permille") != std::string::npos && msg.find("kick_pwm") != std::string::npos);
+    }
+    CHECK(throws([] { parse_core_config("{\"max_drive_pwm\": 256}"); }));
+    CHECK(parse_core_config("{\"pwm\": {\"kick_pwm\": 180}}").kick_pwm == 180);
     c = parse_core_config("{\"loop_period_ms\": 40, \"gpio\": {\"chip\": \"/dev/gpiochip4\"}, \"i2c\": {\"tof_addresses\": [48, 49, 50]}}");
     CHECK(c.loop_period_ms == 40 && c.gpio_chip == "/dev/gpiochip4" && c.tof_addresses[0] == 48);
     CHECK(throws([] { parse_core_config("{\"unknown\": 1}"); }));
@@ -244,9 +253,9 @@ void test_core_config() {
     CHECK(throws([] { parse_core_config("{\"network\": {\"wifi_txpower_dbm\": 31}}"); }));
     CHECK(throws([] { parse_core_config("{\"power\": {\"unknown\": 1}}"); }));
     // Start ramp of auto mode (docs 3.5).
-    CHECK(parse_core_config("{}").auto_accel_permille_per_s == 1125);
-    CHECK(parse_core_config("{\"auto_accel_permille_per_s\": 0}").auto_accel_permille_per_s == 0);
-    CHECK(throws([] { parse_core_config("{\"auto_accel_permille_per_s\": -1}"); }));
+    CHECK(parse_core_config("{}").auto_accel_pwm_per_s == 287);
+    CHECK(parse_core_config("{\"auto_accel_pwm_per_s\": 0}").auto_accel_pwm_per_s == 0);
+    CHECK(throws([] { parse_core_config("{\"auto_accel_pwm_per_s\": -1}"); }));
 }
 
 void test_py_drive_loads(const fs::path& staged_logic_dir, const fs::path& py_pack_dir, const fs::path& tof_pack_dir) {
@@ -257,16 +266,16 @@ void test_py_drive_loads(const fs::path& staged_logic_dir, const fs::path& py_pa
     for (const auto& f : lib->manifest().files) lists_runner = lists_runner || f.path == "runner.py";
     CHECK_MSG(lists_runner, "runner.py must be listed (and so verified) in the py_drive manifest");
     const Manifest pm = load_and_verify_manifest(py_pack_dir.string());
-    CHECK(pm.id == "py-sample" && pm.logic_name == "py_drive" && pm.logic_min_abi == 2);
+    CHECK(pm.id == "py-sample" && pm.logic_name == "py_drive" && pm.logic_min_abi == 3);
     {
         LogicInstance inst(lib, py_pack_dir.string());   // starts drive.py, self-test (ping)
         rumi_sensor_frame f{};
         f.size = sizeof(f);
         f.t_us = 1000000;
-        f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_NO_TARGET;
+        f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_OUT_OF_RANGE;
         rumi_command c{};
         CHECK(inst.step(f, c) == 0);
-        CHECK(c.drive_permille == 600 && std::string(inst.state_name(c.state)) == "RUN");
+        CHECK(c.drive_dir == RUMI_DRIVE_FORWARD && c.drive_pwm == 153 && std::string(inst.state_name(c.state)) == "RUN");
     }
     CHECK_MSG(throws([&] { LogicInstance x(lib, tof_pack_dir.string()); }), "a tof_drive pack must be refused by py_drive");
 }

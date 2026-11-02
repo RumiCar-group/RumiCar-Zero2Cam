@@ -63,16 +63,17 @@ int tof_self_test(void* inst, char* err, size_t err_len) {
         f.size = sizeof(f);
         f.seq = i;
         f.t_us = 1'000'000ull + static_cast<uint64_t>(i) * 50'000ull;
-        f.tof_mm[RUMI_TOF_LEFT] = RUMI_TOF_NO_TARGET;
-        f.tof_mm[RUMI_TOF_CENTER] = RUMI_TOF_NO_TARGET;
-        f.tof_mm[RUMI_TOF_RIGHT] = RUMI_TOF_NO_TARGET;
+        f.tof_mm[RUMI_TOF_LEFT] = RUMI_TOF_OUT_OF_RANGE;    // nothing within 20 cm
+        f.tof_mm[RUMI_TOF_CENTER] = RUMI_TOF_OUT_OF_RANGE;
+        f.tof_mm[RUMI_TOF_RIGHT] = RUMI_TOF_OUT_OF_RANGE;
         rumi_command c{};
         if (!probe.step(f, c)) { put_err(err, err_len, "step rejected a well-formed frame"); return 3; }
-        if (c.drive_permille < last || c.drive_permille > in->params.v_max) {
-            put_err(err, err_len, "drive ramp is not monotonic within v_max");
+        const bool forward = c.drive_dir == RUMI_DRIVE_FORWARD || (c.drive_dir == RUMI_DRIVE_FREE && c.drive_pwm == 0);
+        if (!forward || c.drive_pwm < last || c.drive_pwm > in->params.v_max) {
+            put_err(err, err_len, "drive ramp is not monotonic forward within v_max");
             return 4;
         }
-        last = c.drive_permille;
+        last = c.drive_pwm;
     }
     if (last != in->params.v_max) { put_err(err, err_len, "drive did not reach v_max in 2.5 s"); return 5; }
     return 0;

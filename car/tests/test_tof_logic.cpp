@@ -11,7 +11,15 @@ using namespace rumicar::tof;
 
 namespace {
 
-constexpr int OPEN = RUMI_TOF_NO_TARGET;
+// Values are those of the RumiCar library: ToF 0..200 mm, -1 timeout, -3 nothing
+// within 20 cm (open road); drive as FREE / REVERSE / FORWARD / BRAKE + duty 0..255.
+constexpr int OPEN = RUMI_TOF_OUT_OF_RANGE;
+
+// The drive as a signed duty: FORWARD +pwm, REVERSE -pwm, FREE / BRAKE 0.
+int drv(const rumi_command& c) {
+    return c.drive_dir == RUMI_DRIVE_FORWARD ? c.drive_pwm : c.drive_dir == RUMI_DRIVE_REVERSE ? -c.drive_pwm : 0;
+}
+bool braking(const rumi_command& c) { return c.drive_dir == RUMI_DRIVE_BRAKE; }
 
 rumi_sensor_frame frame(uint32_t seq, uint64_t t_ms, int L, int C, int R) {
     rumi_sensor_frame f{};
@@ -49,11 +57,11 @@ void test_ramp_and_accel_limit() {
         const auto& c = r.step(OPEN, OPEN, OPEN);
         CHECK(c.state == static_cast<uint8_t>(State::Cruise));
         CHECK(c.steer == RUMI_STEER_CENTER);
-        CHECK(c.drive_permille >= prev);
-        // accel limit: 1125/s * 0.05 s = 56.25 per frame (+1 for rounding)
-        CHECK_MSG(c.drive_permille - prev <= 57, "frame " + std::to_string(i));
-        prev = c.drive_permille;
-        if (c.drive_permille == p.v_max) reached = true;
+        CHECK(drv(c) >= prev);
+        // accel limit: 287/s * 0.05 s = 14.35 per frame (+1 for rounding)
+        CHECK_MSG(drv(c) - prev <= 15, "frame " + std::to_string(i));
+        prev = drv(c);
+        if (drv(c) == p.v_max) reached = true;
     }
     CHECK(reached);
     CHECK(prev == p.v_max);
@@ -66,33 +74,33 @@ void test_speed_cap_stops_and_resumes_smoothly() {
     Params p;
     Run r(p);
     for (int i = 0; i < 60; ++i) r.step(OPEN, OPEN, OPEN);
-    CHECK(r.last.drive_permille == p.v_max);
+    CHECK(drv(r.last) == p.v_max);
     r.logic.set_speed_cap(0);
-    int prev = r.last.drive_permille;
+    int prev = drv(r.last);
     int frames_to_stop = 0;
     for (int i = 0; i < 40 && prev > 0; ++i) {
         const auto& c = r.step(OPEN, OPEN, OPEN);
-        CHECK(c.drive_permille <= prev);
-        CHECK_MSG(prev - c.drive_permille <= 151, "decel 3000/s * 0.05 s = 150 per frame");   // +1 rounding
+        CHECK(drv(c) <= prev);
+        CHECK_MSG(prev - drv(c) <= 39, "decel 765/s * 0.05 s = 38.25 per frame");   // +1 rounding
         CHECK(c.state == static_cast<uint8_t>(State::Cruise) && c.steer == RUMI_STEER_CENTER);
-        prev = c.drive_permille;
+        prev = drv(c);
         ++frames_to_stop;
     }
     CHECK(prev == 0);
-    CHECK(frames_to_stop >= 6 && frames_to_stop <= 8);   // 900 / 150 = 6 frames
-    for (int i = 0; i < 10; ++i) CHECK(r.step(OPEN, OPEN, OPEN).drive_permille == 0);
-    CHECK((r.last.flags & RUMI_CMD_FLAG_BRAKE) == 0);     // the cap itself does not brake
+    CHECK(frames_to_stop >= 6 && frames_to_stop <= 8);   // 230 / 38.25 = 6 frames
+    for (int i = 0; i < 10; ++i) CHECK(drv(r.step(OPEN, OPEN, OPEN)) == 0);
+    CHECK(!braking(r.last) && r.last.drive_dir == RUMI_DRIVE_FREE);     // the cap itself does not brake: coast
     // A partial cap limits, it does not stop.
-    r.logic.set_speed_cap(300);
+    r.logic.set_speed_cap(77);
     for (int i = 0; i < 30; ++i) r.step(OPEN, OPEN, OPEN);
-    CHECK(r.last.drive_permille == 300);
-    r.logic.set_speed_cap(RUMI_DRIVE_MAX);
-    prev = r.last.drive_permille;
+    CHECK(drv(r.last) == 77);
+    r.logic.set_speed_cap(RUMI_PWM_MAX);
+    prev = drv(r.last);
     for (int i = 0; i < 40; ++i) {
         const auto& c = r.step(OPEN, OPEN, OPEN);
-        CHECK(c.drive_permille >= prev);
-        CHECK(c.drive_permille - prev <= 57);
-        prev = c.drive_permille;
+        CHECK(drv(c) >= prev);
+        CHECK(drv(c) - prev <= 15);
+        prev = drv(c);
     }
     CHECK(prev == p.v_max);
     // The cap never affects reversing: a recovery still reverses at v_reverse.
@@ -102,7 +110,7 @@ void test_speed_cap_stops_and_resumes_smoothly() {
     for (int i = 0; i < 4; ++i) r.step(200, 50, 50);          // brake_ms elapsed -> reverse
     CHECK(r.last.state == static_cast<uint8_t>(State::RecoverReverse));
     int min_drive = 0;
-    for (int i = 0; i < 6; ++i) min_drive = std::min<int>(min_drive, r.step(200, 50, 50).drive_permille);
+    for (int i = 0; i < 6; ++i) min_drive = std::min<int>(min_drive, drv(r.step(200, 50, 50)));
     CHECK(min_drive == -p.v_reverse);
     CHECK(r.last.aux_len == 0 && r.last.aux_format == 0);
 }
@@ -116,42 +124,42 @@ void test_steer_modes_for_logics_on_top() {
     Run r(p);
     for (int i = 0; i < 60; ++i) r.step(OPEN, OPEN, OPEN);
     r.logic.set_steer_mode(TofDriveLogic::SteerMode::HoldLane);
-    for (int i = 0; i < 20; ++i) r.step(OPEN, 180, OPEN);   // an obstacle ahead, more room on the left
+    for (int i = 0; i < 20; ++i) r.step(OPEN, 160, OPEN);   // an obstacle ahead (below d_turn_enter_mm), more room on the left
     CHECK(r.last.steer == RUMI_STEER_CENTER && r.last.state == static_cast<uint8_t>(State::Cruise));
-    CHECK(r.last.drive_permille < p.v_max && r.last.drive_permille >= p.v_min);   // the speed curve still applies
-    for (int i = 0; i < 10; ++i) r.step(40, 180, OPEN);     // a wall close on the left: move away from it
+    CHECK(drv(r.last) < p.v_max && drv(r.last) >= p.v_min);   // the speed curve still applies
+    for (int i = 0; i < 10; ++i) r.step(40, 160, OPEN);     // a wall close on the left: move away from it
     CHECK(r.last.steer == RUMI_STEER_RIGHT);
-    for (int i = 0; i < 10; ++i) r.step(OPEN, 180, OPEN);
+    for (int i = 0; i < 10; ++i) r.step(OPEN, 160, OPEN);
     CHECK(r.last.steer == RUMI_STEER_CENTER);
     // No stuck recovery while held: the distance has not changed for far longer than stuck_time_ms.
-    for (int i = 0; i < 60; ++i) r.step(OPEN, 180, OPEN);   // 3 s
-    CHECK(r.last.state == static_cast<uint8_t>(State::Cruise) && r.last.drive_permille > 0);
+    for (int i = 0; i < 60; ++i) r.step(OPEN, 160, OPEN);   // 3 s
+    CHECK(r.last.state == static_cast<uint8_t>(State::Cruise) && drv(r.last) > 0);
     // Force: left at once, even though the steering just changed.
     r.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_LEFT);
-    r.step(OPEN, 180, OPEN);
+    r.step(OPEN, 160, OPEN);
     CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.state == static_cast<uint8_t>(State::TurnLeft));
     r.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_RIGHT);
-    r.step(OPEN, 180, OPEN);
+    r.step(OPEN, 160, OPEN);
     CHECK(r.last.steer == RUMI_STEER_RIGHT && r.last.state == static_cast<uint8_t>(State::TurnRight));
     CHECK(r.logic.steer_mode() == TofDriveLogic::SteerMode::Force);
     // Back to Auto: the obstacle ahead now makes the logic turn by itself (towards the open side).
     r.logic.set_steer_mode(TofDriveLogic::SteerMode::Auto);
-    for (int i = 0; i < 10; ++i) r.step(OPEN, 180, 100);
+    for (int i = 0; i < 10; ++i) r.step(OPEN, 160, 100);
     CHECK(r.last.steer == RUMI_STEER_LEFT);
     // Emergency braking is never affected by a steering mode.
     r.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_RIGHT);
     for (int i = 0; i < 3; ++i) r.step(OPEN, 50, OPEN);
-    CHECK(r.last.state == static_cast<uint8_t>(State::EmergencyBrake) && r.last.drive_permille == 0);
-    CHECK((r.last.flags & RUMI_CMD_FLAG_BRAKE) != 0);
+    CHECK(r.last.state == static_cast<uint8_t>(State::EmergencyBrake) && drv(r.last) == 0);
+    CHECK(braking(r.last));
     // closing_mm_s and drive are exposed for the logic on top.
     Run q(p);
     for (int i = 0; i < 60; ++i) q.step(OPEN, OPEN, OPEN);
     CHECK(q.logic.drive() == p.v_max);
-    q.step(OPEN, 240, OPEN);
-    q.step(OPEN, 240, OPEN);
-    q.step(OPEN, 240, OPEN);
-    q.step(OPEN, 200, OPEN);   // median still 240
-    q.step(OPEN, 200, OPEN);   // median 200 -> filtered 200 (a closer reading is taken at once): 40 mm in 50 ms
+    q.step(OPEN, 190, OPEN);
+    q.step(OPEN, 190, OPEN);
+    q.step(OPEN, 190, OPEN);
+    q.step(OPEN, 150, OPEN);   // median still 190
+    q.step(OPEN, 150, OPEN);   // median 150 -> filtered 150 (a closer reading is taken at once): 40 mm in 50 ms
     CHECK(q.logic.closing_mm_s() > 700.0 && q.logic.closing_mm_s() < 900.0);
 }
 
@@ -159,15 +167,15 @@ void test_speed_follows_distance() {
     Params p;
     Run r(p);
     for (int i = 0; i < 60; ++i) r.step(OPEN, OPEN, OPEN);
-    // 1 s at 200 mm (shorter than stuck_time_ms): midway between d_min 150 and
-    // d_max 250 -> midway between v_min and v_max.
-    for (int i = 0; i < 20; ++i) r.step(OPEN, 200, OPEN);
+    // 1 s at 175 mm (shorter than stuck_time_ms): midway between d_min 150 and
+    // d_max 200 -> midway between v_min and v_max.
+    for (int i = 0; i < 20; ++i) r.step(OPEN, 175, OPEN);
     const int expected = (p.v_min + p.v_max) / 2;
-    CHECK_MSG(std::abs(r.last.drive_permille - expected) <= 2, std::to_string(r.last.drive_permille));
+    CHECK_MSG(std::abs(drv(r.last) - expected) <= 2, std::to_string(drv(r.last)));
     CHECK(r.last.state == static_cast<uint8_t>(State::Cruise));
     // 150 mm is below d_turn_enter_mm: the logic turns (towards the larger side) at v_min.
     for (int i = 0; i < 20; ++i) r.step(OPEN, 150, OPEN);
-    CHECK(r.last.drive_permille == p.v_min);
+    CHECK(drv(r.last) == p.v_min);
     CHECK(r.last.state == static_cast<uint8_t>(State::TurnLeft) || r.last.state == static_cast<uint8_t>(State::TurnRight));
 }
 
@@ -177,7 +185,7 @@ void test_stuck_requires_constant_distance() {
     for (int i = 0; i < 20; ++i) r.step(OPEN, OPEN, OPEN);
     // 3 s driving towards a wall whose distance changes by more than stuck_delta_mm
     // every few frames: never classified as stuck.
-    for (int i = 0; i < 60; ++i) r.step(OPEN, 240 - (i % 4) * 20, OPEN);
+    for (int i = 0; i < 60; ++i) r.step(OPEN, 190 - (i % 4) * 20, OPEN);
     CHECK(r.last.state != static_cast<uint8_t>(State::RecoverReverse));
 }
 
@@ -185,7 +193,7 @@ void test_emergency_brake_then_recover() {
     Params p;
     Run r(p);
     for (int i = 0; i < 60; ++i) r.step(OPEN, OPEN, OPEN);
-    CHECK(r.last.drive_permille == p.v_max);
+    CHECK(drv(r.last) == p.v_max);
 
     // Obstacle appears very close: open on the left, wall on the right.
     // Three frames so the median filter (window 3) accepts the new value.
@@ -193,8 +201,8 @@ void test_emergency_brake_then_recover() {
     r.step(200, 50, 50);
     const auto& c = r.step(200, 50, 50);
     CHECK(c.state == static_cast<uint8_t>(State::EmergencyBrake));
-    CHECK(c.drive_permille == 0);
-    CHECK((c.flags & RUMI_CMD_FLAG_BRAKE) != 0);
+    CHECK(drv(c) == 0);
+    CHECK(braking(c));
 
     // After brake_ms (150 ms = 3 frames) still blocked -> reverse, wheels turned RIGHT (away from open LEFT).
     r.step(200, 50, 50);
@@ -203,15 +211,15 @@ void test_emergency_brake_then_recover() {
     const auto& rec = r.step(200, 50, 50);
     CHECK(rec.state == static_cast<uint8_t>(State::RecoverReverse));
     CHECK(rec.steer == RUMI_STEER_RIGHT);
-    CHECK(rec.drive_permille < 0);
-    CHECK((rec.flags & RUMI_CMD_FLAG_BRAKE) == 0);
+    CHECK(drv(rec) < 0);
+    CHECK(!braking(rec));
 
     // Reverse reaches -v_reverse and ends within reverse_ms, then returns to cruise.
     int min_drive = 0;
     bool back_to_cruise = false;
     for (int i = 0; i < 20; ++i) {
         const auto& x = r.step(200, 50, 50);
-        min_drive = std::min<int>(min_drive, x.drive_permille);
+        min_drive = std::min<int>(min_drive, drv(x));
         if (x.state == static_cast<uint8_t>(State::Cruise) || x.state == static_cast<uint8_t>(State::TurnLeft)) {
             back_to_cruise = true;
             break;
@@ -227,8 +235,8 @@ void test_recover_exits_early_when_room_regained() {
     for (int i = 0; i < 40; ++i) r.step(OPEN, OPEN, OPEN);
     for (int i = 0; i < 8; ++i) r.step(200, 50, 50);
     CHECK(r.last.state == static_cast<uint8_t>(State::RecoverReverse));
-    // Room regained: centre above d_turn_exit for the minimum reverse time (200 ms = 4 frames).
-    for (int i = 0; i < 6; ++i) r.step(200, 240, 200);
+    // Room regained: nothing within 20 cm ahead (above d_turn_exit) for the minimum reverse time (200 ms = 4 frames).
+    for (int i = 0; i < 6; ++i) r.step(200, OPEN, 200);
     CHECK(r.last.state != static_cast<uint8_t>(State::RecoverReverse));
 }
 
@@ -237,32 +245,32 @@ void test_steering_hysteresis_and_hold() {
     Run r(p);
     for (int i = 0; i < 10; ++i) r.step(OPEN, OPEN, OPEN);
 
-    // Centre below d_turn_enter (200) with more room on the right -> turn right.
-    for (int i = 0; i < 6; ++i) r.step(100, 190, 220);
+    // Centre below d_turn_enter (170) with more room on the right -> turn right.
+    for (int i = 0; i < 6; ++i) r.step(100, 160, 180);
     CHECK(r.last.steer == RUMI_STEER_RIGHT);
     CHECK(r.last.state == static_cast<uint8_t>(State::TurnRight));
-    CHECK(r.last.drive_permille <= p.v_turn_cap);
+    CHECK(drv(r.last) <= p.v_turn_cap);
 
-    // Between enter (200) and exit (230): keep turning.
-    for (int i = 0; i < 6; ++i) r.step(100, 215, 220);
+    // Between enter (170) and exit (190): keep turning.
+    for (int i = 0; i < 6; ++i) r.step(100, 180, 180);
     CHECK(r.last.steer == RUMI_STEER_RIGHT);
 
-    // Above exit (230) and no side wall -> centre.
-    for (int i = 0; i < 8; ++i) r.step(240, 245, 240);
+    // Above exit (190) and no side wall -> centre.
+    for (int i = 0; i < 8; ++i) r.step(OPEN, 195, OPEN);
     CHECK(r.last.steer == RUMI_STEER_CENTER);
     CHECK(r.last.state == static_cast<uint8_t>(State::Cruise));
 
     // Hold: a change requested immediately after a change is delayed by steer_hold_ms.
     uint64_t t_changed = 0;
     for (int i = 0; i < 12 && t_changed == 0; ++i) {
-        r.step(100, 190, 220);
+        r.step(100, 160, 180);
         if (r.last.steer == RUMI_STEER_RIGHT) t_changed = r.t_ms;
     }
     CHECK_MSG(t_changed != 0, "steer did not switch to RIGHT within 12 frames");
-    r.step(220, 190, 100); // now more room on the left
+    r.step(180, 160, 100); // now more room on the left
     CHECK(r.last.steer == RUMI_STEER_RIGHT); // still within hold (50 ms < 150 ms)
-    while (r.t_ms - t_changed < static_cast<uint64_t>(p.steer_hold_ms)) r.step(220, 190, 100);
-    r.step(220, 190, 100);
+    while (r.t_ms - t_changed < static_cast<uint64_t>(p.steer_hold_ms)) r.step(180, 160, 100);
+    r.step(180, 160, 100);
     CHECK(r.last.steer == RUMI_STEER_LEFT);
 }
 
@@ -281,13 +289,13 @@ void test_side_wall_avoidance() {
 void test_median_rejects_single_spike() {
     Params p;
     Run r(p);
-    for (int i = 0; i < 20; ++i) r.step(OPEN, 220, OPEN);
+    for (int i = 0; i < 20; ++i) r.step(OPEN, 180, OPEN);
     CHECK(r.last.state == static_cast<uint8_t>(State::Cruise));
-    const int before = r.last.drive_permille;
+    const int before = drv(r.last);
     r.step(OPEN, 30, OPEN); // one-frame spike
     CHECK(r.last.state != static_cast<uint8_t>(State::EmergencyBrake));
-    CHECK(r.last.drive_permille >= before - 1);
-    r.step(OPEN, 220, OPEN);
+    CHECK(drv(r.last) >= before - 1);
+    r.step(OPEN, 180, OPEN);
     CHECK(r.last.state != static_cast<uint8_t>(State::EmergencyBrake));
 }
 
@@ -296,24 +304,33 @@ void test_sensor_fault_stops_and_resumes() {
     Run r(p);
     for (int i = 0; i < 40; ++i) r.step(OPEN, OPEN, OPEN);
     // Centre sensor returns no reading.  Within invalid_hold_ms the last value is kept.
-    r.step(OPEN, RUMI_TOF_INVALID, OPEN);
+    r.step(OPEN, RUMI_TOF_TIMEOUT, OPEN);
     CHECK(r.last.state == static_cast<uint8_t>(State::Cruise));
-    for (int i = 0; i < 7; ++i) r.step(OPEN, RUMI_TOF_INVALID, OPEN); // 350 ms > 300 ms hold
+    for (int i = 0; i < 7; ++i) r.step(OPEN, RUMI_TOF_TIMEOUT, OPEN); // 350 ms > 300 ms hold
     CHECK(r.last.state == static_cast<uint8_t>(State::SensorFault));
-    CHECK(r.last.drive_permille == 0);
+    CHECK(drv(r.last) == 0 && braking(r.last));
     CHECK((r.last.flags & RUMI_CMD_FLAG_FAULT) != 0);
     // Readings return -> cruise, with the drive ramping up again (not jumping).
     const auto& back = r.step(OPEN, OPEN, OPEN);
     CHECK(back.state == static_cast<uint8_t>(State::Cruise));
     CHECK((back.flags & RUMI_CMD_FLAG_FAULT) == 0);
-    CHECK(back.drive_permille <= 57);
+    CHECK(drv(back) <= 15);
+    // -3 (nothing within 20 cm) is a reading, not a fault: 2 s of it on every
+    // sensor is open road at full speed, with the steering centred.
+    Run q(p);
+    for (int i = 0; i < 40; ++i) q.step(OPEN, OPEN, OPEN);
+    CHECK(q.last.state == static_cast<uint8_t>(State::Cruise) && (q.last.flags & RUMI_CMD_FLAG_FAULT) == 0);
+    CHECK(q.last.drive_dir == RUMI_DRIVE_FORWARD && q.last.drive_pwm == p.v_max && q.last.steer == RUMI_STEER_CENTER);
+    // The sensor fault braked (BRAKE, not coast), and so does the emergency brake.
+    for (int i = 0; i < 8; ++i) q.step(OPEN, RUMI_TOF_TIMEOUT, OPEN);
+    CHECK(q.last.state == static_cast<uint8_t>(State::SensorFault) && braking(q.last));
 }
 
 void test_stuck_detection() {
     Params p;
     Run r(p);
     for (int i = 0; i < 20; ++i) r.step(OPEN, 180, OPEN); // drive settles well above stuck_min_drive
-    CHECK(r.last.drive_permille >= p.stuck_min_drive);
+    CHECK(drv(r.last) >= p.stuck_min_drive);
     CHECK(r.last.state != static_cast<uint8_t>(State::RecoverReverse));
     bool recovered = false;
     for (int i = 0; i < 40; ++i) { // 2 s at a constant 180 mm
@@ -324,35 +341,37 @@ void test_stuck_detection() {
 }
 
 void test_ttc_slows_when_closing_fast() {
+    // The same approach with and without the time-to-collision rule.  The
+    // deceleration is unlimited here so the frame's target shows directly.
     Params p;
-    // Static obstacle at 200 mm.
-    Run a(p);
-    for (int i = 0; i < 20; ++i) a.step(OPEN, OPEN, OPEN);
-    for (int i = 0; i < 20; ++i) a.step(OPEN, 200, OPEN);
-    CHECK(a.last.state == static_cast<uint8_t>(State::Cruise));
-    const int static_drive = a.last.drive_permille;
-    // Approaching: 250 -> 200 over 100 ms (500 mm/s, ttc 0.4 s < 0.5 s).
-    Run b(p);
-    for (int i = 0; i < 20; ++i) b.step(OPEN, OPEN, OPEN);
-    for (int i = 0; i < 20; ++i) b.step(OPEN, 250, OPEN);
-    b.step(OPEN, 225, OPEN);
-    b.step(OPEN, 200, OPEN);
-    b.step(OPEN, 175, OPEN);
-    CHECK_MSG(b.last.drive_permille < static_drive,
-              std::to_string(b.last.drive_permille) + " vs " + std::to_string(static_drive));
+    p.decel_pwm_per_s = 25500;
+    Params q = p;
+    q.ttc_slow_s = 0.0;
+    CHECK(validate(p).empty() && validate(q).empty());
+    auto approach = [](const Params& params) {
+        Run r(params);
+        for (int i = 0; i < 20; ++i) r.step(OPEN, OPEN, OPEN);
+        for (int i = 0; i < 20; ++i) r.step(OPEN, 190, OPEN);   // static at 190 mm
+        r.step(OPEN, 165, OPEN);                                 // median still 190
+        r.step(OPEN, 165, OPEN);                                 // 190 -> 165 in 50 ms: 500 mm/s, ttc 0.33 s < 0.5 s
+        return drv(r.last);
+    };
+    const int with_ttc = approach(p), without_ttc = approach(q);
+    CHECK_MSG(with_ttc == p.v_min, std::to_string(with_ttc));
+    CHECK_MSG(without_ttc > p.v_min, std::to_string(without_ttc));   // 165 mm alone: between v_min and v_max
 }
 
 void test_determinism() {
     Params p;
     std::vector<std::array<int, 3>> seq;
     for (int i = 0; i < 200; ++i) {
-        int c = 260 - (i * 7) % 230;
-        seq.push_back({(i * 13) % 300, c, (i * 29) % 300});
+        int c = 200 - (i * 7) % 180;
+        seq.push_back({(i * 13) % 220 - 3, c, (i * 29) % 220 - 3});   // -3 .. 216: open, measured, beyond conf_max
     }
     auto run = [&]() {
         std::vector<int> out;
         Run r(p);
-        for (auto& s : seq) { const auto& c = r.step(s[0], s[1], s[2]); out.push_back(c.drive_permille * 10 + c.steer + 2); out.push_back(c.state); }
+        for (auto& s : seq) { const auto& c = r.step(s[0], s[1], s[2]); out.push_back(drv(c) * 10 + c.steer); out.push_back(c.state * 4 + c.drive_dir); }
         return out;
     };
     CHECK(run() == run());
@@ -376,7 +395,11 @@ void test_params_json_strict() {
     bad.d_min_mm = 50; // violates d_emergency < d_min
     CHECK(!validate(bad).empty());
     bad = p;
-    bad.v_max = 1200;
+    bad.v_max = 256;   // duty is 0..255
+    CHECK(!validate(bad).empty());
+    bad = p;
+    bad.conf_max_mm = 250;   // RC_read never returns more than 200
+    bad.d_max_mm = 200;
     CHECK(!validate(bad).empty());
     CHECK(validate(p).empty());
 }

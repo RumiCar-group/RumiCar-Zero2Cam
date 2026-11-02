@@ -103,6 +103,9 @@ jobs:
           python3 car/tools/make_manifest.py verify car/packs/cam-base
           python3 car/tools/make_manifest.py verify car/packs/py-sample
 
+      - name: Figures in the READMEs match their sources (docs/figures)
+        run: python3 docs/figures/sync_readme.py --check
+
       - name: Golden data of the vision layer is reproducible from the Python implementation
         run: python3 car/tests/data/vision/make_golden.py --check
 
@@ -140,14 +143,17 @@ jobs:
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/logic/py_drive-*
           python3 car/tools/make_manifest.py verify /var/lib/rumicar/packs/py-sample-*
           test -f /var/lib/rumicar/logic/py_drive-*/runner.py
-          grep -q '"auto_accel_permille_per_s": 1125' /etc/rumicar/core.json
+          grep -q '"auto_accel_pwm_per_s": 287' /etc/rumicar/core.json
+          grep -q '"max_drive_pwm": 255' /etc/rumicar/core.json
+          grep -q '"kick_pwm": 200' /etc/rumicar/core.json
+          if grep -q permille /etc/rumicar/core.json; then echo "core.json must not carry the per-mille keys of 0.3.x"; exit 1; fi
           # Switching to another logic with its pack in one step, and back (rumicar-activate pair / rollback both).
           s=$(mktemp -d) && cp -a /var/lib/rumicar/. "$s"/
           RUMICAR_STATE_DIR="$s" rumicar-activate pair "$(basename "$(ls -d "$s"/logic/py_drive-*)")" "$(basename "$(ls -d "$s"/packs/py-sample-*)")"
           readlink "$s/current/logic" | grep -q py_drive && readlink "$s/current/pack" | grep -q py-sample
           RUMICAR_STATE_DIR="$s" rumicar-activate rollback both
           readlink "$s/current/logic" | grep -q tof_drive && readlink "$s/current/pack" | grep -q base-tof
-          if RUMICAR_STATE_DIR="$s" rumicar-activate pair tof_drive-0.2.0 no-such-pack; then echo "pair with a missing pack must fail"; exit 1; fi
+          if RUMICAR_STATE_DIR="$s" rumicar-activate pair tof_drive-0.3.0 no-such-pack; then echo "pair with a missing pack must fail"; exit 1; fi
           readlink "$s/current/logic" | grep -q tof_drive
           rm -rf "$s"
           test -x /usr/bin/rumicar-replay
@@ -190,10 +196,14 @@ jobs:
           path: deb
 
       - name: Build the image
+        # A release build (tag) also gets the Raspberry Pi Imager manifest, which
+        # build-image.sh validates with check_manifest.py (python3-jsonschema for
+        # the schema check).  A build that is not a release has no download URL.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils curl openssl
+          sudo apt-get install -y --no-install-recommends xz-utils curl openssl python3 python3-jsonschema
           sudo car/image/build-image.sh --deb deb/rumicar-zero2cam_*_arm64.deb --out dist
+          if [ "$GITHUB_REF_TYPE" = tag ]; then test -f dist/rumicar-zero2cam.rpi-imager-manifest; fi
 
       - name: Upload the image
         uses: actions/upload-artifact@v5
