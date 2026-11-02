@@ -9,6 +9,7 @@ Raspberry Pi Zero 2 W と Camera Module 2 を搭載した RumiCar のソフト�
 - 仕様（設定、通信形式、配布形式、ビルド）：[docs/RumiCar-Zero2Cam 仕様書.docx](docs/RumiCar-Zero2Cam%20仕様書.docx)
 - 設計の記録（調査結果、比較した案、決定の理由、画像ロジックの設計と実装の経緯。学習の参考資料）：[docs/RumiCar-Zero2Cam 設計の記録.docx](docs/RumiCar-Zero2Cam%20設計の記録.docx)
 - 配布物：[Releases](https://github.com/RumiCar-group/RumiCar-Zero2Cam/releases)
+- 解説動画（3 本、日本語・英語。ToF の読み取り値、自動モードの発進制御、駐車車両の追い越し）：[12. 解説動画](#12-解説動画)
 
 ## 構成
 
@@ -624,6 +625,18 @@ sequenceDiagram
 - 送信されたパックは `/var/lib/rumicar/packs/<フォルダ名>-<日時>/` に格納され、`rumicar-activate pair py_drive-0.2.0 <パック>` で SSH からも切り替えられます（ロジックとデータは組で切り替えます）。
 - ToF による走行（`tof_drive`）は C++ で記述されています。Python で作成した処理を正式な走行ロジックに移植する場合は、`car/logic/tof_drive/` を参考にしてください。
 - 見本 `py-sample` は車にも同梱されているため、PC にリポジトリが無くても「版の管理」から `py-sample-0.2.0` を有効化して動作を確認できます。
+
+## 12. 解説動画
+
+動作の要点を 1 本 30〜45 秒の動画にしています（`docs/videos/`、1280×720、音声なし。クリックすると GitHub のページで再生されます）。数値はすべて本版のソースの既定値です。
+
+| 動画 | 内容 | 日本語 | English |
+|---|---|---|---|
+| ToF センサーの読み取り値と表示 | 0〜200 mm・−3（範囲外）・−1（タイムアウト）の違いと、走行ロジック `tof_drive` での扱い（5 章の表、`RC_read()` の値） | [01-tof-readings-ja.mp4](docs/videos/01-tof-readings-ja.mp4) | [01-tof-readings-en.mp4](docs/videos/01-tof-readings-en.mp4) |
+| 自動モードの発進制御（急発進の防止） | `auto_accel_pwm_per_s`（287/s）による許容値の増加と「自動の最大出力」（5 章） | [02-auto-start-ja.mp4](docs/videos/02-auto-start-ja.mp4) | [02-auto-start-en.mp4](docs/videos/02-auto-start-en.mp4) |
+| 駐車車両の追い越し（`cam_drive` の車両の挙動） | FOLLOW → OVERTAKE_OUT → OVERTAKE_PASS → OVERTAKE_IN。左右の ToF は前方 65° 向きで、内側の ToF が車両を見失ってから `pass_clear_ms` で残りの車体が通過する（7.5） | [03-overtaking-ja.mp4](docs/videos/03-overtaking-ja.mp4) | [03-overtaking-en.mp4](docs/videos/03-overtaking-en.mp4) |
+
+動画は `docs/videos/make_videos.py`（Pillow ＋ ffmpeg）で作成しています。ソースの既定値が変わったときは、スクリプトの定数と字幕を直して作り直します（`python3 docs/videos/make_videos.py <出力先> [--lang ja|en]`）。実車確認で変わる可能性のある値（`pass_clear_ms` など、仕様書 8.3）は、確認後に字幕を合わせます。
 
 ---
 
