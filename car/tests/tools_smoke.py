@@ -71,8 +71,10 @@ def make_frame(rng, kind, k, n):
 OPEN = (-3, -3, -3)      # RC_read: nothing within 20 cm
 
 
-def write_session(path, plan, scenario, seed):
-    """plan: (kind, frames) or (kind, frames, (L, C, R) ToF readings) entries, 50 ms apart."""
+def write_session(path, plan, scenario, seed, abi=4):
+    """plan: (kind, frames) or (kind, frames, (L, C, R) ToF readings) entries, 50 ms apart.
+    abi 4 (core 0.5.0) records the steering strength (steer_pwm, logic_steer_pwm); abi 3
+    (core 0.4.x) did not.  The recorded steering is RIGHT, at strength 128 with abi 4."""
     rng = np.random.default_rng(seed)
     os.makedirs(os.path.join(path, "frames"), exist_ok=True)
     meta, labels = [], []
@@ -85,11 +87,15 @@ def write_session(path, plan, scenario, seed):
             img, box = make_frame(rng, kind, k, n)
             name = f"{idx:06d}.jpg"
             img.save(os.path.join(path, "frames", name), "JPEG", quality=80)
-            hdr = {"abi": 3, "seq": idx, "t_us": t, "tof_mm": tof, "steer": 1, "drive_dir": 2, "drive_pwm": 230,
-                   "state": 0, "state_name": "CRUISE", "flags": 0, "mode": "auto", "estop": False, "logic_steer": 1,
-                   "logic_drive_dir": 2, "logic_drive_pwm": 230, "logic_name": "tof_drive", "logic_version": "0.3.0",
-                   "pack_id": "base-tof", "pack_version": "0.2.0", "battery_mv": 0, "throttled": 0, "image_w": W, "image_h": H,
+            hdr = {"abi": abi, "seq": idx, "t_us": t, "tof_mm": tof, "steer": 2, "drive_dir": 2, "drive_pwm": 230,
+                   "state": 2, "state_name": "TURN_RIGHT", "flags": 0, "mode": "auto", "estop": False, "logic_steer": 2,
+                   "logic_drive_dir": 2, "logic_drive_pwm": 230, "logic_name": "tof_drive",
+                   "logic_version": "0.4.0" if abi == 4 else "0.3.0", "pack_id": "base-tof",
+                   "pack_version": "0.3.0" if abi == 4 else "0.2.0", "battery_mv": 0, "throttled": 0, "image_w": W, "image_h": H,
                    "image_seq": idx, "image_t_us": t + 100}
+            if abi == 4:
+                hdr["steer_pwm"] = 128
+                hdr["logic_steer_pwm"] = 128
             meta.append({"index": idx, "image": name, "received": "x", "header": hdr})
             if kind == "red":
                 labels.append({"index": idx, "objects": [{"name": "traffic_light_red", "box": box}]})
@@ -124,7 +130,8 @@ def main() -> int:
     sessions = os.path.join(work, "sessions")
     s1, s2, s3 = (os.path.join(sessions, n) for n in ("RumiCar_sig1", "RumiCar_sig2", "RumiCar_walls"))
     write_session(s1, [("walls", 20), ("red", 40), ("green", 20), ("walls", 10)], "信号機ありケース1", 1)
-    write_session(s2, [("walls", 10), ("red", 30), ("green", 15), ("walls", 10)], "信号機ありケース1", 2)
+    # recorded by a core 0.4.x (ABI 3, no steering strength): still read by the tools and replayed
+    write_session(s2, [("walls", 10), ("red", 30), ("green", 15), ("walls", 10)], "信号機ありケース1", 2, abi=3)
     write_session(s3, [("walls", 40)], "壁のみの走行データ", 3)
 
     pack = os.path.join(work, "cam-signal-0.1.0")
@@ -139,7 +146,8 @@ def main() -> int:
     with open(os.path.join(pack, "manifest.json"), encoding="utf-8") as f:
         manifest = json.load(f)
     assert manifest["capabilities"] == ["walls", "traffic_light"], manifest["capabilities"]
-    assert manifest["parent"] == "cam-base-0.2.0" and "信号機ありケース1" in manifest["scenarios"]
+    assert manifest["parent"] == "cam-base-0.3.0" and "信号機ありケース1" in manifest["scenarios"]
+    assert manifest["logic"] == {"name": "cam_drive", "min_abi": 4}, manifest["logic"]
     with open(os.path.join(pack, "training.json"), encoding="utf-8") as f:
         report = json.load(f)
     for name in ("traffic_light_red", "traffic_light_green"):
@@ -166,9 +174,22 @@ def main() -> int:
     assert stop_rows[-1]["drive_dir"] == 3 and stop_rows[-1]["drive_pwm"] == 0, stop_rows[-1]   # BRAKE
     assert rows[-1]["drive_dir"] == 2 and rows[-1]["drive_pwm"] > 0
     assert all(r["rc"] == 0 for r in rows)
+    # RC_steer's strength in the replay: CENTER carries 0, the ABI 3 recording's steering counts as full (255).
+    assert all(r["steer_pwm"] == 0 for r in rows if r["steer"] == 1), [r for r in rows if r["steer"] == 1][:1]
+    assert all(r["recorded"]["steer"] == 2 and r["recorded"]["steer_pwm"] == 255 for r in rows), rows[0]["recorded"]
     with open(os.path.join(pack, "params.json"), encoding="utf-8") as f:
         params = json.load(f)
     assert "vehicle" not in params and "intersection" not in params, "behaviours without detectors must stay off"
+    # The ToF section comes from the parent, steering strengths included.
+    assert all(params["tof"][k] == 255 for k in ("turn_steer_pwm", "side_steer_pwm", "recover_steer_pwm")), params["tof"]
+
+    # A recording of a car older than core 0.4.0 (no "abi", other values) is refused by both tools.
+    old = os.path.join(sessions, "RumiCar_abi2")
+    write_session(old, [("walls", 5)], "壁のみの走行データ", 6, abi=2)
+    r2 = subprocess.run([replay, logic_dir, pack, old], text=True, capture_output=True)
+    assert r2.returncode == 3 and "ABI 2" in r2.stderr, (r2.returncode, r2.stderr)
+    r2 = subprocess.run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "replay", pack, old], text=True, capture_output=True)
+    assert r2.returncode != 0 and "ABI 2" in r2.stderr, (r2.returncode, r2.stderr)
 
     # --- a second pack: a vehicle and an intersection learned on top of the traffic lights -------------------
     # Every detector is learned again from all the sessions: the new scenes are negatives
@@ -234,8 +255,9 @@ def main() -> int:
     assert cam == ["FOLLOW", "OVERTAKE_OUT", "OVERTAKE_PASS", "OVERTAKE_IN", "INTERSECTION_APPROACH", "INTERSECTION_STOP"], cam
     follow_rows = [r for r in rows if r["state_name"] == "FOLLOW"]
     assert follow_rows[-1]["drive_dir"] == 3 and follow_rows[-1]["drive_pwm"] == 0, follow_rows[-1]   # BRAKE
-    assert all(r["steer"] == 2 for r in rows if r["state_name"] == "OVERTAKE_OUT")   # both sides open: pass on the RIGHT (2)
-    assert all(r["steer"] == 0 for r in rows if r["state_name"] == "OVERTAKE_IN")    # back to the LEFT (0)
+    assert all(r["steer"] == 2 and r["steer_pwm"] == 255 for r in rows if r["state_name"] == "OVERTAKE_OUT")   # pass on the RIGHT (2), full
+    assert all(r["steer"] == 0 and r["steer_pwm"] == 255 for r in rows if r["state_name"] == "OVERTAKE_IN")    # back to the LEFT (0), full
+    assert all(r["recorded"]["steer_pwm"] == 128 for r in rows), rows[0]["recorded"]   # ABI 4 recording: its strength
     istop = [r for r in rows if r["state_name"] == "INTERSECTION_STOP"]
     assert istop[-1]["drive_dir"] == 3 and istop[-1]["drive_pwm"] == 0, istop[-1]
     assert seq[-1] == "CRUISE" and rows[-1]["drive_dir"] == 2 and rows[-1]["drive_pwm"] > 0

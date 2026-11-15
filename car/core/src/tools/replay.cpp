@@ -9,11 +9,13 @@
 // under /var/lib/rumicar or as staged by the build).  The session is a folder
 // written by the drive manager (meta.jsonl + frames/).  Each line:
 //   {"index":1,"seq":10,"t_us":...,"tof_mm":[..],"image":true,"state":17,"state_name":"SIGNAL_STOP",
-//    "steer":1,"drive_dir":3,"drive_pwm":0,"flags":0,"aux_format":1,"aux":"<base64>","rc":0,
-//    "recorded":{"state":..,"steer":..,"drive_dir":..,"drive_pwm":..}}
-// Values as in the RumiCar library (logic_api.h ABI 3).  A session recorded
-// by an older car (header without "abi": 3) is refused: its ToF values and
-// commands have another meaning.
+//    "steer":1,"steer_pwm":0,"drive_dir":3,"drive_pwm":0,"flags":0,"aux_format":1,"aux":"<base64>","rc":0,
+//    "recorded":{"state":..,"steer":..,"steer_pwm":..,"drive_dir":..,"drive_pwm":..}}
+// Values as in the RumiCar library (logic_api.h ABI 4).  Sessions recorded
+// with ABI 3 (core 0.4.x) are replayed as well: their sensor frames are the
+// same, and their steering was always full ("recorded" steer_pwm 255, or 0
+// for CENTER).  A session of an older car (no "abi", or below 3) is refused:
+// its ToF values and commands have another meaning.
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -88,12 +90,15 @@ int main(int argc, char** argv) {
             try { rec = json::parse(line); } catch (const json::exception&) { continue; }
             if (!rec.is_object() || !rec.contains("header") || !rec["header"].is_object()) continue;
             const json& h = rec["header"];
-            if (h.value("abi", 0u) != RUMI_LOGIC_ABI_VERSION) {
-                std::fprintf(stderr, "%s: recorded by a car with ABI %u (this replay needs ABI %u: ToF 0..200 / -1 / -3, "
+            const unsigned abi = h.value("abi", 0u);
+            if (abi != 3u && abi != RUMI_LOGIC_ABI_VERSION) {
+                std::fprintf(stderr, "%s: recorded by a car with ABI %u (this replay needs ABI 3 or %u: ToF 0..200 / -1 / -3, "
                                      "steer 0..2, drive_dir + drive_pwm); record the session again with the current car software\n",
-                             session.c_str(), h.value("abi", 0u), RUMI_LOGIC_ABI_VERSION);
+                             session.c_str(), abi, RUMI_LOGIC_ABI_VERSION);
                 return 3;
             }
+            const int rec_steer = h.value("logic_steer", RUMI_STEER_CENTER);
+            const int rec_steer_pwm = abi == 3u ? (rec_steer == RUMI_STEER_CENTER ? 0 : RUMI_PWM_MAX) : h.value("logic_steer_pwm", 0);
             rumi_sensor_frame f{};
             f.size = sizeof(f);
             f.seq = h.value("seq", 0u);
@@ -131,11 +136,12 @@ int main(int argc, char** argv) {
                 {"state", rc == 0 ? c.state : 0},
                 {"state_name", rc == 0 ? inst.state_name(c.state) : "ERROR"},
                 {"steer", rc == 0 ? c.steer : RUMI_STEER_CENTER},
+                {"steer_pwm", rc == 0 ? c.steer_pwm : 0},
                 {"drive_dir", rc == 0 ? c.drive_dir : RUMI_DRIVE_FREE},
                 {"drive_pwm", rc == 0 ? c.drive_pwm : 0},
                 {"flags", rc == 0 ? c.flags : 0u},
                 {"recorded", {{"state", h.value("state", 0)}, {"state_name", h.value("state_name", "")},
-                              {"steer", h.value("logic_steer", RUMI_STEER_CENTER)}, {"drive_dir", h.value("logic_drive_dir", RUMI_DRIVE_FREE)},
+                              {"steer", rec_steer}, {"steer_pwm", rec_steer_pwm}, {"drive_dir", h.value("logic_drive_dir", RUMI_DRIVE_FREE)},
                               {"drive_pwm", h.value("logic_drive_pwm", 0)}}},
             };
             if (rc == 0 && c.aux_len > 0) {

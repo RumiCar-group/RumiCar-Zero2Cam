@@ -42,6 +42,9 @@ std::string validate(const Params& p) {
     if (p.side_deadband_mm < 0) return "side_deadband_mm must be >= 0";
     if (p.d_side_mm < 0 || p.d_side_mm >= p.conf_max_mm) return "d_side_mm out of range";
     if (p.steer_hold_ms < 0 || p.steer_hold_ms > 2000) return "steer_hold_ms out of range";
+    if (!between(p.turn_steer_pwm, 0, RUMI_PWM_MAX)) return "turn_steer_pwm must be 0..255";
+    if (!between(p.side_steer_pwm, 0, RUMI_PWM_MAX)) return "side_steer_pwm must be 0..255";
+    if (!between(p.recover_steer_pwm, 0, RUMI_PWM_MAX)) return "recover_steer_pwm must be 0..255";
 
     if (p.brake_ms < 0 || p.brake_ms > 2000) return "brake_ms out of range";
     if (p.reverse_ms < 200 || p.reverse_ms > 5000) return "reverse_ms must be 200..5000";
@@ -131,12 +134,15 @@ void TofDriveLogic::decide_steer(int L, int C, int R, uint64_t t_us) {
     else if (C > p_.d_turn_exit_mm) turning_ = false;
 
     uint8_t desired;
+    int desired_pwm;   // strength of `desired` (RC_steer's second argument)
     if (steer_mode_ == SteerMode::Force) {
         desired = forced_steer_;
+        desired_pwm = forced_steer_pwm_;
     } else if (turning_) {
         if (L > R + p_.side_deadband_mm)      desired = RUMI_STEER_LEFT;
         else if (R > L + p_.side_deadband_mm) desired = RUMI_STEER_RIGHT;
         else                                  desired = last_turn_dir_;
+        desired_pwm = p_.turn_steer_pwm;
     } else {
         const bool left_near  = L < p_.d_side_mm;
         const bool right_near = R < p_.d_side_mm;
@@ -149,14 +155,21 @@ void TofDriveLogic::decide_steer(int L, int C, int R, uint64_t t_us) {
         } else {
             desired = RUMI_STEER_CENTER;
         }
+        desired_pwm = p_.side_steer_pwm;
     }
+    if (desired == RUMI_STEER_CENTER) desired_pwm = 0;
 
+    // steer_hold_ms keeps the direction from flapping; the strength follows
+    // the situation at once while the direction stays.
     if (desired != steer_) {
         const uint64_t held = t_us - steer_since_us_;
         if (held >= ms_to_us(p_.steer_hold_ms) || steer_mode_ == SteerMode::Force) {
             steer_ = desired;
+            steer_pwm_ = static_cast<uint8_t>(desired_pwm);
             steer_since_us_ = t_us;
         }
+    } else {
+        steer_pwm_ = static_cast<uint8_t>(desired_pwm);
     }
     if (steer_ != RUMI_STEER_CENTER && steer_mode_ == SteerMode::Auto) last_turn_dir_ = steer_;
 }
@@ -192,6 +205,11 @@ void TofDriveLogic::rate_limit(int target, double dt) {
     const double rate = (growing_forward ? p_.accel_pwm_per_s : p_.decel_pwm_per_s) * dt;
     const double delta  = std::clamp(tgt - drive_, -rate, rate);
     drive_ += delta;
+}
+
+void TofDriveLogic::set_recover_steer() {
+    steer_ = recover_steer_;
+    steer_pwm_ = static_cast<uint8_t>(p_.recover_steer_pwm);
 }
 
 void TofDriveLogic::enter(State s, uint64_t t_us) {
@@ -278,7 +296,7 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
                            : (R > L + p_.side_deadband_mm) ? RUMI_STEER_LEFT
                            : other_side(last_turn_dir_);
             enter(State::RecoverReverse, t);
-            steer_ = recover_steer_;
+            set_recover_steer();
             steer_since_us_ = t;
             target = -p_.v_reverse;
             break;
@@ -303,7 +321,7 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
                                : (R > L + p_.side_deadband_mm) ? RUMI_STEER_LEFT
                                : other_side(last_turn_dir_);
                 enter(State::RecoverReverse, t);
-                steer_ = recover_steer_;
+                set_recover_steer();
                 steer_since_us_ = t;
                 immediate_stop = false;
                 target = -p_.v_reverse;
@@ -322,7 +340,7 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
             // Steering is re-decided next frame; keep the recovery angle for this one.
             target = 0;
         } else {
-            steer_ = recover_steer_;
+            set_recover_steer();
             target = -p_.v_reverse;
         }
         break;
@@ -342,6 +360,7 @@ bool TofDriveLogic::step(const rumi_sensor_frame& frame, rumi_command& out) {
 
     out.size = sizeof(rumi_command);
     out.steer = steer_;
+    out.steer_pwm = steer_ == RUMI_STEER_CENTER ? 0 : steer_pwm_;
     if (immediate_stop) {
         out.drive_dir = RUMI_DRIVE_BRAKE;
         out.drive_pwm = 0;

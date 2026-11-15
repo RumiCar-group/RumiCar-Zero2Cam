@@ -5,8 +5,8 @@ Started by the py_drive plug-in as `python3 -I -B -u runner.py <pack dir>`;
 it talks to the plug-in over its standard input/output, one line per frame
 (docs 3.12).  What drive.py prints goes to the core's log.
 
-drive.py (written by the user) uses the RumiCar library API, the same as the
-Arduino library RumiCar-lib and RasPi/RumiCar.py of RumiCar-group/RumiCar:
+drive.py (written by the user) uses the RumiCar library: RasPi/RumiCar.py of
+RumiCar-group/RumiCar, the same API as the Arduino library RumiCar-lib.
 
     from RumiCar import *
 
@@ -14,14 +14,18 @@ Arduino library RumiCar-lib and RasPi/RumiCar.py of RumiCar-group/RumiCar:
         RC_setup()
     def loop():          # every frame (20 times a second)
         d = RC_read(CENTER)        # 0..200 mm, -1 timeout, -3 nothing within 20 cm
-        RC_steer(LEFT)             # LEFT / CENTER / RIGHT
+        RC_steer(LEFT, 128)        # LEFT / CENTER / RIGHT, strength 0..255 (255 when left out)
         RC_drive(FORWARD, 150)     # FREE / REVERSE / FORWARD / BRAKE, 0..255
 
-The RumiCar module is provided by this runner (the car's hardware is owned by
-the core): RC_read returns the frame's sensor values, RC_steer / RC_drive set
-the command for the frame, RC_setup does nothing.  The values set with
-RC_steer / RC_drive stay until they are changed, as in an Arduino sketch.
-Standard library only.
+RumiCar.py is not a copy kept here: the build takes it from a fixed commit of
+the RumiCar repository, checks its SHA-256 and puts it next to this file
+(car/logic/CMakeLists.txt).  Started with -I, Python does not look in this
+directory for modules, so the runner loads RumiCar.py from its path and
+registers it as the module `RumiCar` before drive.py is loaded.  The library's
+Zero2Cam hardware layer (RumiCar._use_zero2cam) does no output: the runner
+puts the frame's sensor values in it before each loop() and sends the values
+the RC_* functions left in it (steer, steer_pwm, drive_dir, drive_pwm, state)
+to the core after it.  Standard library only.
 """
 import importlib.util
 import json
@@ -29,106 +33,16 @@ import os
 import sys
 import time
 import traceback
-import types
-
-LEFT, CENTER, RIGHT, REAR = 0, 1, 2, 3
-FREE, REVERSE, FORWARD, BRAKE = 0, 1, 2, 3
-PWM_MAX = 255
-
-_warned = set()          # messages already written to the log (one line each, not every frame)
 
 
-def _warn(key, message):
-    if key not in _warned:
-        _warned.add(key)
-        print("drive.py: " + message, file=sys.stderr, flush=True)
-
-
-class _Car:
-    """The frame's sensor values and the command drive.py builds with RC_*."""
-
-    def __init__(self, params):
-        self.params = params
-        self.tof = [-1, -1, -1]        # LEFT, CENTER, RIGHT (RC_read values)
-        self.steer = CENTER
-        self.drive_dir = FREE
-        self.drive_pwm = 0
-        self.state = "-"
-
-
-_car = None
-
-
-def RC_setup():
-    """RumiCar のセンサとモータの初期化 (Zero2Cam では本体が行う: 何もしない)"""
-    return None
-
-
-def RC_steer(direc):
-    """操舵の関数: LEFT / CENTER / RIGHT.  Returns 1, or 0 for a bad argument."""
-    if direc is True or direc is False or direc not in (LEFT, CENTER, RIGHT):
-        _warn(("steer", repr(direc)), "RC_steer(%r): not LEFT / CENTER / RIGHT; ignored" % (direc,))
-        return 0
-    _car.steer = int(direc)
-    return 1
-
-
-def RC_drive(direc, ipwm):
-    """走行の関数: FREE / REVERSE / FORWARD / BRAKE, ipwm 0..255.  Returns 1, or 0 for a bad direction."""
-    if direc is True or direc is False or direc not in (FREE, REVERSE, FORWARD, BRAKE):
-        _warn(("drive", repr(direc)), "RC_drive(%r, ...): not FREE / REVERSE / FORWARD / BRAKE; ignored" % (direc,))
-        return 0
-    try:
-        ipwm = int(ipwm)
-    except (TypeError, ValueError):
-        _warn(("pwm", repr(ipwm)), "RC_drive(..., %r): the value must be a number 0..255; 0 used" % (ipwm,))
-        ipwm = 0
-    if ipwm < 0:
-        ipwm = 0
-    if ipwm > PWM_MAX:
-        ipwm = PWM_MAX
-    _car.drive_dir = int(direc)
-    _car.drive_pwm = ipwm
-    return 1
-
-
-def RC_read(direc):
-    """測距の関数: LEFT / CENTER / RIGHT / REAR.
-    0..200 = mm, -1 = タイムアウト (REAR: この車には無い), -2 = 引数エラー, -3 = 範囲外 (20 cm 以内に何もない)"""
-    if direc is True or direc is False:
-        return -2
-    if direc in (LEFT, CENTER, RIGHT):
-        return _car.tof[direc]
-    if direc == REAR:
-        return -1
-    return -2
-
-
-def RC_params():
-    """params.json of the pack as a dict ({} when there is none)."""
-    return _car.params
-
-
-def RC_state(name):
-    """Name of what the program is doing now (letters, digits and _, up to 24),
-    shown as 判断状態 on the PC.  Returns 1, or 0 for an invalid name."""
-    name = str(name).strip().upper().replace(" ", "_")
-    if not name or len(name) > 24 or not name.isascii() or not all(c.isalnum() or c == "_" for c in name):
-        _warn(("state", name), "RC_state(%r): use letters, digits and _ (up to 24); ignored" % (name,))
-        return 0
-    _car.state = name
-    return 1
-
-
-def _make_module():
-    """The `RumiCar` module drive.py imports (`from RumiCar import *`)."""
-    m = types.ModuleType("RumiCar")
-    for name in ("LEFT", "CENTER", "RIGHT", "REAR", "FREE", "REVERSE", "FORWARD", "BRAKE",
-                 "RC_setup", "RC_steer", "RC_drive", "RC_read", "RC_params", "RC_state"):
-        setattr(m, name, globals()[name])
-    m.__all__ = ["LEFT", "CENTER", "RIGHT", "REAR", "FREE", "REVERSE", "FORWARD", "BRAKE",
-                 "RC_setup", "RC_steer", "RC_drive", "RC_read", "RC_params", "RC_state"]
-    return m
+def _load_library():
+    """RumiCar.py next to this file, as the module `RumiCar` (what `from RumiCar import *` gets)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "RumiCar.py")
+    spec = importlib.util.spec_from_file_location("RumiCar", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["RumiCar"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _where(exc):
@@ -141,7 +55,6 @@ def _where(exc):
 
 
 def main():
-    global _car
     if len(sys.argv) != 2:
         print("usage: runner.py <pack dir>", file=sys.stderr)
         return 2
@@ -156,7 +69,13 @@ def main():
         proto_out.write(line + "\n")
         proto_out.flush()
 
-    # --- load drive.py and params.json ----------------------------------------------------------------
+    # --- load the RumiCar library, params.json and drive.py ---------------------------------------------
+    try:
+        library = _load_library()
+    except Exception as e:   # noqa: BLE001 — a broken logic directory: reported, not raised
+        traceback.print_exc()
+        reply(f"ERROR py_drive の RumiCar.py を読み込めません: {type(e).__name__}: {e}".replace("\n", " "))
+        return 1
     try:
         params = {}
         params_path = os.path.join(pack_dir, "params.json")
@@ -165,8 +84,7 @@ def main():
                 params = json.load(f)
             if not isinstance(params, dict):
                 raise ValueError("params.json は JSON オブジェクト（{ ... }、名前と値の組）で記述してください")
-        _car = _Car(params)
-        sys.modules["RumiCar"] = _make_module()
+        car = library._use_zero2cam(params)   # the Zero2Cam hardware layer: the frame's values
         sys.path.insert(0, pack_dir)          # drive.py may import its own modules from the pack
         spec = importlib.util.spec_from_file_location("drive", os.path.join(pack_dir, "drive.py"))
         module = importlib.util.module_from_spec(spec)
@@ -189,7 +107,7 @@ def main():
         reply(f"ERROR {_where(e)}: {type(e).__name__}: {e}".replace("\n", " "))
         return 1
     reply("READY")
-    print(f"[drive.py] started ({pack_dir})", file=sys.stderr, flush=True)
+    print(f"[drive.py] started ({pack_dir}, RumiCar.py {library.__version__})", file=sys.stderr, flush=True)
 
     # --- one line per frame -------------------------------------------------------------------------------
     last_error = ""
@@ -208,9 +126,9 @@ def main():
             continue
         seq = parts[1]
         try:
-            _car.tof = [int(p) for p in parts[3:6]]
+            car.tof = [int(p) for p in parts[3:6]]
             loop()
-            reply(f"C {seq} {_car.steer} {_car.drive_dir} {_car.drive_pwm} {_car.state}")
+            reply(f"C {seq} {car.steer} {car.steer_pwm} {car.drive_dir} {car.drive_pwm} {car.state}")
         except Exception as e:   # noqa: BLE001 — the frame brakes; the program keeps running
             message = f"{_where(e)}: {type(e).__name__}: {e}".replace("\n", " ")
             # The same error every frame would flood the log: print it again only after 5 s.

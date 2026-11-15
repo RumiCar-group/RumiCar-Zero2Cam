@@ -35,6 +35,9 @@ struct CoreConfig {
     std::string gpio_chip = "/dev/gpiochip0";
     unsigned steer_in1 = 17;         // DRV8835 AIN1
     unsigned steer_in2 = 27;         // DRV8835 AIN2
+    // Software PWM of AIN1/AIN2 for RC_steer's strength (as the 500 Hz of
+    // RasPi/RumiCar.py); only runs while a strength of 1..254 is output.
+    int steer_pwm_frequency_hz = 500;
     std::array<unsigned, 3> tof_xshut{23, 24, 25}; // left, centre, right
 
     // Hardware PWM (sysfs), dtoverlay=pwm-2chan,pin=18,func=2,pin2=13,func2=4

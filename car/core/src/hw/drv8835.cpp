@@ -7,12 +7,22 @@
 
 namespace rumicar::hw {
 
-Drv8835::Drv8835(GpioOutputs& gpio, const std::string& pwm_chip, int pwm_frequency_hz, Pins pins, Kick kick)
-    : gpio_(gpio), pins_(pins), kick_(kick) {
+Drv8835::Drv8835(GpioOutputs& gpio, int steer_frequency_hz, const std::string& pwm_chip, int pwm_frequency_hz, Pins pins,
+                 Kick kick)
+    : pins_(pins),
+      kick_(kick),
+      steer_([&gpio, pins](unsigned line, bool level) { gpio.set(line == 0 ? pins.steer_in1 : pins.steer_in2, level); },
+             steer_frequency_hz) {
     in1_ = std::make_unique<PwmChannel>(pwm_chip, pins_.drive_in1, pwm_frequency_hz);
     in2_ = std::make_unique<PwmChannel>(pwm_chip, pins_.drive_in2, pwm_frequency_hz);
-    gpio_.set(pins_.steer_in1, false);
-    gpio_.set(pins_.steer_in2, false);
+}
+
+std::pair<int, int> Drv8835::steer_inputs(uint8_t steer, uint8_t steer_pwm) {
+    const int s = steer_pwm;
+    if (s == 0) return {0, 0};
+    if (steer == RUMI_STEER_RIGHT) return {RUMI_PWM_MAX, RUMI_PWM_MAX - s};
+    if (steer == RUMI_STEER_LEFT) return {RUMI_PWM_MAX - s, RUMI_PWM_MAX};
+    return {0, 0};   // CENTER (and anything else): neutral
 }
 
 Drv8835::~Drv8835() {
@@ -49,20 +59,13 @@ void Drv8835::set_drive_locked(Dir dir, int pwm) {
     }
 }
 
-void Drv8835::apply(uint8_t steer, uint8_t drive_dir, uint8_t drive_pwm, std::chrono::steady_clock::time_point now) {
+void Drv8835::apply(uint8_t steer, uint8_t steer_pwm, uint8_t drive_dir, uint8_t drive_pwm,
+                    std::chrono::steady_clock::time_point now) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // Steering (on/off, as in RC_steer).
-    if (steer == RUMI_STEER_RIGHT) {
-        gpio_.set(pins_.steer_in1, true);
-        gpio_.set(pins_.steer_in2, false);
-    } else if (steer == RUMI_STEER_LEFT) {
-        gpio_.set(pins_.steer_in1, false);
-        gpio_.set(pins_.steer_in2, true);
-    } else {
-        gpio_.set(pins_.steer_in1, false);
-        gpio_.set(pins_.steer_in2, false);
-    }
+    // Steering (RC_steer with its strength).
+    const auto [a1, a2] = steer_inputs(steer, steer_pwm);
+    steer_.set(a1, a2);
 
     Dir dir;
     int pwm = 0;
@@ -91,8 +94,7 @@ void Drv8835::apply(uint8_t steer, uint8_t drive_dir, uint8_t drive_pwm, std::ch
 
 void Drv8835::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
-    gpio_.set(pins_.steer_in1, false);
-    gpio_.set(pins_.steer_in2, false);
+    steer_.set(0, 0);
     set_drive_locked(Dir::Brake, 0);
     last_dir_ = Dir::Brake;
     kicking_ = false;

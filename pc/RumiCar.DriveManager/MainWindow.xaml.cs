@@ -63,7 +63,7 @@ public partial class MainWindow : Window
     private bool _makingVideo;
     private string? _lastSessionDirectory;
     private uint _lastThrottled;
-    private bool _abiWarned;   // the car's telemetry is not ABI 3: said once per connection
+    private bool _abiWarned;   // the car's telemetry is not ABI 4: said once per connection
     private JsonElement? _lastStatus;
     private List<string> _auxNames = new();
     // Detectors (by aux slot) that have reported cells: they say where (Local); the others judge the whole view (Global).
@@ -531,10 +531,11 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Steering plus drive as the RumiCar library calls that would produce them:
-    /// RC_steer(LEFT) / RC_drive(FORWARD, 128).  The same words and numbers as in
-    /// an Arduino sketch, RasPi/RumiCar.py or drive.py.
+    /// RC_steer(LEFT, 128) / RC_drive(FORWARD, 150), RC_steer(LEFT) for full
+    /// steering.  The same words and numbers as in an Arduino sketch,
+    /// RasPi/RumiCar.py or drive.py.
     /// </summary>
-    private static string DescribeCommand(int steer, int driveDir, int drivePwm) => RumiCarApi.CommandText(steer, driveDir, drivePwm);
+    private static string DescribeCommand(int steer, int steerPwm, int driveDir, int drivePwm) => RumiCarApi.CommandText(steer, steerPwm, driveDir, drivePwm);
 
     private void SetMode(string mode)
     {
@@ -600,12 +601,14 @@ public partial class MainWindow : Window
         if (h.Abi != RumiCarApi.Abi && !_abiWarned)
         {
             _abiWarned = true;
-            _vm.AddLog($"警告：車の送るデータの形式（ABI {h.Abi}）がこのアプリ（ABI {RumiCarApi.Abi}：ToF 0〜200 / -1 / -3、RC_steer・RC_drive の値）と異なります。表示と収録の値は正しくありません");
+            _vm.AddLog(h.Abi == RumiCarApi.AbiWithoutSteerStrength
+                ? $"注意：車の送るデータの形式は ABI {h.Abi}（本体 0.4.x）で、操舵の強さ（RC_steer の第 2 引数）を含みません。左右の操舵は強さ 255（最大）として表示・収録します（このアプリは ABI {RumiCarApi.Abi}）"
+                : $"警告：車の送るデータの形式（ABI {h.Abi}）がこのアプリ（ABI {RumiCarApi.Abi}：ToF 0〜200 / -1 / -3、RC_steer（強さ 0〜255 を含む）・RC_drive の値）と異なります。表示と収録の値は正しくありません");
         }
         _vm.Tof = $"{FormatTof(h.TofMm[0])} / {FormatTof(h.TofMm[1])} / {FormatTof(h.TofMm[2])}";
         _vm.LogicState = h.StateName.Length > 0 ? FormatState(h.StateName) : h.State.ToString();
-        _vm.Command = DescribeCommand(h.Steer, h.DriveDir, h.DrivePwm);
-        _vm.LogicCommand = DescribeCommand(h.LogicSteer, (h.Flags & 0x2) != 0 ? RumiCarApi.Brake : h.LogicDriveDir, h.LogicDrivePwm);   // FAULT flag: braked
+        _vm.Command = DescribeCommand(h.Steer, h.SteerPwm, h.DriveDir, h.DrivePwm);
+        _vm.LogicCommand = DescribeCommand(h.LogicSteer, h.LogicSteerPwm, (h.Flags & 0x2) != 0 ? RumiCarApi.Brake : h.LogicDriveDir, h.LogicDrivePwm);   // FAULT flag: braked
         if (h.Mode.Length > 0 && h.Mode != _vm.Mode) SetMode(h.Mode);
         var estopText = h.EStop ? "作動中" : "なし";
         if (!_vm.EStop.StartsWith(estopText, StringComparison.Ordinal)) _vm.EStop = estopText;
@@ -875,7 +878,7 @@ public partial class MainWindow : Window
             _ => "",
         };
         var setPoint = _manual.SetPoint != 0 && cmd.Source != ManualSource.Pad ? $"　設定速度 {_manual.SetPoint}" : "";
-        _vm.ManualStatus = DescribeCommand(cmd.Steer, cmd.DriveDir, cmd.DrivePwm) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
+        _vm.ManualStatus = DescribeCommand(cmd.Steer, cmd.SteerPwm, cmd.DriveDir, cmd.DrivePwm) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
         DrawPad(cmd.SignedSteer, cmd.SignedDrive, true);
         var key = (cmd.Steer, cmd.DriveDir, cmd.DrivePwm);
         if (_manualSent == key || _manualSending) return;

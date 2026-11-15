@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "check.hpp"
 #include "params_json.hpp"
 #include "tof_logic.hpp"
@@ -286,6 +288,73 @@ void test_side_wall_avoidance() {
     CHECK(r.last.steer == RUMI_STEER_CENTER);
 }
 
+void test_steering_strength() {
+    // RC_steer's strength per situation (params turn_steer_pwm / side_steer_pwm /
+    // recover_steer_pwm, ABI 4): CENTER always carries 0; the default 255 is the
+    // full steering of the packs written before the strengths existed.
+    {
+        Params p;
+        Run r(p);
+        for (int i = 0; i < 10; ++i) r.step(OPEN, OPEN, OPEN);
+        CHECK(r.last.steer == RUMI_STEER_CENTER && r.last.steer_pwm == 0);
+        for (int i = 0; i < 6; ++i) r.step(200, OPEN, 40);
+        CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 255);
+    }
+    Params p;
+    p.turn_steer_pwm = 200;
+    p.side_steer_pwm = 96;
+    p.recover_steer_pwm = 240;
+    CHECK(validate(p).empty());
+    Run r(p);
+    for (int i = 0; i < 10; ++i) r.step(OPEN, OPEN, OPEN);
+    CHECK(r.last.steer == RUMI_STEER_CENTER && r.last.steer_pwm == 0);
+    // A near side wall: away from it with side_steer_pwm.
+    for (int i = 0; i < 6; ++i) r.step(200, OPEN, 40);
+    CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 96);
+    // Something ahead with the same side open: still LEFT, now turning with
+    // turn_steer_pwm (the strength follows at once; the direction did not change).
+    r.step(200, 160, 40);
+    CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 96);   // the median (window 3) still sees open road ahead
+    r.step(200, 160, 40);
+    CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 200 && r.last.state == static_cast<uint8_t>(State::TurnLeft));
+    // Clear again: CENTER with 0.
+    for (int i = 0; i < 8; ++i) r.step(OPEN, OPEN, OPEN);
+    CHECK(r.last.steer == RUMI_STEER_CENTER && r.last.steer_pwm == 0);
+    // Emergency stop then reversing out: recover_steer_pwm.
+    for (int i = 0; i < 8; ++i) r.step(200, 50, 50);
+    CHECK(r.last.state == static_cast<uint8_t>(State::RecoverReverse));
+    CHECK(r.last.steer == RUMI_STEER_RIGHT && r.last.steer_pwm == 240);
+    // Force (a logic on top): the given direction and strength; 255 when not given.
+    Run q(p);
+    for (int i = 0; i < 10; ++i) q.step(OPEN, OPEN, OPEN);
+    q.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_RIGHT, 150);
+    q.step(OPEN, OPEN, OPEN);
+    CHECK(q.last.steer == RUMI_STEER_RIGHT && q.last.steer_pwm == 150);
+    q.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_LEFT);
+    q.step(OPEN, OPEN, OPEN);
+    CHECK(q.last.steer == RUMI_STEER_LEFT && q.last.steer_pwm == 255);
+    q.logic.set_steer_mode(TofDriveLogic::SteerMode::Force, RUMI_STEER_CENTER, 99);
+    q.step(OPEN, OPEN, OPEN);
+    CHECK(q.last.steer == RUMI_STEER_CENTER && q.last.steer_pwm == 0);
+    // A strength of 0 is accepted (RC_steer(LEFT, 0) = neutral) and goes out as 0.
+    Params z;
+    z.side_steer_pwm = 0;
+    CHECK(validate(z).empty());
+    Run w(z);
+    for (int i = 0; i < 6; ++i) w.step(200, OPEN, 40);
+    CHECK(w.last.steer == RUMI_STEER_LEFT && w.last.steer_pwm == 0);
+    // Range.
+    Params bad;
+    bad.turn_steer_pwm = 256;
+    CHECK(!validate(bad).empty());
+    bad = Params{};
+    bad.side_steer_pwm = -1;
+    CHECK(!validate(bad).empty());
+    bad = Params{};
+    bad.recover_steer_pwm = 300;
+    CHECK(!validate(bad).empty());
+}
+
 void test_median_rejects_single_spike() {
     Params p;
     Run r(p);
@@ -391,6 +460,26 @@ void test_params_json_strict() {
     try { parse_params_json(text.substr(0, text.rfind('}')) + ",\"typo_key\": 1}"); } catch (const std::exception&) { threw = true; }
     CHECK_MSG(threw, "unknown keys must be rejected");
 
+    // The steering strengths are written out and may be left out (255 then).
+    CHECK(text.find("\"turn_steer_pwm\": 255") != std::string::npos && text.find("\"side_steer_pwm\": 255") != std::string::npos &&
+          text.find("\"recover_steer_pwm\": 255") != std::string::npos);
+    nlohmann::json j = nlohmann::json::parse(text);
+    j.erase("turn_steer_pwm");
+    j.erase("side_steer_pwm");
+    j.erase("recover_steer_pwm");
+    Params o = parse_params_json(j.dump());
+    CHECK(o.turn_steer_pwm == 255 && o.side_steer_pwm == 255 && o.recover_steer_pwm == 255);
+    j["side_steer_pwm"] = 77;
+    CHECK(parse_params_json(j.dump()).side_steer_pwm == 77);
+    j["side_steer_pwm"] = 256;
+    threw = false;
+    try { parse_params_json(j.dump()); } catch (const std::exception&) { threw = true; }
+    CHECK_MSG(threw, "a strength above 255 must be rejected");
+    j["side_steer_pwm"] = 1.5;
+    threw = false;
+    try { parse_params_json(j.dump()); } catch (const std::exception&) { threw = true; }
+    CHECK_MSG(threw, "a strength must be an integer");
+
     Params bad = p;
     bad.d_min_mm = 50; // violates d_emergency < d_min
     CHECK(!validate(bad).empty());
@@ -425,6 +514,7 @@ int main() {
     test_recover_exits_early_when_room_regained();
     test_steering_hysteresis_and_hold();
     test_side_wall_avoidance();
+    test_steering_strength();
     test_median_rejects_single_spike();
     test_sensor_fault_stops_and_resumes();
     test_stuck_detection();

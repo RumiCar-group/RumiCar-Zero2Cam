@@ -21,7 +21,7 @@ if(RUMICAR_BUILD_CORE)
   add_dependencies(test_pack py_drive_manifest)
   add_test(NAME pack COMMAND test_pack ${CMAKE_SOURCE_DIR}/packs/base $<TARGET_FILE:tof_drive> ${CMAKE_SOURCE_DIR}/packs/cam-base $<TARGET_FILE:cam_drive>
            ${CMAKE_BINARY_DIR}/logic/stage/py_drive-${PY_DRIVE_VERSION} ${CMAKE_SOURCE_DIR}/packs/py-sample)
-  target_compile_definitions(test_pack PRIVATE CAM_DRIVE_VERSION="${CAM_DRIVE_VERSION}")
+  target_compile_definitions(test_pack PRIVATE CAM_DRIVE_VERSION="${CAM_DRIVE_VERSION}" RUMICAR_PY_SHA256="${RUMICAR_PY_SHA256}")
 
   # Control/telemetry servers exercised over real TCP sockets on 127.0.0.1.
   add_executable(test_network test_network.cpp)
@@ -31,6 +31,11 @@ if(RUMICAR_BUILD_CORE)
   add_executable(test_camera test_camera.cpp)
   target_link_libraries(test_camera PRIVATE rumicar_camera rumicar_core_lib)
   add_test(NAME camera COMMAND test_camera)
+
+  # Steering output: RC_steer's duties on AIN1/AIN2 and the software PWM (real thread and timing).
+  add_executable(test_soft_pwm test_soft_pwm.cpp)
+  target_link_libraries(test_soft_pwm PRIVATE rumicar_hw)
+  add_test(NAME soft_pwm COMMAND test_soft_pwm)
 
   add_executable(test_util test_util.cpp)
   target_link_libraries(test_util PRIVATE rumicar_core_lib)

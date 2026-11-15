@@ -24,6 +24,12 @@ void take(const json& j, std::set<std::string>& seen, const char* key, T& dst) {
     seen.insert(key);
 }
 
+// A key that may be left out: `dst` keeps its default then.
+void take_optional(const json& j, std::set<std::string>& seen, const char* key, int& dst) {
+    if (j.find(key) == j.end()) return;
+    take(j, seen, key, dst);
+}
+
 } // namespace
 
 Params parse_params_json(const std::string& json_text) {
@@ -59,6 +65,11 @@ Params parse_params_json(const std::string& json_text) {
     take(j, seen, "side_deadband_mm", p.side_deadband_mm);
     take(j, seen, "d_side_mm", p.d_side_mm);
     take(j, seen, "steer_hold_ms", p.steer_hold_ms);
+    // Steering strengths (ABI 4): optional, 255 (full) when left out, which
+    // is the steering of packs written before them.
+    take_optional(j, seen, "turn_steer_pwm", p.turn_steer_pwm);
+    take_optional(j, seen, "side_steer_pwm", p.side_steer_pwm);
+    take_optional(j, seen, "recover_steer_pwm", p.recover_steer_pwm);
 
     take(j, seen, "brake_ms", p.brake_ms);
     take(j, seen, "reverse_ms", p.reverse_ms);
@@ -96,6 +107,9 @@ std::string params_to_json(const Params& p) {
     j["side_deadband_mm"] = p.side_deadband_mm;
     j["d_side_mm"] = p.d_side_mm;
     j["steer_hold_ms"] = p.steer_hold_ms;
+    j["turn_steer_pwm"] = p.turn_steer_pwm;
+    j["side_steer_pwm"] = p.side_steer_pwm;
+    j["recover_steer_pwm"] = p.recover_steer_pwm;
     j["brake_ms"] = p.brake_ms;
     j["reverse_ms"] = p.reverse_ms;
     j["stuck_time_ms"] = p.stuck_time_ms;

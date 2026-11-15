@@ -2,18 +2,25 @@ namespace RumiCar.Protocol;
 
 /// <summary>
 /// The values of the RumiCar library API (RC_read / RC_steer / RC_drive of
-/// RumiCar-lib and RasPi/RumiCar.py), which the car uses on the wire and in
-/// recordings from ABI 3 (car/include/rumicar/logic_api.h).
+/// RumiCar-lib v0.6.0 and RasPi/RumiCar.py 0.6.0), which the car uses on the
+/// wire and in recordings from ABI 3; ABI 4 adds RC_steer's strength
+/// (car/include/rumicar/logic_api.h).
 /// </summary>
 public static class RumiCarApi
 {
     /// <summary>ABI of the car's logic interface whose values this PC speaks ("abi" in every telemetry header).</summary>
-    public const int Abi = 3;
+    public const int Abi = 4;
 
-    // RC_steer
+    /// <summary>The previous ABI: the same values without RC_steer's strength (core 0.4.x). Its steering was always full (<see cref="PwmMax"/>).</summary>
+    public const int AbiWithoutSteerStrength = 3;
+
+    // RC_steer: direction ...
     public const int Left = 0;
     public const int Center = 1;
     public const int Right = 2;
+    // ... and strength 0..PwmMax (the share of the signal, not compensated):
+    // 0 is neutral (the same output as CENTER), PwmMax is full steering and what
+    // RC_steer(direc) with one argument gives; CENTER ignores the strength.
 
     // RC_drive: direction ...
     public const int Free = 0;
@@ -54,9 +61,19 @@ public static class RumiCarApi
         _ => mm.ToString(),
     };
 
-    /// <summary>A command as the user would write it: RC_steer(LEFT) / RC_drive(FORWARD, 128).</summary>
-    public static string CommandText(int steer, int driveDir, int drivePwm) =>
+    /// <summary>
+    /// RC_steer as the user would write it: RC_steer(CENTER), RC_steer(LEFT) for
+    /// full steering (255, the one-argument form gives the same output),
+    /// otherwise RC_steer(LEFT, 128).  RC_steer(LEFT, 0) is neutral.
+    /// </summary>
+    public static string SteerText(int steer, int steerPwm) =>
+        steer is Left or Right && steerPwm != PwmMax
+            ? $"RC_steer({SteerName(steer)}, {steerPwm})"
+            : $"RC_steer({SteerName(steer)})";
+
+    /// <summary>A command as the user would write it: RC_steer(LEFT, 128) / RC_drive(FORWARD, 150).</summary>
+    public static string CommandText(int steer, int steerPwm, int driveDir, int drivePwm) =>
         driveDir is Free or Brake
-            ? $"RC_steer({SteerName(steer)}) / RC_drive({DriveName(driveDir)}, 0)"
-            : $"RC_steer({SteerName(steer)}) / RC_drive({DriveName(driveDir)}, {drivePwm})";
+            ? $"{SteerText(steer, steerPwm)} / RC_drive({DriveName(driveDir)}, 0)"
+            : $"{SteerText(steer, steerPwm)} / RC_drive({DriveName(driveDir)}, {drivePwm})";
 }

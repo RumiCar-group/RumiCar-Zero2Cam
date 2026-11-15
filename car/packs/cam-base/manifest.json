@@ -2,11 +2,11 @@
   "schema": 1,
   "kind": "pack",
   "id": "cam-base",
-  "version": "0.2.0",
-  "created": "2026-11-01T07:10:29Z",
+  "version": "0.3.0",
+  "created": "2026-11-15T05:17:12Z",
   "logic": {
     "name": "cam_drive",
-    "min_abi": 3
+    "min_abi": 4
   },
   "description": "壁のみ（cam_drive の基盤）：ToF の走行パラメータと信号機の挙動の設定のみを含み、学習した検出器（vision.bin）は含まない。学習したパックはこれを元の版にする",
   "capabilities": [
@@ -15,8 +15,8 @@
   "files": [
     {
       "path": "params.json",
-      "sha256": "f49014fd5fc597d26718e8cbc0f9411eb2a998973fd2edd5bf92e412407fb742",
-      "bytes": 843
+      "sha256": "0dbfa9955eb15cec7d0f58c5fe8fa5f52982c08b2dbc9fe024b467075f3e4489",
+      "bytes": 927
     }
   ]
 }
