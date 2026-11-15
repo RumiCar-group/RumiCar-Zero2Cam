@@ -71,10 +71,10 @@ class Session:
                     continue
                 if isinstance(line, dict) and isinstance(line.get("header"), dict):
                     self.lines.append(line)
-        if self.lines and self.lines[0]["header"].get("abi", 0) != SESSION_ABI:
+        if self.lines and self.lines[0]["header"].get("abi", 0) not in SESSION_ABIS:
             raise SystemExit(f"error: {path} was recorded by a car with ABI {self.lines[0]['header'].get('abi', 0)}; "
-                             f"this version needs ABI {SESSION_ABI} (ToF 0..200 / -1 / -3, steer 0..2, drive_dir + drive_pwm): "
-                             "record the session again with the current car software")
+                             f"this version needs ABI {' or '.join(map(str, SESSION_ABIS))} (ToF 0..200 / -1 / -3, steer 0..2, "
+                             "drive_dir + drive_pwm): record the session again with the current car software")
         self.scenario = ""
         sj = os.path.join(self.path, "session.json")
         if os.path.isfile(sj):
@@ -378,7 +378,11 @@ def tof_mm(line, i: int):
 
 
 TOF_MAX_MM = 200          # RC_read returns -3 beyond this (logic_api.h RUMI_TOF_MAX_MM)
-SESSION_ABI = 3           # "abi" in the recorded headers: ToF 0..200 / -1 / -3, steer 0..2, drive_dir + drive_pwm
+# "abi" in the recorded headers that this tool reads: ToF 0..200 / -1 / -3, steer 0..2,
+# drive_dir + drive_pwm.  ABI 4 adds steer_pwm (RC_steer's strength); the frames this
+# tool learns from (images, ToF) are the same in both.
+SESSION_ABIS = (3, 4)
+PACK_MIN_ABI = 4          # the packs written: params.json for cam_drive 0.4.0 (ABI 4, the tof section may set the steering strengths)
 
 
 def propose_near_frames(s: Session, a, out_path: str) -> int:
@@ -678,7 +682,7 @@ def cmd_train(a) -> int:
         if s.scenario and s.scenario not in scenarios:
             scenarios.append(s.scenario)
     parent_name = parent_manifest.get("id", "") + "-" + parent_manifest.get("version", "")
-    ns = argparse.Namespace(dir=a.out_dir, id=a.id, version=a.version, logic="cam_drive", min_abi=2,
+    ns = argparse.Namespace(dir=a.out_dir, id=a.id, version=a.version, logic="cam_drive", min_abi=PACK_MIN_ABI,
                             description=a.description or f"{', '.join(d.name for d in pack.detectors)} learned from {', '.join(s.name for s in train)}",
                             capability=capabilities, scenario=scenarios, parent=parent_name)
     make_manifest.cmd_pack(ns)

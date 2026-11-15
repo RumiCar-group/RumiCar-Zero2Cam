@@ -12,6 +12,8 @@ public enum ManualSource { None, Pad, Keys, Scroll }
 /// </summary>
 public readonly record struct ManualCommand(int Steer, int DriveDir, int DrivePwm, ManualSource Source)
 {
+    /// <summary>RC_steer's strength the car applies: manual steering is full (manual_drive carries no strength), 0 for CENTER.</summary>
+    public int SteerPwm => Steer == RumiCarApi.Center ? 0 : RumiCarApi.PwmMax;
     /// <summary>−1 left, 0 centre, +1 right (for drawing the pad).</summary>
     public int SignedSteer => Steer == RumiCarApi.Left ? -1 : Steer == RumiCarApi.Right ? 1 : 0;
     /// <summary>The duty with the direction as its sign, 0 for FREE (for drawing the pad).</summary>

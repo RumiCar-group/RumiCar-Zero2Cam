@@ -44,7 +44,7 @@ void test_committed_base_pack_is_consistent(const fs::path& pack_dir) {
     CHECK(m.kind == Manifest::Kind::Pack);
     CHECK(m.id == "base-tof");
     CHECK(m.logic_name == "tof_drive");
-    CHECK(m.logic_min_abi == RUMI_LOGIC_ABI_VERSION);   // the values changed in ABI 3: the shipped pack is for ABI 3
+    CHECK(m.logic_min_abi == RUMI_LOGIC_ABI_VERSION);   // the steering strengths (ABI 4) are in its params.json
     CHECK(m.files.size() == 1 && m.files[0].path == "params.json");
     // The shipped pack says what it is (shown by the PC, docs 4.1).
     CHECK(!m.description.empty());
@@ -203,7 +203,7 @@ void test_cam_drive_library_loads(const fs::path& tmp, const fs::path& so, const
     auto lib = std::make_shared<LogicLibrary>(d.string());
     CHECK(std::string(lib->api().name) == "cam_drive");
     const Manifest cm = load_and_verify_manifest(cam_pack_dir.string());
-    CHECK(cm.id == "cam-base" && cm.logic_name == "cam_drive" && cm.logic_min_abi == 3);
+    CHECK(cm.id == "cam-base" && cm.logic_name == "cam_drive" && cm.logic_min_abi == RUMI_LOGIC_ABI_VERSION);
     CHECK(cm.capabilities.size() == 1 && cm.capabilities[0] == "walls");
     LogicInstance inst(lib, cam_pack_dir.string());
     CHECK(inst.aux_names().empty());   // no vision.bin: nothing to show
@@ -256,17 +256,27 @@ void test_core_config() {
     CHECK(parse_core_config("{}").auto_accel_pwm_per_s == 287);
     CHECK(parse_core_config("{\"auto_accel_pwm_per_s\": 0}").auto_accel_pwm_per_s == 0);
     CHECK(throws([] { parse_core_config("{\"auto_accel_pwm_per_s\": -1}"); }));
+    // Software PWM of the steering inputs (RC_steer's strength).
+    CHECK(parse_core_config("{}").steer_pwm_frequency_hz == 500);
+    CHECK(parse_core_config("{\"gpio\": {\"steer_pwm_frequency_hz\": 1000}}").steer_pwm_frequency_hz == 1000);
+    CHECK(throws([] { parse_core_config("{\"gpio\": {\"steer_pwm_frequency_hz\": 49}}"); }));
+    CHECK(throws([] { parse_core_config("{\"gpio\": {\"steer_pwm_frequency_hz\": 2001}}"); }));
 }
 
 void test_py_drive_loads(const fs::path& staged_logic_dir, const fs::path& py_pack_dir, const fs::path& tof_pack_dir) {
     // The staged py_drive directory as installed (library + runner.py + manifest), through the core's loader.
     auto lib = std::make_shared<LogicLibrary>(staged_logic_dir.string());
     CHECK(std::string(lib->api().name) == "py_drive" && lib->manifest().id == "py_drive");
-    bool lists_runner = false;
-    for (const auto& f : lib->manifest().files) lists_runner = lists_runner || f.path == "runner.py";
+    bool lists_runner = false, lists_library = false;
+    for (const auto& f : lib->manifest().files) {
+        lists_runner = lists_runner || f.path == "runner.py";
+        // RumiCar.py is the file of the pinned RumiCar commit (car/CMakeLists.txt RUMICAR_PY_SHA256).
+        lists_library = lists_library || (f.path == "RumiCar.py" && f.sha256 == RUMICAR_PY_SHA256);
+    }
     CHECK_MSG(lists_runner, "runner.py must be listed (and so verified) in the py_drive manifest");
+    CHECK_MSG(lists_library, "RumiCar.py of the pinned commit must be listed (and so verified) in the py_drive manifest");
     const Manifest pm = load_and_verify_manifest(py_pack_dir.string());
-    CHECK(pm.id == "py-sample" && pm.logic_name == "py_drive" && pm.logic_min_abi == 3);
+    CHECK(pm.id == "py-sample" && pm.logic_name == "py_drive" && pm.logic_min_abi == RUMI_LOGIC_ABI_VERSION);
     {
         LogicInstance inst(lib, py_pack_dir.string());   // starts drive.py, self-test (ping)
         rumi_sensor_frame f{};
@@ -278,6 +288,13 @@ void test_py_drive_loads(const fs::path& staged_logic_dir, const fs::path& py_pa
         CHECK(c.drive_dir == RUMI_DRIVE_FORWARD && c.drive_pwm == 153 && std::string(inst.state_name(c.state)) == "RUN");
     }
     CHECK_MSG(throws([&] { LogicInstance x(lib, tof_pack_dir.string()); }), "a tof_drive pack must be refused by py_drive");
+
+    // A logic directory whose RumiCar.py was changed after the build is refused by the core.
+    const fs::path changed = fs::temp_directory_path() / "rumicar-test-pack" / "logic" / "py_drive-changed";
+    fs::remove_all(changed);
+    fs::copy(staged_logic_dir, changed, fs::copy_options::recursive);
+    write_file(changed / "RumiCar.py", read_file(staged_logic_dir / "RumiCar.py") + "\n# changed\n");
+    CHECK_MSG(throws([&] { LogicLibrary x(changed.string()); }), "a py_drive directory with a changed RumiCar.py must be refused");
 }
 
 } // namespace

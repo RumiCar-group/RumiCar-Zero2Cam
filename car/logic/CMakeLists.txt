@@ -29,7 +29,7 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E make_directory ${TOF_DRIVE_STAGE}
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:tof_drive> ${TOF_DRIVE_STAGE}/libtof_drive.so
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${TOF_DRIVE_STAGE}
-          --name tof_drive --version ${TOF_DRIVE_VERSION} --entry libtof_drive.so --abi 3
+          --name tof_drive --version ${TOF_DRIVE_VERSION} --entry libtof_drive.so --abi 4
           --description "ToF driving logic: avoids walls and obstacles with the three distance sensors; the camera image is not used"
   DEPENDS tof_drive ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
   COMMENT "Writing manifest.json for tof_drive ${TOF_DRIVE_VERSION}"
@@ -74,7 +74,7 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CAM_DRIVE_STAGE}
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:cam_drive> ${CAM_DRIVE_STAGE}/libcam_drive.so
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${CAM_DRIVE_STAGE}
-          --name cam_drive --version ${CAM_DRIVE_VERSION} --entry libcam_drive.so --abi 3
+          --name cam_drive --version ${CAM_DRIVE_VERSION} --entry libcam_drive.so --abi 4
           --description "Camera driving logic: the ToF logic plus traffic lights learned from recordings (stops at red, goes on green); packs may carry vision.bin"
   DEPENDS cam_drive ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
   COMMENT "Writing manifest.json for cam_drive ${CAM_DRIVE_VERSION}"
@@ -99,17 +99,46 @@ set_target_properties(py_drive PROPERTIES
 )
 set_target_properties(py_drive_process PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# The logic directory holds the library and runner.py, which runs drive.py.
+# RumiCar.py (RUMICAR_PY_* in the top-level CMakeLists.txt), downloaded at
+# configure time from the fixed commit and accepted only with the expected
+# SHA-256 (a mismatch stops the configuration).  The download goes to a
+# separate file that takes the final name only once verified; a final file
+# with the expected hash is not fetched again.
+set(RUMICAR_PY_URL "https://raw.githubusercontent.com/RumiCar-group/RumiCar/${RUMICAR_PY_COMMIT}/RasPi/RumiCar.py")
+set(RUMICAR_PY_FILE ${CMAKE_CURRENT_BINARY_DIR}/RumiCar.py)
+set(RUMICAR_PY_HAVE "")
+if(EXISTS ${RUMICAR_PY_FILE})
+  file(SHA256 ${RUMICAR_PY_FILE} RUMICAR_PY_HAVE)
+endif()
+if(NOT RUMICAR_PY_HAVE STREQUAL RUMICAR_PY_SHA256)
+  file(REMOVE ${RUMICAR_PY_FILE})
+  file(DOWNLOAD ${RUMICAR_PY_URL} ${RUMICAR_PY_FILE}.download EXPECTED_HASH SHA256=${RUMICAR_PY_SHA256} TLS_VERIFY ON
+       STATUS RUMICAR_PY_STATUS)
+  list(GET RUMICAR_PY_STATUS 0 RUMICAR_PY_STATUS_CODE)
+  if(NOT RUMICAR_PY_STATUS_CODE EQUAL 0)
+    list(GET RUMICAR_PY_STATUS 1 RUMICAR_PY_STATUS_TEXT)
+    message(FATAL_ERROR "RumiCar.py could not be taken from ${RUMICAR_PY_URL}: ${RUMICAR_PY_STATUS_TEXT}")
+  endif()
+  file(RENAME ${RUMICAR_PY_FILE}.download ${RUMICAR_PY_FILE})
+endif()
+file(STRINGS ${RUMICAR_PY_FILE} RUMICAR_PY_VERSION_LINE REGEX "^__version__ = ")
+if(NOT RUMICAR_PY_VERSION_LINE MATCHES "^__version__ = \"${RUMICAR_PY_VERSION}\"")
+  message(FATAL_ERROR "RumiCar.py of ${RUMICAR_PY_COMMIT} is not version ${RUMICAR_PY_VERSION}: ${RUMICAR_PY_VERSION_LINE}")
+endif()
+message(STATUS "RumiCar.py ${RUMICAR_PY_VERSION} (RumiCar ${RUMICAR_PY_COMMIT}, SHA-256 verified)")
+
+# The logic directory holds the library, runner.py (runs drive.py) and RumiCar.py.
 set(PY_DRIVE_STAGE ${CMAKE_CURRENT_BINARY_DIR}/stage/py_drive-${PY_DRIVE_VERSION})
 add_custom_command(
   OUTPUT ${PY_DRIVE_STAGE}/manifest.json
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PY_DRIVE_STAGE}
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:py_drive> ${PY_DRIVE_STAGE}/libpy_drive.so
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/py_drive/runner.py ${PY_DRIVE_STAGE}/runner.py
+  COMMAND ${CMAKE_COMMAND} -E copy ${RUMICAR_PY_FILE} ${PY_DRIVE_STAGE}/RumiCar.py
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py logic ${PY_DRIVE_STAGE}
-          --name py_drive --version ${PY_DRIVE_VERSION} --entry libpy_drive.so --abi 3
-          --description "Runs your own driving program: drive.py (Python) in the pack decides steering and drive from the three distance sensors every frame, with the RumiCar library API (RC_read / RC_steer / RC_drive)"
-  DEPENDS py_drive ${CMAKE_CURRENT_SOURCE_DIR}/py_drive/runner.py ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
+          --name py_drive --version ${PY_DRIVE_VERSION} --entry libpy_drive.so --abi 4
+          --description "Runs your own driving program: drive.py (Python) in the pack decides steering and drive from the three distance sensors every frame, with the RumiCar library (RumiCar.py ${RUMICAR_PY_VERSION}: RC_read / RC_steer / RC_drive)"
+  DEPENDS py_drive ${CMAKE_CURRENT_SOURCE_DIR}/py_drive/runner.py ${RUMICAR_PY_FILE} ${CMAKE_SOURCE_DIR}/tools/make_manifest.py
   COMMENT "Writing manifest.json for py_drive ${PY_DRIVE_VERSION}"
   VERBATIM)
 add_custom_target(py_drive_manifest ALL DEPENDS ${PY_DRIVE_STAGE}/manifest.json)

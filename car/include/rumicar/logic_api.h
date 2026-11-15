@@ -23,6 +23,10 @@
  *                  drive as FREE / REVERSE / FORWARD / BRAKE plus a PWM
  *                  duty 0..255.  The brake flag is gone (it is a drive
  *                  direction now).
+ *              4 = adds the steering strength rumi_command::steer_pwm, the
+ *                  second argument of RC_steer(direc, ipwm) of RumiCar-lib
+ *                  v0.6.0 and RasPi/RumiCar.py 0.6.0.  The sensor frame is
+ *                  the same as in ABI 3.
  */
 #ifndef RUMICAR_LOGIC_API_H
 #define RUMICAR_LOGIC_API_H
@@ -34,7 +38,7 @@
 extern "C" {
 #endif
 
-#define RUMI_LOGIC_ABI_VERSION 3u
+#define RUMI_LOGIC_ABI_VERSION 4u
 
 /* Name of the exported entry point. */
 #define RUMI_LOGIC_ENTRY_SYMBOL "rumi_logic_get_api"
@@ -60,10 +64,20 @@ extern "C" {
 #define RUMI_TOF_TIMEOUT      (-1)
 #define RUMI_TOF_OUT_OF_RANGE (-3)
 
-/* Steering values in rumi_command::steer (RC_steer). */
+/* Steering direction in rumi_command::steer (RC_steer) ... */
 #define RUMI_STEER_LEFT   0
 #define RUMI_STEER_CENTER 1
 #define RUMI_STEER_RIGHT  2
+/* ... and its strength in rumi_command::steer_pwm (ABI 4): the share of the
+ * signal, 0 .. RUMI_PWM_MAX, not compensated (the angle it gives differs from
+ * car to car).  As RC_steer(direc, ipwm) of the RumiCar library:
+ *   LEFT / RIGHT with 0      : neutral, the same output as CENTER
+ *   LEFT / RIGHT with 1..254 : slow decay; RIGHT holds AIN1 high and puts
+ *                              255 - steer_pwm on AIN2, LEFT the other way round
+ *   LEFT / RIGHT with 255    : full steering (the only output up to ABI 3,
+ *                              and that of RC_steer(direc) with one argument)
+ *   CENTER                   : steer_pwm is ignored (logics write 0)
+ */
 
 /* Drive direction in rumi_command::drive_dir (RC_drive) ... */
 #define RUMI_DRIVE_FREE    0 /* coast: both bridge inputs low */
@@ -103,6 +117,7 @@ typedef struct rumi_sensor_frame {
 typedef struct rumi_command {
     uint32_t size;
     uint8_t  steer;          /* RUMI_STEER_* */
+    uint8_t  steer_pwm;      /* ABI 4: 0 .. RUMI_PWM_MAX, see above */
     uint8_t  drive_dir;      /* RUMI_DRIVE_* */
     uint8_t  drive_pwm;      /* 0 .. RUMI_PWM_MAX */
     uint8_t  state;          /* logic-defined state id, reported in telemetry */

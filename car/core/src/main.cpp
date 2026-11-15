@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
     try {
         std::vector<unsigned> lines{cfg.steer_in1, cfg.steer_in2, cfg.tof_xshut[0], cfg.tof_xshut[1], cfg.tof_xshut[2]};
         gpio = std::make_unique<hw::GpioOutputs>(cfg.gpio_chip, lines, "rumicar-core");
-        motors = std::make_unique<hw::Drv8835>(*gpio, cfg.pwm_chip, cfg.pwm_frequency_hz,
+        motors = std::make_unique<hw::Drv8835>(*gpio, cfg.steer_pwm_frequency_hz, cfg.pwm_chip, cfg.pwm_frequency_hz,
                                                hw::Drv8835::Pins{cfg.steer_in1, cfg.steer_in2, cfg.drive_in1, cfg.drive_in2},
                                                hw::Drv8835::Kick{cfg.kick_pwm, cfg.kick_ms});
         motors->stop();
@@ -412,6 +412,7 @@ int main(int argc, char** argv) {
         }
         // RC_steer / RC_drive values; braked unless a mode says otherwise.
         uint8_t out_steer = RUMI_STEER_CENTER;
+        uint8_t out_steer_pwm = 0;
         uint8_t out_dir = RUMI_DRIVE_BRAKE;
         uint8_t out_pwm = 0;
         const double dt_s = std::chrono::duration<double>(t0 - last_frame_time).count();
@@ -423,6 +424,7 @@ int main(int argc, char** argv) {
         } else if (in.mode == DriveMode::Auto) {
             if (rc == 0) {
                 out_steer = cmd.steer;
+                out_steer_pwm = cmd.steer_pwm;
                 if (cmd.flags & RUMI_CMD_FLAG_FAULT) {
                     out_dir = RUMI_DRIVE_BRAKE;
                 } else {
@@ -434,11 +436,13 @@ int main(int argc, char** argv) {
             }
         } else if (in.mode == DriveMode::Manual) {
             out_steer = in.manual_steer;
+            // Manual steering is full (manual_drive carries no strength): RC_steer(LEFT / RIGHT).
+            out_steer_pwm = in.manual_steer == RUMI_STEER_CENTER ? 0 : RUMI_PWM_MAX;
             out_dir = in.manual_drive_dir;
             out_pwm = static_cast<uint8_t>(std::min<int>(in.manual_drive_pwm, cfg.max_drive_pwm));
         } // RecordOnly: braked
         try {
-            motors->apply(out_steer, out_dir, out_pwm, t0);
+            motors->apply(out_steer, out_steer_pwm, out_dir, out_pwm, t0);
         } catch (const std::exception& e) {
             log::error(std::string("motor output failed: ") + e.what());
         }
@@ -465,7 +469,8 @@ int main(int argc, char** argv) {
         if (network_up) {
             try {
                 // Values as in the RumiCar library: tof_mm = RC_read (0..200, -1, -3),
-                // steer = RC_steer (0/1/2), drive_dir / drive_pwm = RC_drive (0..3, 0..255).
+                // steer / steer_pwm = RC_steer (0/1/2, strength 0..255),
+                // drive_dir / drive_pwm = RC_drive (0..3, 0..255).
                 // "abi" tells recordings of this format apart from older ones.
                 json header = {
                     {"abi", RUMI_LOGIC_ABI_VERSION},
@@ -473,6 +478,7 @@ int main(int argc, char** argv) {
                     {"t_us", frame.t_us},
                     {"tof_mm", {frame.tof_mm[0], frame.tof_mm[1], frame.tof_mm[2]}},
                     {"steer", out_steer},
+                    {"steer_pwm", out_steer_pwm},
                     {"drive_dir", out_dir},
                     {"drive_pwm", out_pwm},
                     {"state", rc == 0 ? cmd.state : last_state},
@@ -481,6 +487,7 @@ int main(int argc, char** argv) {
                     {"mode", drive_mode_name(in.mode)},
                     {"estop", in.estop},
                     {"logic_steer", rc == 0 ? cmd.steer : RUMI_STEER_CENTER},
+                    {"logic_steer_pwm", rc == 0 ? cmd.steer_pwm : 0},
                     {"logic_drive_dir", rc == 0 ? cmd.drive_dir : RUMI_DRIVE_FREE},
                     {"logic_drive_pwm", rc == 0 ? cmd.drive_pwm : 0},
                     {"logic_name", active.lib->manifest().id},

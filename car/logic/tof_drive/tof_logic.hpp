@@ -16,7 +16,9 @@ namespace rumicar::tof {
 
 // Tunable parameters.  Loaded from params.json in the active pack.
 // Distances are RC_read values (0..200 mm; -3 = nothing within 20 cm is "open"),
-// drive values are RC_drive PWM duties (0..255).
+// drive values are RC_drive PWM duties (0..255), steering strengths are the
+// second argument of RC_steer (0..255; 255 = full steering, the only output
+// before ABI 4).
 struct Params {
     // --- sensor conditioning -------------------------------------------------
     int    conf_max_mm      = 200;  // readings at/above this are treated as "open" (nothing near); at most RUMI_TOF_MAX_MM
@@ -42,6 +44,11 @@ struct Params {
     int    side_deadband_mm = 20;   // |L - R| below this is "equal"
     int    d_side_mm        = 60;   // steer away from a side wall closer than this
     int    steer_hold_ms    = 150;  // minimum time between steering changes
+    // Steering strength (RC_steer's second argument, 0..255) per situation.
+    // Optional in params.json (default 255 = full, the output up to ABI 3).
+    int    turn_steer_pwm    = 255; // turning towards the open side in front of an obstacle
+    int    side_steer_pwm    = 255; // moving away from a near side wall
+    int    recover_steer_pwm = 255; // while reversing out (recovery)
 
     // --- recovery ------------------------------------------------------------
     int    brake_ms         = 150;  // hold the brake this long after an emergency stop
@@ -86,10 +93,15 @@ public:
     // Steering hooks for logics built on top (cam_drive): Auto is this logic's
     // own steering; HoldLane keeps the wheels straight except to move away
     // from a near side wall (no turning in front of an obstacle, e.g. while
-    // following a vehicle); Force applies the given steer.  Emergency braking
-    // and the reversing recovery are never affected (safety first).
+    // following a vehicle); Force applies the given steer with the given
+    // strength (0..255).  Emergency braking and the reversing recovery are
+    // never affected (safety first).
     enum class SteerMode : uint8_t { Auto = 0, HoldLane = 1, Force = 2 };
-    void set_steer_mode(SteerMode mode, uint8_t forced = RUMI_STEER_CENTER) { steer_mode_ = mode; forced_steer_ = forced; }
+    void set_steer_mode(SteerMode mode, uint8_t forced = RUMI_STEER_CENTER, uint8_t forced_pwm = RUMI_PWM_MAX) {
+        steer_mode_ = mode;
+        forced_steer_ = forced;
+        forced_steer_pwm_ = forced_pwm;
+    }
     SteerMode steer_mode() const { return steer_mode_; }
 
     // Closing speed of the centre distance (mm/s, positive = approaching) and
@@ -116,6 +128,7 @@ private:
     void condition(int idx, int32_t raw, uint64_t t_us);
     static int median(const Sensor& s, int window);
     void decide_steer(int L, int C, int R, uint64_t t_us);
+    void set_recover_steer();
     static uint8_t other_side(uint8_t steer) { return steer == RUMI_STEER_LEFT ? RUMI_STEER_RIGHT : RUMI_STEER_LEFT; }
     int  speed_target(int C, double closing_mm_s, bool turning) const;
     void rate_limit(int target, double dt);
@@ -132,6 +145,7 @@ private:
 
     bool     turning_ = false;
     uint8_t  steer_ = RUMI_STEER_CENTER;
+    uint8_t  steer_pwm_ = 0;         // strength of steer_ (0 while CENTER)
     uint64_t steer_since_us_ = 0;
     uint8_t  last_turn_dir_ = RUMI_STEER_LEFT;  // used to break ties
     uint8_t  recover_steer_ = RUMI_STEER_CENTER;
@@ -140,6 +154,7 @@ private:
     int      speed_cap_ = RUMI_PWM_MAX;
     SteerMode steer_mode_ = SteerMode::Auto;
     uint8_t  forced_steer_ = RUMI_STEER_CENTER;
+    uint8_t  forced_steer_pwm_ = RUMI_PWM_MAX;
     double   closing_ = 0.0;
     int      prev_c_filt_ = OPEN_MM; // for closing-speed estimate
 

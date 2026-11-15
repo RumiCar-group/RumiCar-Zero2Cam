@@ -14,6 +14,7 @@
     "chip": "/dev/gpiochip0",
     "steer_in1": 17,
     "steer_in2": 27,
+    "steer_pwm_frequency_hz": 500,
     "tof_xshut": [23, 24, 25]
   },
   "pwm": {

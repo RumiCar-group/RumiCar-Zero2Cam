@@ -4,11 +4,11 @@ flowchart TD
     C --> E{"Emergency stop?<br/>Drive mode?"}
     E -->|"E-stop active"| B1["Brake"]
     E -->|"Record only"| B2["Brake"]
-    E -->|"Manual"| H["PC's manual_drive<br/>(RC_steer / RC_drive values; the duty is capped at max_drive_pwm)"]
+    E -->|"Manual"| H["PC's manual_drive<br/>(RC_steer / RC_drive values; steering at strength 255, the duty capped at max_drive_pwm)"]
     E -->|"Auto"| F{"step() succeeded?"}
     F -->|"Failed"| B3["Brake"]
     F -->|"Succeeded"| G["Limit the drive to the permitted value<br/>permitted = min(increase from 0 at auto_accel_pwm_per_s,<br/>auto limit, max_drive_pwm)<br/>brake if the command is BRAKE or has FAULT"]
-    B1 --> MO["Output to DRV8835"]
+    B1 --> MO["Output to DRV8835<br/>(a steering strength of 1..254 by software PWM)"]
     B2 --> MO
     B3 --> MO
     H --> MO

@@ -29,6 +29,10 @@ public class ManualInputTests
         var c = Cmd(1, -77, ManualSource.Keys);
         Assert.Equal(1, c.SignedSteer);
         Assert.Equal(-77, c.SignedDrive);
+        // Manual steering is full (manual_drive carries no strength): the car outputs RC_steer(RIGHT).
+        Assert.Equal(255, c.SteerPwm);
+        Assert.Equal(0, Cmd(0, 50, ManualSource.Pad).SteerPwm);
+        Assert.Equal("RC_steer(RIGHT) / RC_drive(REVERSE, 77)", RumiCarApi.CommandText(c.Steer, c.SteerPwm, c.DriveDir, c.DrivePwm));
     }
 
     [Theory]

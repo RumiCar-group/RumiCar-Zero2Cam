@@ -141,7 +141,7 @@ public class ProgramPackTests
         Assert.NotNull(manifest);
         Assert.Equal("my-drive-20261023.101500", manifest!.DirectoryName);
         Assert.Equal("py_drive", manifest.Logic!.Name);
-        Assert.Equal(2, manifest.Logic.MinAbi);
+        Assert.Equal(4, manifest.Logic.MinAbi);   // RumiCar.py 0.6.0 (RC_steer's strength): ABI 4
         Assert.Contains("My Drive", manifest.Description);
         var plan = VersionPush.Prepare(r.StagingDirectory);
         Assert.Equal("pack", plan.Kind);

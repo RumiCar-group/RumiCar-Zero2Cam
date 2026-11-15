@@ -140,6 +140,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.gpio_chip = s.get_string("chip", c.gpio_chip);
         c.steer_in1 = static_cast<unsigned>(s.get_int("steer_in1", static_cast<int>(c.steer_in1), 0, 63));
         c.steer_in2 = static_cast<unsigned>(s.get_int("steer_in2", static_cast<int>(c.steer_in2), 0, 63));
+        c.steer_pwm_frequency_hz = s.get_int("steer_pwm_frequency_hz", c.steer_pwm_frequency_hz, 50, 2000);
         s.get_array("tof_xshut", c.tof_xshut, 0, 63);
         s.reject_unknown();
     }

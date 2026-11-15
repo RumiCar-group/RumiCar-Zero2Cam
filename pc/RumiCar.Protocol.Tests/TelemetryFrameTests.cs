@@ -14,6 +14,7 @@ public class TelemetryFrameTests
             Abi = RumiCarApi.Abi,
             TofMm = new[] { 120, -3, -1 },
             Steer = RumiCarApi.Right,
+            SteerPwm = 140,
             DriveDir = seq % 3 == 0 ? RumiCarApi.Brake : RumiCarApi.Forward,
             DrivePwm = seq % 3 == 0 ? 0 : 166,
             State = 2,
@@ -22,6 +23,7 @@ public class TelemetryFrameTests
             Mode = "auto",
             EStop = seq % 2 == 0,
             LogicSteer = RumiCarApi.Left,
+            LogicSteerPwm = 96,
             LogicDriveDir = RumiCarApi.Forward,
             LogicDrivePwm = 107,
             LogicVersion = "0.1.0",
@@ -43,11 +45,13 @@ public class TelemetryFrameTests
         Assert.Equal(bytes.Length, consumed);
         Assert.NotNull(frame);
         Assert.Equal(5u, frame!.Header.Seq);
-        Assert.Equal(3, frame.Header.Abi);
+        Assert.Equal(4, frame.Header.Abi);
         Assert.Equal(new[] { 120, -3, -1 }, frame.Header.TofMm);
         Assert.Equal("TURN_RIGHT", frame.Header.StateName);
         Assert.False(frame.Header.EStop);
         Assert.Equal(RumiCarApi.Right, frame.Header.Steer);
+        Assert.Equal(140, frame.Header.SteerPwm);
+        Assert.Equal(96, frame.Header.LogicSteerPwm);
         Assert.Equal(RumiCarApi.Forward, frame.Header.DriveDir);
         Assert.Equal(166, frame.Header.DrivePwm);
         Assert.Equal(RumiCarApi.Left, frame.Header.LogicSteer);
@@ -63,13 +67,15 @@ public class TelemetryFrameTests
     public void HeaderWrittenByTheCarDecodes()
     {
         // Exactly the key set rumicar-core writes (car/core/src/main.cpp), plus an unknown key a later version might add.
-        const string json = "{\"abi\":3,\"battery_mv\":0,\"drive_dir\":3,\"drive_pwm\":0,\"estop\":true,\"flags\":0,\"image_h\":0,\"image_w\":0," +
-                            "\"logic_drive_dir\":2,\"logic_drive_pwm\":179,\"logic_steer\":2,\"logic_version\":\"0.3.0\",\"mode\":\"manual\"," +
-                            "\"pack_version\":\"0.2.0\",\"seq\":42,\"state\":2,\"state_name\":\"TURN_RIGHT\",\"steer\":1," +
+        const string json = "{\"abi\":4,\"battery_mv\":0,\"drive_dir\":3,\"drive_pwm\":0,\"estop\":true,\"flags\":0,\"image_h\":0,\"image_w\":0," +
+                            "\"logic_drive_dir\":2,\"logic_drive_pwm\":179,\"logic_steer\":2,\"logic_steer_pwm\":128,\"logic_version\":\"0.4.0\",\"mode\":\"manual\"," +
+                            "\"pack_version\":\"0.3.0\",\"seq\":42,\"state\":2,\"state_name\":\"TURN_RIGHT\",\"steer\":1,\"steer_pwm\":0," +
                             "\"t_us\":123456789,\"tof_mm\":[120,-3,-1],\"future_key\":{\"x\":1}}";
         var h = TelemetryFrameCodec.HeaderFromJson(json);
         Assert.NotNull(h);
-        Assert.Equal(3, h!.Abi);
+        Assert.Equal(4, h!.Abi);
+        Assert.Equal(0, h.SteerPwm);
+        Assert.Equal(128, h.LogicSteerPwm);
         Assert.Equal(42u, h.Seq);
         Assert.True(h.EStop);
         Assert.Equal("manual", h.Mode);
@@ -79,10 +85,42 @@ public class TelemetryFrameTests
         Assert.Equal(RumiCarApi.Forward, h.LogicDriveDir);
         Assert.Equal(179, h.LogicDrivePwm);
         Assert.Equal(123456789UL, h.TimestampMicroseconds);
+        // A header of a 0.4.x car (ABI 3) has no steering strength: it reads as full (255), as its steering was.
+        var abi3 = TelemetryFrameCodec.HeaderFromJson("{\"abi\":3,\"seq\":7,\"tof_mm\":[120,-3,-1],\"steer\":0,\"logic_steer\":2,\"drive_dir\":2,\"drive_pwm\":150}");
+        Assert.NotNull(abi3);
+        Assert.Equal(RumiCarApi.AbiWithoutSteerStrength, abi3!.Abi);
+        Assert.Equal(255, abi3.SteerPwm);
+        Assert.Equal(255, abi3.LogicSteerPwm);
+        Assert.Equal("RC_steer(LEFT) / RC_drive(FORWARD, 150)", RumiCarApi.CommandText(abi3.Steer, abi3.SteerPwm, abi3.DriveDir, abi3.DrivePwm));
         // A recording of a 0.3.x car has no "abi" and the old keys: it reads as ABI 0 (the drive manager says so).
         var old = TelemetryFrameCodec.HeaderFromJson("{\"seq\":1,\"tof_mm\":[120,8190,-1],\"steer\":-1,\"drive_permille\":650,\"brake\":false}");
         Assert.NotNull(old);
         Assert.Equal(0, old!.Abi);
+    }
+
+    [Theory]
+    [InlineData(RumiCarApi.Left, 255, RumiCarApi.Forward, 150, "RC_steer(LEFT) / RC_drive(FORWARD, 150)")]        // full: the one-argument form
+    [InlineData(RumiCarApi.Right, 128, RumiCarApi.Forward, 150, "RC_steer(RIGHT, 128) / RC_drive(FORWARD, 150)")]
+    [InlineData(RumiCarApi.Left, 0, RumiCarApi.Reverse, 80, "RC_steer(LEFT, 0) / RC_drive(REVERSE, 80)")]          // 0 = neutral, shown as written
+    [InlineData(RumiCarApi.Center, 0, RumiCarApi.Brake, 0, "RC_steer(CENTER) / RC_drive(BRAKE, 0)")]
+    [InlineData(RumiCarApi.Center, 200, RumiCarApi.Free, 90, "RC_steer(CENTER) / RC_drive(FREE, 0)")]              // CENTER ignores the strength
+    [InlineData(RumiCarApi.Right, 1, RumiCarApi.Forward, 255, "RC_steer(RIGHT, 1) / RC_drive(FORWARD, 255)")]
+    public void CommandTextIsTheLibraryCall(int steer, int steerPwm, int dir, int pwm, string expected)
+    {
+        Assert.Equal(expected, RumiCarApi.CommandText(steer, steerPwm, dir, pwm));
+    }
+
+    [Fact]
+    public void RecordedHeaderKeepsTheSteeringStrength()
+    {
+        // The recorder writes the header as decoded (meta.jsonl): steer_pwm and logic_steer_pwm are in it.
+        var json = TelemetryFrameCodec.HeaderToJson(Sample(3, 0).Header);
+        Assert.Contains("\"steer_pwm\":140", json);
+        Assert.Contains("\"logic_steer_pwm\":96", json);
+        Assert.Contains("\"abi\":4", json);
+        var back = TelemetryFrameCodec.HeaderFromJson(json)!;
+        Assert.Equal(140, back.SteerPwm);
+        Assert.Equal(96, back.LogicSteerPwm);
     }
 
     [Fact]

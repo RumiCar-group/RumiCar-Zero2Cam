@@ -35,7 +35,7 @@ public static class DriveMode
     public const string RecordOnly = "record_only";
 }
 
-/// <summary>Protocol version carried in hello.  2 = RC_steer / RC_drive values in manual_drive and set_auto_limit (car ABI 3).</summary>
+/// <summary>Protocol version carried in hello.  2 = RC_steer / RC_drive values in manual_drive and set_auto_limit (car ABI 3 and 4; manual steering carries no strength).</summary>
 public static class ControlProtocol
 {
     public const int Version = 2;

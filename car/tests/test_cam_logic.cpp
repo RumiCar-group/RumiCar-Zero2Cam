@@ -196,6 +196,7 @@ void test_params(const std::string& pack_dir) {
     const std::string text = read_text(pack_dir + "/params.json");
     const CamParams p = parse_cam_params_json(text);
     CHECK(p.signal.red_detector == "traffic_light_red" && p.signal.stop_min_cells == 2 && p.tof.v_max == 230);
+    CHECK(p.tof.turn_steer_pwm == 255 && p.tof.side_steer_pwm == 255 && p.tof.recover_steer_pwm == 255);   // full, as before ABI 4
     CHECK(parse_cam_params_json(cam_params_to_json(p)).signal.resume_ignore_ms == p.signal.resume_ignore_ms);
     std::string msg;
     CHECK(throws([&] { parse_cam_params_json("{}"); }, &msg) && msg.find("tof") != std::string::npos);
@@ -480,7 +481,11 @@ void test_follow_keeps_the_gap(const CamParams& p0) {
 }
 
 void test_parked_vehicle_is_passed(const CamParams& p0) {
-    const CamParams p = with_vehicle(p0);
+    // Gentler ToF steering strengths do not change the manoeuvre: steering
+    // out and back in is full (255), the lane in between is CENTER (0).
+    CamParams p = with_vehicle(p0);
+    p.tof.turn_steer_pwm = 120;
+    p.tof.side_steer_pwm = 90;
     const VehicleParams& vp = *p.vehicle;
     Run r(p, make_full_pack());
     const Scene road, car = scene_with(true);
@@ -497,17 +502,17 @@ void test_parked_vehicle_is_passed(const CamParams& p0) {
     }
     CHECK(r.in(State::OvertakeOut));
     CHECK_MSG(stopped_frames >= 38 && stopped_frames <= 42, std::to_string(stopped_frames) + " frames stopped before passing");
-    CHECK(r.last.steer == RUMI_STEER_RIGHT);
+    CHECK(r.last.steer == RUMI_STEER_RIGHT && r.last.steer_pwm == 255);
     for (int i = 0; i < 9; ++i) {   // out_ms = 500 ms = 10 frames
         r.step(&car, OPEN, 150, OPEN);
-        CHECK(r.in(State::OvertakeOut) && r.last.steer == RUMI_STEER_RIGHT && drv(r.last) <= vp.overtake_v);
+        CHECK(r.in(State::OvertakeOut) && r.last.steer == RUMI_STEER_RIGHT && r.last.steer_pwm == 255 && drv(r.last) <= vp.overtake_v);
     }
     CHECK(drv(r.last) > 0);
     // Alongside: lane held, the vehicle appears on the inner (left) side, then the side clears.
     CHECK(r.until(static_cast<uint8_t>(State::OvertakePass), 2, &road, OPEN, OPEN, OPEN));
     CHECK(r.logic.tof().steer_mode() == tof::TofDriveLogic::SteerMode::HoldLane);
     r.run(&road, 5, OPEN, OPEN, OPEN);
-    CHECK(r.in(State::OvertakePass) && r.last.steer == RUMI_STEER_CENTER && drv(r.last) == vp.overtake_v);
+    CHECK(r.in(State::OvertakePass) && r.last.steer == RUMI_STEER_CENTER && r.last.steer_pwm == 0 && drv(r.last) == vp.overtake_v);
     r.run(&road, 10, 60, OPEN, OPEN);    // the vehicle beside us on the left
     CHECK(r.in(State::OvertakePass));
     r.run(&road, 3, OPEN, OPEN, OPEN);   // clear, but not yet for pass_clear_ms (700 ms = 14 frames)
@@ -515,10 +520,10 @@ void test_parked_vehicle_is_passed(const CamParams& p0) {
     r.run(&road, 8, OPEN, OPEN, OPEN);   // 11 frames clear (the filter sees it 2-3 frames later): still not
     CHECK(r.in(State::OvertakePass));
     CHECK(r.until(static_cast<uint8_t>(State::OvertakeIn), 7, &road, OPEN, OPEN, OPEN));
-    CHECK(r.last.steer == RUMI_STEER_LEFT);
+    CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 255);
     for (int i = 0; i < 9; ++i) {
         r.step(&road);
-        CHECK(r.in(State::OvertakeIn) && r.last.steer == RUMI_STEER_LEFT);
+        CHECK(r.in(State::OvertakeIn) && r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 255);
     }
     CHECK(r.until(static_cast<uint8_t>(tof::State::Cruise), 2, &road));
     // Afterwards the detector is ignored for ignore_ms (the vehicle just passed), then it counts again.

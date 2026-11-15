@@ -124,7 +124,7 @@ flowchart TD
 | 非常停止／非常停止解除 | 非常停止は走行モードに関係なくブレーキし、解除するまで走行しません。手動モードで heartbeat が 1 秒（`network.heartbeat_timeout_ms`）途絶えたとき、手動モード中に PC が切断したときにも自動で作動します |
 | 画像 | 車のカメラの最新画像（320×240、約 20 フレーム/秒）。「画像を表示」をオフにすると画面表示だけを停止します（受信と収録は継続。PC の負荷を下げる場合に使用） |
 | 状態 | 走行モード、非常停止（緑 = なし、赤 = 作動中・理由付き）、判断状態（CRUISE／TURN_LEFT／TURN_RIGHT／EMERGENCY_BRAKE／RECOVER_REVERSE／SENSOR_FAULT など）、ToF 左／中／右 [mm]（下表）、モーター出力、ロジックの判断、版（ロジック／データ）、**判断データ**（使用中のパックの名前・版と説明）、**対応機能**（壁／信号機／車両／交差点）、**学習元**（そのパックの作成に使用した収録シナリオと元の版）、**電源**（車のファームウェアが報告する低電圧・処理速度制限。通常は「正常（低電圧なし）」） |
-| モーター出力／ロジックの判断 | 「`RC_steer(LEFT) / RC_drive(FORWARD, 191)`」の形式で表示します。RumiCar ライブラリ（Arduino の RumiCar-lib、Raspberry Pi 版の RumiCar.py、`drive.py`）でその指令を出すときに書く呼び出しと同じ語と数です。駆動の値は **PWM のデューティ**（0〜255、255 = 100%。150 なら全開の 150/255 ≒ 59% の信号）、方向は `FREE`（惰行）／`REVERSE`／`FORWARD`／`BRAKE`（両入力 High）。「モーター出力」は実際にモーターへ出力した値、「ロジックの判断」はロジックがそのフレームで算出した値（手動・収録のみ・非常停止中も表示） |
+| モーター出力／ロジックの判断 | 「`RC_steer(LEFT, 128) / RC_drive(FORWARD, 191)`」の形式で表示します。RumiCar ライブラリ（Arduino の RumiCar-lib、Raspberry Pi 版の RumiCar.py、`drive.py`）でその指令を出すときに書く呼び出しと同じ語と数です。操舵の第 2 引数は**強さ**（信号の割合 0〜255。0 は CENTER と同じ中立）で、255（最大）のときは 1 引数の形 `RC_steer(LEFT)` で表示します（同じ出力のため。CENTER は強さを持ちません）。駆動の値は **PWM のデューティ**（0〜255、255 = 100%。150 なら全開の 150/255 ≒ 59% の信号）、方向は `FREE`（惰行）／`REVERSE`／`FORWARD`／`BRAKE`（両入力 High）。「モーター出力」は実際にモーターへ出力した値、「ロジックの判断」はロジックがそのフレームで算出した値（手動・収録のみ・非常停止中も表示） |
 | 走行モード | **自動**：車のロジックが走行を制御／**手動**：PC から操作（下記「手動操作」）／**収録のみ**：モーターを停止したまま画像と状態を受信（手で車を動かしてデータを収集する場合に使用）。下に「起動時のモード」（既定は収録のみ）を表示 |
 | 操縦パッド | 手動モードで有効（下記「手動操作」）。下に送信中の指令（例「`RC_steer(LEFT) / RC_drive(FORWARD, 115)`（パッド）」）、「最大出力」、「停止」、「左右スクロールの向きを反転」を配置 |
 | 自動の最大出力 | 自動モードでロジックが出力する駆動（`RC_drive` の値 0〜255）の上限（既定 255）。車が保持し、本体の再起動で `max_drive_pwm`（既定 255）に戻ります。`max_drive_pwm` を超える値は設定できません。手動の「最大出力」とは独立しています。自動モードへの切り替え時は、駆動の許容値を 0 から `auto_accel_pwm_per_s` の傾きで増加させ、この上限で頭打ちにします（手動・収録のみ・非常停止解除から切り替えても急発進しません）。初回の走行や未経験のコースでは 77〜128（30〜50%）から始めることを推奨します（挙動を確認しながら上げてください） |
@@ -163,7 +163,7 @@ flowchart TD
 
 ### 手動操作
 
-「手動」を押すと、走行カードの**操縦パッド**、マウス・タッチパッドのスクロール、矢印キーで操作できます。操舵は左／中央／右の 3 状態（操舵モーターのオン・オフ）、駆動は `RC_drive` の値 0〜255（PWM のデューティ、1 刻み）です。パッドの座標は中心を原点に、端を ±1 として扱います。
+「手動」を押すと、走行カードの**操縦パッド**、マウス・タッチパッドのスクロール、矢印キーで操作できます。操舵は左／中央／右の 3 状態（左右は強さ 255 = `RC_steer(LEFT)`／`RC_steer(RIGHT)`。手動操作では強さを指定しません）、駆動は `RC_drive` の値 0〜255（PWM のデューティ、1 刻み）です。パッドの座標は中心を原点に、端を ±1 として扱います。
 
 | 操作 | 操舵 | 駆動 |
 |---|---|---|
@@ -195,25 +195,25 @@ RumiCarData/
   scenarios.json                 使用したシナリオ名の一覧（新しい順、使用回数付き）
 ```
 
-`header` には、そのフレームの ToF 値、ロジックの状態と判断（操舵・駆動）、実際にモーターへ出力した値、走行モード、非常停止、ロジックとパックの名前と版（`logic_name`／`pack_id`）、電源の状態（`throttled`）、画像の連番と時刻が含まれます。
+`header` には、そのフレームの ToF 値、ロジックの状態と判断（操舵とその強さ・駆動）、実際にモーターへ出力した値、走行モード、非常停止、ロジックとパックの名前と版（`logic_name`／`pack_id`）、電源の状態（`throttled`）、画像の連番と時刻が含まれます。
 
 **シナリオの付け方**：収録前に「シナリオ」欄に場面の名前を入力します。「壁のみの走行データ」「信号機ありケース1」「信号機と交差点ロジックあり」のように、判断データの作成時にどの収録を使うか選択できる名前にします。使用済みの名前は `scenarios.json` から選択できます。
 
 ### 6.2 Claude のデスクトップアプリによる改良
 
 1. Claude のデスクトップアプリで `RumiCarData` フォルダ（またはその中の `sessions`）を開き、収録を参照させて改良を指示します。
-2. 走行ロジック `tof_drive` が使う判断データは、パラメータファイル `params.json` 1 つです。キーの意味と既定値は仕様書 3.7 にあります（例：`d_turn_enter_mm` 旋回を開始する前方距離、`v_max` 最高速（`RC_drive` の値 0〜255）、`accel_pwm_per_s` 加速時の変化率）。距離は `RC_read` の値（0〜200 mm。−3 は開放）です。
+2. 走行ロジック `tof_drive` が使う判断データは、パラメータファイル `params.json` 1 つです。キーの意味と既定値は仕様書 3.7 にあります（例：`d_turn_enter_mm` 旋回を開始する前方距離、`v_max` 最高速（`RC_drive` の値 0〜255）、`accel_pwm_per_s` 加速時の変化率）。距離は `RC_read` の値（0〜200 mm。−3 は開放）です。操舵の強さ（`RC_steer` の第 2 引数 0〜255）は場面ごとに `turn_steer_pwm`（前方の障害物を避けて旋回するとき）・`side_steer_pwm`（側方の壁から離れるとき）・`recover_steer_pwm`（後退して脱出するとき）で指定します（同梱の値は 255 = 最大）。強さは補正しない信号の割合で、同じ値でも車ごとに舵の効き方が異なるため、収録の `steer_pwm`・`logic_steer_pwm` と画像・ToF の変化から効き方を判断し、「効かなければ 1.3 倍、行き過ぎたら半分」程度の目安で調整します。
 3. 作成したデータは、次の構成のフォルダにします（manifest.json は `car/tools/make_manifest.py` で作成できます。Python 3 の標準ライブラリのみで動作）。
 
 ```
-base-tof-0.2.0/            フォルダ名は <id>-<version>
-  params.json              全キー必須
-  manifest.json            python car/tools/make_manifest.py pack base-tof-0.2.0 --id base-tof --version 0.2.0 --logic tof_drive \
+base-tof-0.3.1/            フォルダ名は <id>-<version>
+  params.json              全キー必須（操舵の強さ 3 つは省略可。省略時 255）
+  manifest.json            python car/tools/make_manifest.py pack base-tof-0.3.1 --id base-tof --version 0.3.1 --logic tof_drive --min-abi 4 \
                                --description "壁のみ。旋回を早めに開始するよう d_turn_enter_mm を 180 に" \
-                               --capability walls --scenario "壁のみの走行データ" --parent base-tof-0.2.0
+                               --capability walls --scenario "壁のみの走行データ" --parent base-tof-0.3.0
 ```
 
-版（`0.2.0` など）には、車にインストール済みの版と重複しない新しい番号を付けます。
+版（`0.3.1` など）には、車にインストール済みの版と重複しない新しい番号を付けます。`--min-abi 4` は、操舵の強さを解釈するロジック（ABI 4、本体 0.5.0 以降）を必要とする指定です。
 
 `--description`（版の説明）、`--capability`（対応する場面：`walls` 壁、`traffic_light` 信号機、`vehicle` 車両、`intersection` 交差点。複数指定可）、`--scenario`（作成に使用した収録シナリオ。複数指定可）、`--parent`（元にした版）は任意ですが、指定すると走行管理アプリの「判断データ」「対応機能」「学習元」と版の一覧に表示され、使用中のロジック／データを識別できます。`python car/tools/make_manifest.py show <フォルダ>` で確認できます。
 
@@ -301,14 +301,14 @@ flowchart TD
 
 ```
 python car/tools/train_pack.py train cam-signal-0.1.0 \
-    --parent <車から取得した cam-base-0.2.0 のフォルダ、または前の版> \
+    --parent <車から取得した cam-base-0.3.0 のフォルダ、または前の版> \
     --sessions <学習用の収録>... --validate <検証用の収録>... \
     --negatives-from-scenario "壁のみの走行データ" \
     --detector traffic_light_red --detector traffic_light_green \
     --id cam-signal --version 0.1.0 --description "信号機ありケース1"
 ```
 
-   `cam-base-0.2.0` はリポジトリの `car/packs/cam-base` にもあります。完了すると `cam-signal-0.1.0/` に `params.json`・`vision.bin`・`training.json`（学習の記録）・`manifest.json` が作成され、検証用の収録に対する検出の適合率・再現率が表示されます。再現率が低ければラベルを追加し、誤検出が多ければ負例（壁のみ）を追加します。車両と交差点を追加する場合は、検出器を並べて一度に学習します（`:global` は全体検出器）。
+   `cam-base-0.3.0` はリポジトリの `car/packs/cam-base` にもあります。収録は本体 0.5.0（ABI 4）と 0.4.x（ABI 3）のどちらのものも使用できます（画像と ToF の値は同じです）。作成されるパックは `min_abi` 4 です。完了すると `cam-signal-0.1.0/` に `params.json`・`vision.bin`・`training.json`（学習の記録）・`manifest.json` が作成され、検証用の収録に対する検出の適合率・再現率が表示されます。再現率が低ければラベルを追加し、誤検出が多ければ負例（壁のみ）を追加します。車両と交差点を追加する場合は、検出器を並べて一度に学習します（`:global` は全体検出器）。
 
 ```
 python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
@@ -322,7 +322,7 @@ python car/tools/train_pack.py train cam-town-0.1.0 --parent cam-signal-0.1.0 \
    各挙動の設定は、対応する検出器がパックにある場合のみ `params.json` に追加されます（`behaviours on: signal, vehicle, intersection` と表示されます）。片側の交差点のみを学習した場合、もう片側の検出器名は空（その側の交差点は無いものとして扱う）になります。
 
 4. **送信前の確認**：`python car/tools/train_pack.py show cam-signal-0.1.0`（内容と、有効な挙動）、`replay cam-signal-0.1.0 <収録>`（フレームごとの検出結果）、`rumicar-replay <cam_drive のフォルダ> cam-signal-0.1.0 <収録>`（実際のロジックで再生。状態が CRUISE → SIGNAL_APPROACH → SIGNAL_STOP → SIGNAL_RESUME の順に遷移すれば、停止と発進が機能しています。車両は FOLLOW → OVERTAKE_OUT → OVERTAKE_PASS → OVERTAKE_IN、交差点は INTERSECTION_APPROACH → INTERSECTION_STOP → (INTERSECTION_CROSS →) INTERSECTION_TURN）。再生は収録時の ToF の値をそのまま入力するため、追い越しのように「車の動きの結果として ToF の値が変わる」場面は収録どおりにしか進みません（確認できるのは停止・減速・進路変更の開始までです）。
-5. **車への送信**：走行管理アプリの「版の管理」で `cam_drive-0.2.0`（同梱）を選択して「有効化」し、「送る…」で `cam-signal-0.1.0` を送信して「有効化」します。状態欄の「判断データ」「対応機能」「学習元」に、送信した版の説明・「壁 / 信号機」・学習に使用した収録のシナリオが表示されます。「判断を重ねる」をオンにすると、画像の上に検出枠（赤信号 = 赤、青信号 = 緑、車両 = 水色、交差点 = 橙で画像全体を囲む。確定すると太枠）とスコアが描画されます。「判断状態」には `FOLLOW（前方車両に追従）` のように状態の意味も表示されます。
+5. **車への送信**：走行管理アプリの「版の管理」で `cam_drive-0.4.0`（同梱）を選択して「有効化」し、「送る…」で `cam-signal-0.1.0` を送信して「有効化」します。状態欄の「判断データ」「対応機能」「学習元」に、送信した版の説明・「壁 / 信号機」・学習に使用した収録のシナリオが表示されます。「判断を重ねる」をオンにすると、画像の上に検出枠（赤信号 = 赤、青信号 = 緑、車両 = 水色、交差点 = 橙で画像全体を囲む。確定すると太枠）とスコアが描画されます。「判断状態」には `FOLLOW（前方車両に追従）` のように状態の意味も表示されます。
 6. **改良**：収録を追加し、`--parent cam-signal-0.1.0 --version 0.2.0` で再学習します。新しい場面（車両、交差点）の収録を追加した場合は、既存の検出器を含めて**全検出器を再学習する**のが原則です（新しい場面が既存の検出器の負例になるため。例：車両のテールランプを赤信号と誤検出しない）。`--keep-parent-detectors` は、場面を追加せずに一部の検出器だけを修正する場合に使用します（manifest の `parent` に系譜が残ります）。
 
 ### 7.4 信号機の挙動の設定（params.json の signal）
@@ -378,7 +378,7 @@ stateDiagram-v2
 | `in_ms` | 500 | 元の車線へ復帰する時間（反対側へ最大舵角） |
 | `ignore_ms` | 1500 | 追い越し完了後、車両の検出を無視する時間。また、追従中にカメラが車両を検出できない状態がこの時間続くと追従を終了し、ToF の判断に戻す（車両に近すぎて検出できない場合は、ToF が障害物として回避する） |
 
-追い越しは時間で区切った開ループ制御です（操舵が左／中央／右の 3 状態のみのため）。進路変更・復帰の時間は、コースと車速に合わせて調整してください。
+追い越しは時間で区切った開ループ制御です（舵角を測るセンサーが無く、進路変更と復帰の操舵は最大舵角＝強さ 255 で行うため。`tof` の操舵の強さの設定はこの操舵には適用しません）。進路変更・復帰の時間は、コースと車速に合わせて調整してください。
 
 **図 7** 前方車両の挙動の状態遷移
 
@@ -464,7 +464,7 @@ stateDiagram-v2
 | 駐車車両を追い越さない | 「判断状態」が `FOLLOW_WAIT` なら両側とも `side_clear_mm` 未満。`FOLLOW` のままなら車両の検出が途切れている（上の行）か、赤信号・交差点の処理中 |
 | 交差点で停止しない | `replay` で `intersection_*` が確定しているか確認する。確定しており壁のあるコースなら、`open_mm` が壁までの距離より小さいか確認する。壁の無いコースでは `stop_trigger` を `detector` にする |
 | 交差点で曲がらない | `cross_max_ms` 以内に曲がる側の ToF が開放（`open_mm` 以上）になっていない。`turn=detector` で両側を検出した場合は直進になる |
-| 送信した版が「検証失敗」になる | `make_manifest.py verify` を実行する。`vision.bin` の自己診断が一致しない場合は、カメラの設定（320×240）が学習時と異なる。学習ツールと車の版の対応（ABI 2）を確認する |
+| 送信した版が「検証失敗」になる | `make_manifest.py verify` を実行する。`vision.bin` の自己診断が一致しない場合は、カメラの設定（320×240）が学習時と異なる。学習ツールと車の版の対応（ABI 4。`min_abi` 4 のパックは本体 0.5.0 以降）を確認する |
 | `rumicar-replay` と車で結果が異なる | 収録は JPEG、車は非圧縮画像を使うため、わずかな差は生じます。差が大きい場合は照明条件が変わっている可能性があるため、その照明条件で収録を追加する |
 | 検出が確定したまま解除されない | `show` で `thr` の 2 つ目（解除のしきい値）が「対象物が無いときのスコア」より高いか確認する。`train` は負例のスコアの上位 1% より上に設定しますが、`--hysteresis` を小さくして再学習すると上がります |
 
@@ -478,7 +478,7 @@ rumicar-activate show                  # 使用中／直前の版と、最後の
 sudo nano /etc/rumicar/core.json       # 設定（変更後は sudo systemctl restart rumicar-core）
 ```
 
-主な設定（`/etc/rumicar/core.json`、仕様書 3.3）：`car_name`（車の名前）、`startup_mode`（起動時の走行モード：`record_only` 既定／`auto` 電源投入と同時に走行）、`max_drive_pwm`（駆動の上限。`RC_drive` の値で 255 = 100%）、`auto_accel_pwm_per_s`（自動モードへの切り替え時の駆動許容値の増加率。既定 287 で 0 から 255 まで約 0.89 秒。0 で制限なし）、`camera.enabled`、`camera.on_demand`（PC 接続中または自動モードのときのみカメラを動作させる。既定 true）、`camera.fps`、`network.heartbeat_timeout_ms`、`network.ap_start`（アクセスポイントを `core` が起動する（既定）か、`boot` で NetworkManager に任せるか）、`network.wifi_txpower_dbm`（無線の送信出力の上限。0 = ドライバの既定値。電池の電圧低下が問題になる場合は 10〜14 程度を試す）、`power.throttled_path`（低電圧・処理速度制限の監視。空文字で無効）。
+主な設定（`/etc/rumicar/core.json`、仕様書 3.3）：`car_name`（車の名前）、`startup_mode`（起動時の走行モード：`record_only` 既定／`auto` 電源投入と同時に走行）、`max_drive_pwm`（駆動の上限。`RC_drive` の値で 255 = 100%）、`gpio.steer_pwm_frequency_hz`（操舵の強さ 1〜254 を出すソフトウェア PWM の周波数。既定 500 Hz）、`auto_accel_pwm_per_s`（自動モードへの切り替え時の駆動許容値の増加率。既定 287 で 0 から 255 まで約 0.89 秒。0 で制限なし）、`camera.enabled`、`camera.on_demand`（PC 接続中または自動モードのときのみカメラを動作させる。既定 true）、`camera.fps`、`network.heartbeat_timeout_ms`、`network.ap_start`（アクセスポイントを `core` が起動する（既定）か、`boot` で NetworkManager に任せるか）、`network.wifi_txpower_dbm`（無線の送信出力の上限。0 = ドライバの既定値。電池の電圧低下が問題になる場合は 10〜14 程度を試す）、`power.throttled_path`（低電圧・処理速度制限の監視。空文字で無効）。
 
 ## 9. 更新
 
@@ -512,11 +512,11 @@ sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 
 | 種類 | 例 | 対象・表示箇所 |
 |---|---|---|
-| 本体（製品）の版 | `v0.4.1` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
-| ロジックの版 | `tof_drive-0.3.0`、`cam_drive-0.3.0` | ロジックごとの番号（`car/CMakeLists.txt` の `TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`／`PY_DRIVE_VERSION`、manifest の `version`）。「版の管理」の一覧と状態欄の「版（ロジック／データ）」 |
-| 判断データ（パック）の版 | `base-tof-0.2.0`、`cam-base-0.2.0`、自分で作成した `cam-signal-0.1.0` | パックごとの `manifest.json` の `version`。自分で学習させた版には、車にインストール済みの版と重複しない番号を付けます（7 章） |
+| 本体（製品）の版 | `v0.5.0` | Release のタグ。SD カードイメージ・`.deb`・走行管理アプリ・車の `core_version` が同じ番号。接続時のログの `本体 <版>, このアプリ <版>`、アプリのタイトル |
+| ロジックの版 | `tof_drive-0.4.0`、`cam_drive-0.4.0` | ロジックごとの番号（`car/CMakeLists.txt` の `TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`／`PY_DRIVE_VERSION`、manifest の `version`）。「版の管理」の一覧と状態欄の「版（ロジック／データ）」 |
+| 判断データ（パック）の版 | `base-tof-0.3.0`、`cam-base-0.3.0`、自分で作成した `cam-signal-0.1.0` | パックごとの `manifest.json` の `version`。自分で学習させた版には、車にインストール済みの版と重複しない番号を付けます（7 章） |
 
-本体 0.4.1 の Release の同梱は `tof_drive-0.3.0`・`cam_drive-0.3.0`・`py_drive-0.2.0`・`base-tof-0.2.0`・`cam-base-0.2.0`・`py-sample-0.2.0` です。本体とロジックの番号が一致していても、両者は独立した番号です。
+本体 0.5.0 の Release の同梱は `tof_drive-0.4.0`・`cam_drive-0.4.0`・`py_drive-0.3.0`（RumiCar.py 0.6.0 を含む）・`base-tof-0.3.0`・`cam-base-0.3.0`・`py-sample-0.3.0` です。本体とロジックの番号が一致していても、両者は独立した番号です。
 
 **Release ではないビルド**（GitHub Actions がタグ以外で作成した `.deb`・SD カードイメージ・アプリ）は、版の後ろに `+g` と commit の先頭 7 文字が付きます（例 `0.2.1+g1a2b3c4`）。タグの付いた Release のものと区別するためです。Debian の版の比較では `0.2.1` ＜ `0.2.1+g1a2b3c4` ＜ `0.2.2` です。車の本体とアプリの版の数値部分（`+` より前）が異なる場合は、接続時のログに警告を記録します。
 
@@ -555,7 +555,7 @@ sudo nmcli device wifi connect "<家庭のSSID>" password "<パスワード>"
 
 ### 11.2 drive.py の書き方
 
-`drive.py` は RumiCar ライブラリの API で書きます。関数名・定数・値の意味は Arduino のライブラリ RumiCar-lib と Raspberry Pi Zero W 版（RumiCar リポジトリの `RasPi/RumiCar.py`）と同じです。Zero2Cam では車の本体がセンサーとモーターを持つため、本体が 50 ms ごとに `loop()` を呼び、`RC_read()` はそのフレームのセンサーの値を返し、`RC_steer()`／`RC_drive()` はそのフレームの指令になります。
+`drive.py` は RumiCar ライブラリで書きます。使われるのは Raspberry Pi 版のライブラリ（RumiCar リポジトリの `RasPi/RumiCar.py` 0.6.0）そのもので、関数名・定数・値の意味は Arduino のライブラリ RumiCar-lib v0.6.0 とも同じです（Zero2Cam は同等品を持たず、ビルド時に決まったコミットのファイルを SHA-256 で確かめて `py_drive` に同梱します）。Zero2Cam では車の本体がセンサーとモーターを持つため、本体が 50 ms ごとに `loop()` を呼び、`RC_read()` はそのフレームのセンサーの値を返し、`RC_steer()`／`RC_drive()` はそのフレームの指令になります（RumiCar.py の Zero2Cam 用のハードウェアの層）。
 
 ```python
 from RumiCar import *
@@ -569,7 +569,7 @@ def loop():              # 50 ms ごと（20 Hz）
     if center == -3:                   # 20 cm 以内に何もない
         center = 999
     if center < 150:                   # 前方が近い
-        RC_steer(LEFT if RC_read(LEFT) > RC_read(RIGHT) else RIGHT)   # 距離の大きい側へ
+        RC_steer(LEFT if RC_read(LEFT) > RC_read(RIGHT) else RIGHT, 192)   # 距離の大きい側へ、強さ 192
         RC_drive(FORWARD, 102)
     else:
         RC_steer(CENTER)
@@ -579,13 +579,13 @@ def loop():              # 50 ms ごと（20 Hz）
 | 名前 | 内容 |
 |---|---|
 | `RC_read(LEFT / CENTER / RIGHT)` | 距離センサーの値。`0`〜`200` = 距離 [mm]、`-1` = 読み取りに失敗、`-3` = 範囲外（20 cm 以内に何もない）。`-3` は数としては最も小さいので、比較の前に大きな値に置き換えます。`RC_read(REAR)` はこの車では `-1`、不正な引数は `-2` |
-| `RC_steer(LEFT / CENTER / RIGHT)` | 操舵。3 状態です。成功で 1、不正な引数は無視して 0 |
+| `RC_steer(LEFT / CENTER / RIGHT, 強さ)` | 操舵。強さは信号の割合 `0`〜`255`（補正なし）で、省略すると `255`（従来と同じ最大の出力）。`0` は `CENTER` と同じ（中立）、`1`〜`254` はスローデケイ（`RIGHT` は AIN1 を High、AIN2 を `255 − 強さ` にする。`LEFT` はその逆）、`CENTER` では強さを無視します。範囲外は 0〜255 に収め、小数は 0 方向へ切り捨て、数でない値は 0。成功で 1、不正な方向は無視して 0。同じ値でも車ごとに舵の効き方は異なるため、「効かなければ 1.3 倍、行き過ぎたら半分」のように走りながら調整します（例：RumiCar リポジトリの `RasPi/Exercise-3.3`。`drive.py` という名前で送ればそのまま動きます） |
 | `RC_drive(方向, 値)` | 駆動。方向は `FREE`（惰行で停止）／`REVERSE`／`FORWARD`／`BRAKE`（ブレーキ）、値は PWM のデューティ `0`〜`255`（150 なら全開の 150/255 ≒ 59% の信号）。範囲外の値は 0〜255 に丸めます。`RC_steer()` と `RC_drive()` の値は次に変更するまで保持されます |
 | `RC_params()` | `params.json` の内容（辞書）。車やコースごとに変える値をここに記述すると、プログラムを変更せずに調整できます |
 | `RC_state("名前")` | 現在の処理状態の名前（英数字と `_`、24 文字以内）。アプリの「判断状態」に表示されます |
 | `print(...)` | 車のログに記録されます |
 
-経過時間が必要な場合は Python 標準の `time.monotonic()` を使います。`drive.py` と同じフォルダに自作の `.py` を置いて `import` することもできます。使用できるのは Python の標準ライブラリのみです（車には numpy などはインストールされていません）。カメラ画像は `py_drive` では使用不可です（画像は 7 章の学習の仕組みで扱います）。
+経過時間が必要な場合は Python 標準の `time.monotonic()` を使います。`loop()` の中で待つプログラム（`time.sleep()` で動きを順に切り替える `RasPi/Exercise-2.5` など）は、11.3 の時間の上限によりそのままでは動きません。経過時間で状態を切り替える形に書き換えます。`drive.py` と同じフォルダに自作の `.py` を置いて `import` することもできます。使用できるのは Python の標準ライブラリのみです（車には numpy などはインストールされていません）。カメラ画像は `py_drive` では使用不可です（画像は 7 章の学習の仕組みで扱います）。
 
 ### 11.3 本体による安全制御
 
@@ -603,12 +603,12 @@ sequenceDiagram
     participant R as runner.py（別プロセス）
     Note over C,R: 有効化（create）
     C->>R: 起動：python3 -I -B -u runner.py パック
-    R->>R: params.json と drive.py の読み込み、setup()
+    R->>R: RumiCar.py（runner.py の隣）・params.json・drive.py の読み込み、setup()
     R-->>C: READY（最長 15 秒）または ERROR メッセージ
     loop 50 ms ごと
         C->>R: F seq t_ms 左 中央 右
         alt 30 ms 以内に応答
-            R-->>C: C seq steer drive_dir drive_pwm state
+            R-->>C: C seq steer steer_pwm drive_dir drive_pwm state
             C->>C: 指令を出力（本体の制限を適用）
         else loop() で例外
             R-->>C: X seq メッセージ
@@ -622,9 +622,10 @@ sequenceDiagram
 
 ### 11.4 補足
 
-- 送信されたパックは `/var/lib/rumicar/packs/<フォルダ名>-<日時>/` に格納され、`rumicar-activate pair py_drive-0.2.0 <パック>` で SSH からも切り替えられます（ロジックとデータは組で切り替えます）。
+- 送信されたパックは `/var/lib/rumicar/packs/<フォルダ名>-<日時>/` に格納され、`rumicar-activate pair py_drive-0.3.0 <パック>` で SSH からも切り替えられます（ロジックとデータは組で切り替えます）。
+- 「自分のプログラムを送る…」で作るパックは `min_abi` 4 です（RumiCar.py 0.6.0 の `RC_steer` の強さを使えるロジック。本体 0.5.0 以降）。
 - ToF による走行（`tof_drive`）は C++ で記述されています。Python で作成した処理を正式な走行ロジックに移植する場合は、`car/logic/tof_drive/` を参考にしてください。
-- 見本 `py-sample` は車にも同梱されているため、PC にリポジトリが無くても「版の管理」から `py-sample-0.2.0` を有効化して動作を確認できます。
+- 見本 `py-sample` は車にも同梱されているため、PC にリポジトリが無くても「版の管理」から `py-sample-0.3.0` を有効化して動作を確認できます。
 
 ## 12. 解説動画
 
@@ -646,7 +647,7 @@ sequenceDiagram
 
 ```sh
 sudo apt install build-essential cmake pkg-config libgpiod-dev nlohmann-json3-dev libssl-dev libturbojpeg0-dev libcamera-dev
-cmake -S car -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S car -B build -DCMAKE_BUILD_TYPE=Release      # RumiCar.py をダウンロードするためインターネット接続が必要（9.3）
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 sudo cmake --install build --prefix /usr/local   # 手動インストール
@@ -656,7 +657,11 @@ sudo cmake --install build --prefix /usr/local   # 手動インストール
 
 libcamera の無い環境では `-DRUMICAR_WITH_CAMERA=OFF` でビルドできます（その本体はカメラを起動せず ToF のみで走行します）。
 
-走行ロジックは `car/logic/` にあります：`tof_drive`（ToF による走行）、`cam_drive`（`tof_drive` にカメラによる判断を追加したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間方向の確定、`cam_logic` 信号機・車両・交差点の挙動と優先順位）、`py_drive`（パックの `drive.py` を `runner.py` が別プロセスで実行し、`py_process` がフレームごとに 1 行で送受信。タイムアウト・異常終了時はブレーキ。`test_py_drive` が実際の runner で検証）。本体とロジックのインターフェースは `car/include/rumicar/logic_api.h`（ABI 2：補助出力 `aux` と `aux_name`）で定義しています。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ 実装と完全に一致することを `test_vision` で検証しています。`car/tests/tools_smoke.py <build dir>` は合成した収録から学習し、`rumicar-replay` で停止・発進、追従と追い越し、交差点での停止までを一連で検証します（CI でも実行）。
+走行ロジックは `car/logic/` にあります：`tof_drive`（ToF による走行）、`cam_drive`（`tof_drive` にカメラによる判断を追加したもの：`vision_features` 特徴量、`vision_pack` の `vision.bin`、`vision_eval` 検出器の評価と時間方向の確定、`cam_logic` 信号機・車両・交差点の挙動と優先順位）、`py_drive`（パックの `drive.py` を `runner.py` が別プロセスで実行し、`py_process` がフレームごとに 1 行で送受信。タイムアウト・異常終了時はブレーキ。`test_py_drive` が実際の runner と RumiCar.py で検証）。本体とロジックのインターフェースは `car/include/rumicar/logic_api.h`（ABI 4：`rumi_command` に操舵の強さ `steer_pwm`）で定義しています。
+
+`py_drive` の RumiCar.py はこのリポジトリに置かず、構成（`cmake -S car …`）のときに RumiCar リポジトリの決まったコミットから取得します。`car/CMakeLists.txt` の `RUMICAR_PY_COMMIT`（コミット）・`RUMICAR_PY_SHA256`（ファイルの SHA-256）・`RUMICAR_PY_VERSION`（`__version__`）の 3 つが一致した場合だけ受け入れ（一致しなければ構成を中止）、`py_drive` のフォルダに `runner.py` と並べて置き、manifest に SHA-256 を記録します（車は有効化のたびに照合します）。RumiCar.py の版を上げるときは、この 3 つを同時に変更します。
+
+操舵の強さ（1〜254）は DRV8835 の AIN1/AIN2（GPIO 17/27。ハードウェア PWM は駆動の 2 チャンネルで使用済み）をソフトウェア PWM で出力します（`hw/soft_pwm`：既定 500 Hz、`SCHED_FIFO` のスレッド。強さ 0・255 と CENTER のときはスレッドは動作せず、GPIO を直接設定）。`test_soft_pwm` が RumiCar-lib と同じ入力の値（`Drv8835::steer_inputs`）と、実際のスレッドのデューティ・周波数・切り替えを検証します。特徴量と `vision.bin` の Python 実装は `car/tools/rumicar_vision.py` で、`car/tests/data/vision` の黄金データ（`make_golden.py` で生成）を介して C++ 実装と完全に一致することを `test_vision` で検証しています。`car/tests/tools_smoke.py <build dir>` は合成した収録から学習し、`rumicar-replay` で停止・発進、追従と追い越し、交差点での停止までを一連で検証します（CI でも実行）。
 
 ## 制御ループと ToF 走行ロジック
 
@@ -672,11 +677,11 @@ flowchart TD
     C --> E{"非常停止中？<br/>走行モードは？"}
     E -->|"非常停止中"| B1["ブレーキ"]
     E -->|"収録のみ"| B2["ブレーキ"]
-    E -->|"手動"| H["PC の manual_drive<br/>（RC_steer／RC_drive の値。デューティは max_drive_pwm 以下に制限）"]
+    E -->|"手動"| H["PC の manual_drive<br/>（RC_steer／RC_drive の値。操舵は強さ 255、デューティは max_drive_pwm 以下に制限）"]
     E -->|"自動"| F{"step() 成功？"}
     F -->|"失敗"| B3["ブレーキ"]
     F -->|"成功"| G["駆動を許容値で制限<br/>許容値 = min(0 から auto_accel_pwm_per_s で増加,<br/>自動の最大出力, max_drive_pwm)<br/>指令が BRAKE、または FAULT があればブレーキ"]
-    B1 --> MO["DRV8835 へ出力"]
+    B1 --> MO["DRV8835 へ出力<br/>（操舵の強さ 1〜254 はソフトウェア PWM）"]
     B2 --> MO
     B3 --> MO
     H --> MO
@@ -724,13 +729,13 @@ dotnet publish pc/RumiCar.DriveManager -c Release -r win-x64 --self-contained -p
 - 本体の版は、**次の Release の番号をソースに記述してからタグを付けます**。手順：(1) プルリクエストで `car/CMakeLists.txt` の `RUMICAR_VERSION`、`pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj` の `<Version>`、`pc/RumiCar.DriveManager/app.manifest` の `assemblyIdentity version`（`X.Y.Z.0`）を同じ番号にする、(2) マージする、(3) そのマージの commit に `vX.Y.Z` のタグを付けて push する。`release.yml` は最初にタグとこの 3 か所の一致、およびタグが main の commit であることを検証し、不一致ならビルドせずに停止します（タグと内容の版が食い違った Release を作成しないため）。
 - タグ以外のビルド（main・プルリクエスト）では、CI が版の後ろに `+g<commit>` を付けます（`car.yml` の `-DRUMICAR_VERSION_SUFFIX`、`pc.yml` の `-p:InformationalVersion`）。手元でのビルドはソースの番号のままです。ロジックの版（`TOF_DRIVE_VERSION`／`CAM_DRIVE_VERSION`／`PY_DRIVE_VERSION`）は本体の版とは独立に、ロジックを変更したときに上げます。ロジック・パックの内容（.so 以外のファイルや manifest の説明を含む）を変更したときも版を上げます（車は同じ版のディレクトリを上書きしないため。9.2）。
 
-## 本版（0.4.1）の範囲
+## 本版（0.5.0）の範囲
 
 - 車：ToF 走行ロジック、制御ループと安全制御、走行モード（auto / manual / record_only、起動時は record_only）と非常停止、Camera Module 2 の取り込み（libcamera、RGB24 320×240・20 fps、必要なときのみ動作）と JPEG 送信、制御サーバー（TCP 5600）・テレメトリサーバー（TCP 5601）、Wi-Fi AP（NetworkManager、本体が順序制御して起動）と `set_wifi`、低電圧・処理速度制限の監視、ロジック／パックの走行中の差し替え（PC または SSH から）、manifest による検証と説明・対応機能・学習元の記載、systemd サービス、Debian パッケージ
 - PC：制御・テレメトリ・manifest・収録の各形式と走行管理アプリ（接続、状態・画像、走行モード、非常停止、手動操作（操縦パッド・スクロール・キー）、自動の最大出力、PC の Wi-Fi の表示、シナリオ付き収録、版の管理（ロジックとデータの組での切り替え）、自作プログラムの送信、収録からの動画作成）
-- 車：画像ロジック `cam_drive`（信号機での停止・発進、前方車両への追従と駐車車両の追い越し、交差点での停止・直進・右左折）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジックのインターフェース ABI 3
+- 車：画像ロジック `cam_drive`（信号機での停止・発進、前方車両への追従と駐車車両の追い越し、交差点での停止・直進・右左折）、学習データ `vision.bin`、学習ツール `train_pack.py`、再生ツール `rumicar-replay`、ロジックのインターフェース ABI 4（操舵の強さ）
 - 車：自作の走行プログラム（Python の `drive.py`）を実行するロジック `py_drive` と見本 `py-sample`、自動モードの駆動許容値の増加制限と最大出力（`set_auto_limit`）、ロジックとデータの組での切り替え（`activate_pair`）
-- 配布：標準 SD カードイメージ、タグによる GitHub Release（0.2.0：ロジックのインターフェースが ABI 1 から 2 に変わり、自作ロジックの再ビルドが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに変更、タグとソースの版の一致を Release で検証、Release ではないビルドに `+g<commit>`。0.3.0：自作の走行プログラム、自動の最大出力と急発進の防止、PC の Wi-Fi の表示。0.3.1：文書・画面表示・メッセージの表記を技術的に正確な表現に統一（`py_drive` 0.1.1、`py-sample` 0.1.1、`cam-base` 0.1.1。動作の変更なし）。0.3.2：図の追加（README・仕様書、日本語・英語。動作の変更なし）。0.4.0：値の表し方を RumiCar ライブラリ（Arduino の RumiCar-lib、Raspberry Pi の RumiCar.py）に統一——ToF は `RC_read` の値（0〜200 mm、−1 タイムアウト、−3 範囲外＝20 cm 以内に何もない）、操舵は `RC_steer` の LEFT=0／CENTER=1／RIGHT=2、駆動は `RC_drive` の FREE／REVERSE／FORWARD／BRAKE と 0〜255。ロジックのインターフェースは ABI 3、制御の通信は protocol 2、`core.json` は `max_drive_pwm`／`auto_accel_pwm_per_s`／`kick_pwm`、`drive.py` は RumiCar ライブラリの API。0.3.x の PC アプリ・収録・自作ロジックとは互換性がなく、収録は取り直しが必要。0.4.1：SD カードの作成と本体の更新を走行管理アプリから——Release に Raspberry Pi Imager の一覧（`rumicar-zero2cam.rpi-imager-manifest`）を添付し、アプリの「SD カードを作る…」がイメージのダウンロードと検証を行って Imager を開く。最新の Release の確認。車側の動作の変更なし）
+- 配布：標準 SD カードイメージ、タグによる GitHub Release（0.2.0：ロジックのインターフェースが ABI 1 から 2 に変わり、自作ロジックの再ビルドが必要なため 0.1.x から繰り上げ。0.2.1：手動操作を操縦パッドとスクロールに変更、タグとソースの版の一致を Release で検証、Release ではないビルドに `+g<commit>`。0.3.0：自作の走行プログラム、自動の最大出力と急発進の防止、PC の Wi-Fi の表示。0.3.1：文書・画面表示・メッセージの表記を技術的に正確な表現に統一（`py_drive` 0.1.1、`py-sample` 0.1.1、`cam-base` 0.1.1。動作の変更なし）。0.3.2：図の追加（README・仕様書、日本語・英語。動作の変更なし）。0.4.0：値の表し方を RumiCar ライブラリ（Arduino の RumiCar-lib、Raspberry Pi の RumiCar.py）に統一——ToF は `RC_read` の値（0〜200 mm、−1 タイムアウト、−3 範囲外＝20 cm 以内に何もない）、操舵は `RC_steer` の LEFT=0／CENTER=1／RIGHT=2、駆動は `RC_drive` の FREE／REVERSE／FORWARD／BRAKE と 0〜255。ロジックのインターフェースは ABI 3、制御の通信は protocol 2、`core.json` は `max_drive_pwm`／`auto_accel_pwm_per_s`／`kick_pwm`、`drive.py` は RumiCar ライブラリの API。0.3.x の PC アプリ・収録・自作ロジックとは互換性がなく、収録は取り直しが必要。0.4.1：SD カードの作成と本体の更新を走行管理アプリから——Release に Raspberry Pi Imager の一覧（`rumicar-zero2cam.rpi-imager-manifest`）を添付し、アプリの「SD カードを作る…」がイメージのダウンロードと検証を行って Imager を開く。最新の Release の確認。車側の動作の変更なし。0.5.0：操舵の強さ——`RC_steer(direc, ipwm = 255)`（RumiCar-lib v0.6.0・RasPi/RumiCar.py 0.6.0 と同じ。0〜255、0 は中立、255 と 1 引数は従来の出力）をロジックのインターフェース（ABI 4、`rumi_command.steer_pwm`）、DRV8835 の操舵のソフトウェア PWM、テレメトリと収録（`steer_pwm`／`logic_steer_pwm`）、走行管理アプリの表示（`RC_steer(LEFT, 128)`）、判断データ（`tof_drive` の `turn_steer_pwm`／`side_steer_pwm`／`recover_steer_pwm`）まで通す。`drive.py` は RumiCar リポジトリの RumiCar.py 0.6.0 そのものを使う（ビルド時に SHA-256 で確認して同梱）。ABI 3 のロジックは読み込めないため、同梱のロジック・パックは新しい版。ABI 3 の収録（0.4.x）は学習・再生にそのまま使える（操舵は強さ 255 として扱う）。0.4.x の判断データ（`params.json` に強さのキーが無いもの）も強さ 255 として読み込める）
 - 今後の作業：実車での収録と調整（追い越し・右左折の時間、交差点の画像の学習）、場面に応じた右左折の選択（現状は版ごとに固定、または検出した側へ）
 
 ## ライセンス

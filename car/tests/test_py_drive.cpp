@@ -1,8 +1,10 @@
 // Tests of py_drive, the logic that runs the user's own Python program
-// (drive.py), through the real plug-in and runner.py: the sample pack,
-// errors while loading (syntax, missing loop, params.json), a program that
-// raises, one that hangs, one that exits, wrong values, print(), and that the
-// control loop never waits longer than the step timeout.
+// (drive.py), through the real plug-in, runner.py and the RumiCar.py the
+// build took from the RumiCar repository: the sample pack, RC_steer's
+// strength, which library drive.py gets, errors while loading (syntax,
+// missing loop, params.json), a program that raises, one that hangs, one that
+// exits, wrong values, print(), and that the control loop never waits longer
+// than the step timeout.
 // Usage: test_py_drive <staged py_drive logic dir> <py-sample pack dir>
 #include <chrono>
 #include <cstdio>
@@ -76,11 +78,11 @@ void test_sample_pack(const fs::path& sample) {
     // Open road (nothing within 20 cm, -3): straight at "speed" (153).
     CHECK(r.step(RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE) == 0);
     CHECK(r.out.size == sizeof(rumi_command));
-    CHECK(r.out.steer == RUMI_STEER_CENTER && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 153 && r.out.flags == 0);
+    CHECK(r.out.steer == RUMI_STEER_CENTER && r.out.steer_pwm == 0 && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 153 && r.out.flags == 0);
     CHECK(r.state() == "RUN");
     // A wall near on the left: steer right.
     CHECK(r.step(40, RUMI_TOF_OUT_OF_RANGE, RUMI_TOF_OUT_OF_RANGE) == 0);
-    CHECK(r.out.steer == RUMI_STEER_RIGHT && r.state() == "RUN");
+    CHECK(r.out.steer == RUMI_STEER_RIGHT && r.out.steer_pwm == 255 && r.state() == "RUN");
     // Something ahead, more room on the left: turn left slowly.
     CHECK(r.step(RUMI_TOF_OUT_OF_RANGE, 150, 90) == 0);
     CHECK(r.out.steer == RUMI_STEER_LEFT && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 115 && r.state() == "TURN");
@@ -100,6 +102,75 @@ void test_sample_pack(const fs::path& sample) {
     const auto per_frame = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t0).count() / 200;
     CHECK_MSG(per_frame < 10000, std::to_string(per_frame) + " us per frame");
     std::printf("py_drive: %lld us per frame\n", static_cast<long long>(per_frame));
+}
+
+void test_steering_strength() {
+    // RC_steer(direc, ipwm=255) of RumiCar.py 0.6.0, through the frame protocol
+    // (C <seq> <steer> <steer_pwm> <drive_dir> <drive_pwm> <state>) into rumi_command.
+    Run r(make_pack("strength",
+        "from RumiCar import *\n"
+        "def loop():\n"
+        "    c = RC_read(CENTER)\n"
+        "    RC_drive(FORWARD, 100)\n"
+        "    if c == 1: RC_steer(RIGHT, 128)\n"
+        "    elif c == 2: RC_steer(LEFT)\n"
+        "    elif c == 3: RC_steer(CENTER, 200)\n"
+        "    elif c == 4: RC_steer(LEFT, 0)\n"
+        "    elif c == 5: RC_steer(RIGHT, 300)\n"
+        "    elif c == 6: RC_steer(LEFT, -5)\n"
+        "    elif c == 7: RC_steer(RIGHT, 99.9)\n"
+        "    elif c == 8:\n"
+        "        if RC_steer(RIGHT, 'abc') != 1: raise RuntimeError('a strength that is not a number counts as 0')\n"
+        "    elif c == 9:\n"
+        "        if RC_steer(True, 100) != 0: raise RuntimeError('True is not a direction')\n"
+        "    elif c == 10: RC_steer(LEFT, 254)\n"
+        "    elif c == 11: RC_steer(RIGHT, 1)\n"));
+    CHECK_MSG(r.inst != nullptr, r.error);
+    if (!r.inst) return;
+    struct Case { int c; uint8_t steer, steer_pwm; };
+    const Case cases[] = {
+        {1, RUMI_STEER_RIGHT, 128},
+        {2, RUMI_STEER_LEFT, 255},     // one argument: full, as before
+        {3, RUMI_STEER_CENTER, 0},     // CENTER ignores the strength
+        {4, RUMI_STEER_LEFT, 0},       // 0 = neutral (the core outputs it as CENTER)
+        {5, RUMI_STEER_RIGHT, 255},    // clamped
+        {6, RUMI_STEER_LEFT, 0},       // clamped
+        {7, RUMI_STEER_RIGHT, 99},     // int(): towards 0
+        {8, RUMI_STEER_RIGHT, 0},      // not a number: 0
+        {9, RUMI_STEER_RIGHT, 0},      // ignored: the previous steering stays
+        {10, RUMI_STEER_LEFT, 254},
+        {11, RUMI_STEER_RIGHT, 1},
+    };
+    for (const Case& k : cases) {
+        CHECK_MSG(r.step(150, k.c, 150) == 0, "frame " + std::to_string(k.c));
+        CHECK_MSG(r.out.steer == k.steer && r.out.steer_pwm == k.steer_pwm,
+                  "RC_steer case " + std::to_string(k.c) + ": steer " + std::to_string(r.out.steer) + ", steer_pwm " + std::to_string(r.out.steer_pwm));
+        CHECK(r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 100);
+    }
+}
+
+void test_library_is_the_staged_rumicar_py(const fs::path& logic_dir) {
+    // drive.py gets the RumiCar.py next to runner.py (taken by the build from
+    // the pinned RumiCar commit), even when the pack carries a file of that
+    // name: the runner registers the module before drive.py is loaded.
+    const fs::path pack = make_pack("library",
+        "import os\n"
+        "import RumiCar\n"
+        "from RumiCar import *\n"
+        "def setup():\n"
+        "    if RumiCar.__version__ != '0.6.0': raise RuntimeError('RumiCar.py ' + RumiCar.__version__)\n"
+        "    if not os.path.samefile(os.path.dirname(RumiCar.__file__), RC_params()['logic_dir']): raise RuntimeError(RumiCar.__file__)\n"
+        "    if type(RumiCar._hw).__name__ != '_Zero2CamHardware': raise RuntimeError('hardware layer ' + type(RumiCar._hw).__name__)\n"
+        "def loop():\n"
+        "    RC_steer(RIGHT, 77)\n"
+        "    RC_drive(REVERSE, 60)\n",
+        "{\"logic_dir\": \"" + logic_dir.string() + "\"}");
+    write_file(pack / "RumiCar.py", "raise RuntimeError('the pack\\'s own RumiCar.py must not be loaded')\n");
+    Run r(pack);
+    CHECK_MSG(r.inst != nullptr, r.error);
+    if (!r.inst) return;
+    CHECK(r.step(100, 100, 100) == 0);
+    CHECK(r.out.steer == RUMI_STEER_RIGHT && r.out.steer_pwm == 77 && r.out.drive_dir == RUMI_DRIVE_REVERSE && r.out.drive_pwm == 60);
 }
 
 void test_loading_errors() {
@@ -162,7 +233,8 @@ void test_runtime_errors() {
         "    if RC_steer(LEFT) != 1 or RC_drive(FORWARD, 150.4) != 1 or RC_state('ok') != 1: raise RuntimeError('rc')\n"));
     CHECK_MSG(r.inst != nullptr, r.error);
     if (!r.inst) return;
-    CHECK(r.step(150, 150, 150) == 0 && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 150 && r.out.steer == RUMI_STEER_LEFT && r.state() == "OK");
+    CHECK(r.step(150, 150, 150) == 0 && r.out.drive_dir == RUMI_DRIVE_FORWARD && r.out.drive_pwm == 150 && r.out.steer == RUMI_STEER_LEFT &&
+          r.out.steer_pwm == 255 && r.state() == "OK");
     CHECK(r.step(150, 50, 150) == 6);
     CHECK(r.step(150, 111, 150) == 0 && r.out.drive_pwm == 255 && r.out.steer == RUMI_STEER_LEFT);   // clamped; steering kept
     CHECK(r.step(150, 112, 150) == 0 && r.out.drive_pwm == 200 && r.out.steer == RUMI_STEER_LEFT);   // RC_steer(5) ignored
@@ -256,6 +328,8 @@ int main(int argc, char** argv) {
     api = get();
     test_api();
     test_sample_pack(argv[2]);
+    test_steering_strength();
+    test_library_is_the_staged_rumicar_py(fs::absolute(argv[1]));
     test_loading_errors();
     test_runtime_errors();
     test_hung_program_is_stopped();
