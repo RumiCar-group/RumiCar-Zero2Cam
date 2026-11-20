@@ -175,12 +175,27 @@ public class NewRequestTests
     }
 
     [Fact]
-    public void AutoLimitPairAndRollbackBoth()
+    public void DriveSettingsPairAndRollbackBoth()
     {
-        var p = Params(ControlCodec.SetAutoLimit(1, 153));
-        Assert.Equal(153, p.GetProperty("drive_pwm").GetInt32());
-        Assert.False(p.TryGetProperty("drive_permille", out _));
-        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetAutoLimit(1, 256));
+        // set_drive_settings carries only the settings given (the others stay on the car).
+        var p = Params(ControlCodec.SetDriveSettings(1, autoLimit: 153));
+        Assert.Equal(153, p.GetProperty("auto_limit").GetInt32());
+        Assert.Single(p.EnumerateObject());
+        p = Params(ControlCodec.SetDriveSettings(1, manualMaxPwm: 120, manualAccelPwmPerS: 100, padSteerStrength: true));
+        Assert.Equal(120, p.GetProperty("manual_max_pwm").GetInt32());
+        Assert.Equal(100, p.GetProperty("manual_accel_pwm_per_s").GetInt32());
+        Assert.True(p.GetProperty("pad_steer_strength").GetBoolean());
+        Assert.False(p.TryGetProperty("auto_limit", out _));
+        p = Params(ControlCodec.SetDriveSettings(1, padSteerStrength: false, manualAccelPwmPerS: 0));
+        Assert.False(p.GetProperty("pad_steer_strength").GetBoolean());
+        Assert.Equal(0, p.GetProperty("manual_accel_pwm_per_s").GetInt32());
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetDriveSettings(1, autoLimit: 256));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetDriveSettings(1, autoLimit: -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetDriveSettings(1, manualMaxPwm: 25));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetDriveSettings(1, manualMaxPwm: 256));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ControlCodec.SetDriveSettings(1, manualAccelPwmPerS: 25501));
+        Assert.Throws<ArgumentException>(() => ControlCodec.SetDriveSettings(1));
+        Assert.Equal(RequestType.SetDriveSettings, ControlCodec.SetDriveSettings(1, autoLimit: 0).Type);
         p = Params(ControlCodec.ActivatePair(2, "py_drive-0.1.0", "py-sample-0.1.0"));
         Assert.Equal("py_drive-0.1.0", p.GetProperty("logic").GetString());
         Assert.Equal("py-sample-0.1.0", p.GetProperty("pack").GetString());

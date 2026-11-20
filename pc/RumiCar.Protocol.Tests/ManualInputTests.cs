@@ -29,7 +29,7 @@ public class ManualInputTests
         var c = Cmd(1, -77, ManualSource.Keys);
         Assert.Equal(1, c.SignedSteer);
         Assert.Equal(-77, c.SignedDrive);
-        // Manual steering is full (manual_drive carries no strength): the car outputs RC_steer(RIGHT).
+        // Steering is full unless a strength is given: the car outputs RC_steer(RIGHT).
         Assert.Equal(255, c.SteerPwm);
         Assert.Equal(0, Cmd(0, 50, ManualSource.Pad).SteerPwm);
         Assert.Equal("RC_steer(RIGHT) / RC_drive(REVERSE, 77)", RumiCarApi.CommandText(c.Steer, c.SteerPwm, c.DriveDir, c.DrivePwm));
@@ -80,6 +80,56 @@ public class ManualInputTests
         Assert.Equal(RumiCarApi.Left, m.Command(0).Steer);
         m.PadUp();
         Assert.Equal(Cmd(0, 0, ManualSource.None), m.Command(0));
+    }
+
+    [Theory]
+    [InlineData(0.33, 84)]
+    [InlineData(-0.5, 128)]
+    [InlineData(0.75, 191)]
+    [InlineData(1.0, 255)]
+    [InlineData(-1.4, 255)]     // outside the pad: the edge
+    [InlineData(0.0, 1)]        // never 0 (that would be neutral) while steering
+    public void PadSteerPwmIsProportionalToTheSide(double x, int expected)
+    {
+        Assert.Equal(expected, ManualInput.PadSteerPwm(x));
+    }
+
+    [Fact]
+    public void PadGivesTheSteeringStrengthWhenAsked()
+    {
+        // Off (the default): full steering wherever the pad is held to the side.
+        var m = new ManualInput { MaxDrive = 153 };
+        m.PadDown(0.5, 1.0);
+        Assert.Equal(RumiCarApi.Right, m.Command(0).Steer);
+        Assert.Equal(255, m.Command(0).SteerPwm);
+        m.PadUp();
+        // On: proportional to how far to the side, 255 at the edge; CENTER stays 0.
+        m.PadSteerStrength = true;
+        m.PadDown(0.5, 1.0);
+        var c = m.Command(0);
+        Assert.Equal(RumiCarApi.Right, c.Steer);
+        Assert.Equal(128, c.SteerPwm);
+        Assert.Equal("RC_steer(RIGHT, 128) / RC_drive(FORWARD, 153)", RumiCarApi.CommandText(c.Steer, c.SteerPwm, c.DriveDir, c.DrivePwm));
+        m.PadMove(-1.0, 1.0);
+        Assert.Equal(RumiCarApi.Left, m.Command(0).Steer);
+        Assert.Equal(255, m.Command(0).SteerPwm);
+        m.PadMove(-0.25, 1.0);                       // between exit and enter: still left, weaker
+        Assert.Equal(RumiCarApi.Left, m.Command(0).Steer);
+        Assert.Equal(64, m.Command(0).SteerPwm);
+        m.PadMove(0.0, 1.0);
+        Assert.Equal(RumiCarApi.Center, m.Command(0).Steer);
+        Assert.Equal(0, m.Command(0).SteerPwm);
+        m.PadUp();
+        // The keys and the horizontal scroll steer at full strength either way.
+        m.Key(ManualKey.Left, true);
+        Assert.Equal(255, m.Command(0).SteerPwm);
+        m.Key(ManualKey.Left, false);
+        m.HorizontalWheel(ManualInput.SwipeThreshold, 0);
+        Assert.Equal(RumiCarApi.Right, m.Command(1).Steer);
+        Assert.Equal(255, m.Command(1).SteerPwm);
+        // A command with a strength differs from the full one (the drive manager sends it again).
+        Assert.NotEqual(Cmd(1, 50, ManualSource.Pad), ManualCommand.FromSigned(1, 50, ManualSource.Pad, 128));
+        Assert.Equal(Cmd(0, 50, ManualSource.Pad), ManualCommand.FromSigned(0, 50, ManualSource.Pad, 128));   // no steering: no strength
     }
 
     [Fact]

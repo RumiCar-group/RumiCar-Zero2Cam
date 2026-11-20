@@ -41,13 +41,15 @@ public partial class MainWindow : Window
     private readonly ManualInput _manual = new();
     private readonly DispatcherTimer _manualTimer = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(50) };
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
-    private (int Steer, int DriveDir, int DrivePwm)? _manualSent;   // last command the car accepted; null = send the next one in any case
+    private (int Steer, int SteerPwm, int DriveDir, int DrivePwm)? _manualSent;   // last command the car accepted; null = send the next one in any case
     private bool _manualSending;
     private bool _manualMode;
 
-    // Auto limit: the slider sends set_auto_limit 0.3 s after the last move; values from the car do not echo back.
-    private readonly DispatcherTimer _autoLimitTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
-    private bool _applyingAutoLimit;
+    // Drive settings the car keeps (docs 5.2): a change on a control is sent with
+    // set_drive_settings 0.3 s after the last move; values from the car do not echo back.
+    private readonly DispatcherTimer _settingsTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
+    private bool _applyingSettings;
+    private bool _pendingManualMax, _pendingAutoLimit, _pendingManualAccel, _pendingPadSteer;
 
     // The PC's Wi-Fi network, every 2 s; the one at connection time is the car's.
     private readonly DispatcherTimer _wifiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
@@ -93,22 +95,30 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(MainViewModel.ManualMaxDrive)) _manual.MaxDrive = _vm.ManualMaxDrive;
             else if (e.PropertyName == nameof(MainViewModel.InvertHorizontal)) _manual.InvertHorizontal = _vm.InvertHorizontal;
+            else if (e.PropertyName == nameof(MainViewModel.PadSteerStrength)) _manual.PadSteerStrength = _vm.PadSteerStrength;
         };
         _manual.MaxDrive = _vm.ManualMaxDrive;
+        _manual.PadSteerStrength = _vm.PadSteerStrength;
         _manualTimer.Tick += (_, _) => ManualTick();
         _manualTimer.Start();
-        _autoLimitTimer.Tick += async (_, _) =>
+        _settingsTimer.Tick += async (_, _) =>
         {
-            _autoLimitTimer.Stop();
-            await SendAutoLimitAsync();
+            _settingsTimer.Stop();
+            await SendDriveSettingsAsync();
         };
         _vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(MainViewModel.AutoLimit) && !_applyingAutoLimit && _vm.AutoLimitEnabled)
+            if (_applyingSettings || !_vm.DriveSettingsEnabled) return;
+            switch (e.PropertyName)
             {
-                _autoLimitTimer.Stop();
-                _autoLimitTimer.Start();
+                case nameof(MainViewModel.ManualMaxDrive): _pendingManualMax = true; break;
+                case nameof(MainViewModel.AutoLimit): _pendingAutoLimit = true; break;
+                case nameof(MainViewModel.ManualAccel): _pendingManualAccel = true; break;
+                case nameof(MainViewModel.PadSteerStrength): _pendingPadSteer = true; break;
+                default: return;
             }
+            _settingsTimer.Stop();
+            _settingsTimer.Start();
         };
         _wifiTimer.Tick += async (_, _) => await RefreshWifiAsync();
         _wifiTimer.Start();
@@ -253,6 +263,8 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _vm.AddLog("接続失敗: " + ex.Message);
+            if (ex.Message.Contains("unsupported protocol version", StringComparison.Ordinal))
+                _vm.AddLog($"車の本体とこのアプリ（{AppVersion}、制御の通信 protocol {ControlProtocol.Version}）の版が対応していません。同じ Release の SD カードイメージ（または .deb）とアプリを使用してください");
             _vm.ConnectionState = "切断";
             await car.DisposeAsync();
         }
@@ -271,8 +283,10 @@ public partial class MainWindow : Window
         _vm.ConnectionState = "切断";
         SetManualMode(false);
         _carNetwork = null;
-        _vm.AutoLimitEnabled = false;
-        _vm.AutoLimitNote = "接続時に車の設定値を取得します";
+        _settingsTimer.Stop();
+        _pendingManualMax = _pendingAutoLimit = _pendingManualAccel = _pendingPadSteer = false;
+        _vm.DriveSettingsEnabled = false;
+        _vm.DriveSettingsNote = "接続時に車の設定値を取得します";
         UpdateWifiDisplay();
         ConnectButton.Content = "接続";
         _vm.InstalledVersions.Clear();
@@ -386,47 +400,69 @@ public partial class MainWindow : Window
             _vm.EStop = FormatEStop(es.ValueKind == JsonValueKind.True, CarConnection.GetString(data, "estop_reason") ?? "");
         var stateName = CarConnection.GetString(data, "state_name");
         if (stateName is not null) _vm.LogicState = FormatState(stateName);
-        if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("auto_limit", out var al) && al.TryGetInt32(out var autoLimit))
+        if (DriveSettings.TryRead(data, out var settings))
         {
-            _applyingAutoLimit = true;
-            try { _vm.AutoLimit = autoLimit; }
-            finally { _applyingAutoLimit = false; }
-            _vm.AutoLimitEnabled = _car is not null;
+            // A change of ours still waiting to be sent wins over what the car reports meanwhile.
+            if (!_settingsTimer.IsEnabled) ApplyDriveSettings(settings);
+            _vm.DriveSettingsEnabled = _car is not null;
             var max = data.TryGetProperty("max_drive_pwm", out var mx) && mx.TryGetInt32(out var m) ? m : RumiCarApi.PwmMax;
-            _vm.AutoLimitNote = max < RumiCarApi.PwmMax ? $"車の上限 {max}（core.json の max_drive_pwm）まで" : "本体の再起動で 255 に戻ります";
+            _vm.DriveSettingsNote = "車に保存（本体の再起動後も保持）" + (max < RumiCarApi.PwmMax ? $"。最大出力は車の上限 {max}（core.json の max_drive_pwm）まで" : "");
         }
-        else if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("mode", out _) && !data.TryGetProperty("auto_limit", out _))
+        else if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("mode", out _))
         {
-            _vm.AutoLimitEnabled = false;
-            _vm.AutoLimitNote = "車の本体 0.4.0 以降で使用可";
+            _vm.DriveSettingsEnabled = false;
+            _vm.DriveSettingsNote = "車の本体 0.6.0 以降で使用可";
         }
     }
 
-    // --- auto limit and the PC's Wi-Fi ---------------------------------------------------------
+    // --- drive settings and the PC's Wi-Fi ---------------------------------------------------------
 
-    private async Task SendAutoLimitAsync()
+    /// <summary>Shows the car's drive settings on the controls without sending them back.</summary>
+    private void ApplyDriveSettings(DriveSettings s)
     {
-        var car = _car;
-        if (car is null || !_vm.AutoLimitEnabled) return;
-        var wanted = _vm.AutoLimit;
+        _applyingSettings = true;
         try
         {
-            var r = await car.RequestAsync(ControlCodec.SetAutoLimit(car.NextId(), wanted), CancellationToken.None);
-            if (!r.Ok) { _vm.AddLog("自動の最大出力: 拒否 (" + r.Error + ")"); return; }
-            if (r.Result is JsonElement res && res.TryGetProperty("auto_limit", out var v) && v.TryGetInt32(out var applied))
+            _vm.ManualMaxDrive = s.ManualMaxPwm;
+            _vm.AutoLimit = s.AutoLimit;
+            _vm.ManualAccel = s.ManualAccelPwmPerS;
+            _vm.PadSteerStrength = s.PadSteerStrength;
+        }
+        finally
+        {
+            _applyingSettings = false;
+        }
+    }
+
+    /// <summary>Sends the settings changed on the controls (set_drive_settings); the car saves them and answers with all four.</summary>
+    private async Task SendDriveSettingsAsync()
+    {
+        var car = _car;
+        if (car is null || !_vm.DriveSettingsEnabled) return;
+        int? manualMax = _pendingManualMax ? _vm.ManualMaxDrive : null;
+        int? autoLimit = _pendingAutoLimit ? _vm.AutoLimit : null;
+        int? accel = _pendingManualAccel ? _vm.ManualAccel : null;
+        bool? padSteer = _pendingPadSteer ? _vm.PadSteerStrength : null;
+        _pendingManualMax = _pendingAutoLimit = _pendingManualAccel = _pendingPadSteer = false;
+        if (manualMax is null && autoLimit is null && accel is null && padSteer is null) return;
+        try
+        {
+            var r = await car.RequestAsync(ControlCodec.SetDriveSettings(car.NextId(), manualMax, autoLimit, accel, padSteer), CancellationToken.None);
+            if (!r.Ok) { _vm.AddLog("走行の設定: 拒否 (" + r.Error + ")"); return; }
+            if (r.Result is JsonElement res && DriveSettings.TryRead(res, out var applied))
             {
-                _vm.AddLog($"自動の最大出力を {applied} にしました（RC_drive の値、255 = 100%）");
-                if (applied != _vm.AutoLimit && !_autoLimitTimer.IsEnabled)
-                {
-                    _applyingAutoLimit = true;
-                    try { _vm.AutoLimit = applied; }   // clamped by the car (max_drive_pwm)
-                    finally { _applyingAutoLimit = false; }
-                }
+                var parts = new List<string>();
+                if (manualMax is not null) parts.Add($"手動の最大出力 {applied.ManualMaxPwm}");
+                if (autoLimit is not null) parts.Add($"自動の最大出力 {applied.AutoLimit}");
+                if (accel is not null) parts.Add($"手動の加速 {DriveSettings.AccelText(applied.ManualAccelPwmPerS)}");
+                if (padSteer is not null) parts.Add("パッドの操舵の強さ " + (applied.PadSteerStrength ? "横位置に比例" : "常に 255"));
+                _vm.AddLog("走行の設定を車に保存しました: " + string.Join("、", parts));
+                if (!_settingsTimer.IsEnabled) ApplyDriveSettings(applied);   // the caps clamped by the car (max_drive_pwm)
             }
         }
         catch (Exception ex)
         {
-            _vm.AddLog("自動の最大出力の送信失敗: " + ex.Message);
+            _vm.AddLog("走行の設定の送信失敗: " + ex.Message);
         }
     }
 
@@ -880,30 +916,30 @@ public partial class MainWindow : Window
         var setPoint = _manual.SetPoint != 0 && cmd.Source != ManualSource.Pad ? $"　設定速度 {_manual.SetPoint}" : "";
         _vm.ManualStatus = DescribeCommand(cmd.Steer, cmd.SteerPwm, cmd.DriveDir, cmd.DrivePwm) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
         DrawPad(cmd.SignedSteer, cmd.SignedDrive, true);
-        var key = (cmd.Steer, cmd.DriveDir, cmd.DrivePwm);
+        var key = (cmd.Steer, cmd.SteerPwm, cmd.DriveDir, cmd.DrivePwm);
         if (_manualSent == key || _manualSending) return;
-        _ = SendManualAsync(cmd.Steer, cmd.DriveDir, cmd.DrivePwm);
+        _ = SendManualAsync(key);
     }
 
-    private async Task SendManualAsync(int steer, int driveDir, int drivePwm)
+    private async Task SendManualAsync((int Steer, int SteerPwm, int DriveDir, int DrivePwm) c)
     {
         var car = _car;
         if (car is null) return;
         _manualSending = true;
         try
         {
-            var r = await car.RequestAsync(ControlCodec.ManualDrive(car.NextId(), steer, driveDir, drivePwm), CancellationToken.None);
-            if (r.Ok) _manualSent = (steer, driveDir, drivePwm);
+            var r = await car.RequestAsync(ControlCodec.ManualDrive(car.NextId(), c.Steer, c.SteerPwm, c.DriveDir, c.DrivePwm), CancellationToken.None);
+            if (r.Ok) _manualSent = c;
             else
             {
                 _vm.AddLog("手動操作: 拒否 (" + r.Error + ")");
-                _manualSent = (steer, driveDir, drivePwm);   // not again until the command changes
+                _manualSent = c;   // not again until the command changes
             }
         }
         catch (Exception ex)
         {
             _vm.AddLog("手動操作の送信失敗: " + ex.Message);
-            _manualSent = (steer, driveDir, drivePwm);
+            _manualSent = c;
         }
         finally
         {

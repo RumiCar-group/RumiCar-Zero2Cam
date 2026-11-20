@@ -8,22 +8,25 @@ public enum ManualSource { None, Pad, Keys, Scroll }
 
 /// <summary>
 /// The manual command in RC_steer / RC_drive values (<see cref="RumiCarApi"/>):
-/// steer LEFT / CENTER / RIGHT, drive FREE (stop) / FORWARD / REVERSE with a duty 0..255.
+/// steer LEFT / CENTER / RIGHT with a strength, drive FREE (stop) / FORWARD /
+/// REVERSE with a duty 0..255.
 /// </summary>
 public readonly record struct ManualCommand(int Steer, int DriveDir, int DrivePwm, ManualSource Source)
 {
-    /// <summary>RC_steer's strength the car applies: manual steering is full (manual_drive carries no strength), 0 for CENTER.</summary>
-    public int SteerPwm => Steer == RumiCarApi.Center ? 0 : RumiCarApi.PwmMax;
+    /// <summary>The strength of a LEFT / RIGHT steering, 1..255 (255 = full, the default).</summary>
+    public int Strength { get; init; } = RumiCarApi.PwmMax;
+    /// <summary>RC_steer's strength as manual_drive sends it: <see cref="Strength"/>, 0 for CENTER.</summary>
+    public int SteerPwm => Steer == RumiCarApi.Center ? 0 : Strength;
     /// <summary>−1 left, 0 centre, +1 right (for drawing the pad).</summary>
     public int SignedSteer => Steer == RumiCarApi.Left ? -1 : Steer == RumiCarApi.Right ? 1 : 0;
     /// <summary>The duty with the direction as its sign, 0 for FREE (for drawing the pad).</summary>
     public int SignedDrive => DriveDir == RumiCarApi.Forward ? DrivePwm : DriveDir == RumiCarApi.Reverse ? -DrivePwm : 0;
 
-    public static ManualCommand FromSigned(int steer, int drive, ManualSource source) => new(
+    public static ManualCommand FromSigned(int steer, int drive, ManualSource source, int strength = RumiCarApi.PwmMax) => new(
         steer < 0 ? RumiCarApi.Left : steer > 0 ? RumiCarApi.Right : RumiCarApi.Center,
         drive > 0 ? RumiCarApi.Forward : drive < 0 ? RumiCarApi.Reverse : RumiCarApi.Free,
         Math.Abs(drive),
-        source);
+        source) { Strength = steer == 0 ? RumiCarApi.PwmMax : Math.Clamp(strength, 1, RumiCarApi.PwmMax) };
 }
 
 /// <summary>
@@ -35,19 +38,21 @@ public readonly record struct ManualCommand(int Steer, int DriveDir, int DrivePw
 /// it can be tested without a UI.
 ///
 ///  - Pad (mouse or trackpad, press and drag): the position decides both.  Left
-///    and right thirds steer (the steering is on/off, so a wide centre with
-///    hysteresis), up is forward and down is reverse, proportional to the
-///    distance from the centre line up to <see cref="MaxDrive"/>, with a dead
-///    zone around it.  Releasing stops the car (dead man).
+///    and right thirds steer (a wide centre with hysteresis), up is forward
+///    and down is reverse, proportional to the distance from the centre line
+///    up to <see cref="MaxDrive"/>, with a dead zone around it.  The steering
+///    is full, or with <see cref="PadSteerStrength"/> RC_steer's strength is
+///    proportional to how far to the side it is held (255 at the edge,
+///    <see cref="PadSteerPwm"/>).  Releasing stops the car (dead man).
 ///  - Vertical scroll (wheel or two fingers): a speed set-point that stays, in
 ///    steps of <see cref="WheelStep"/> per wheel notch.  Going through
 ///    zero stops at zero, and only a new scroll after a pause of
 ///    <see cref="ZeroDetentMs"/> goes on, so one long swipe never turns
 ///    "forward" into "reverse".
 ///  - Horizontal scroll (two fingers sideways, a tilting wheel, or Shift +
-///    wheel): steers while it moves and centres <see cref="SwipeReleaseMs"/>
+///    wheel): steers (full) while it moves and centres <see cref="SwipeReleaseMs"/>
 ///    after it stops.
-///  - Keys: ← → steer while held, ↑ ↓ drive at <see cref="MaxDrive"/> while held.
+///  - Keys: ← → steer (full) while held, ↑ ↓ drive at <see cref="MaxDrive"/> while held.
 ///  - <see cref="Stop"/>: everything to zero (Space, middle click, leaving the window).
 ///
 /// Precedence: the pad while pressed; otherwise held keys; otherwise the scroll
@@ -71,6 +76,7 @@ public sealed class ManualInput
 
     private bool _dragging;
     private int _dragSteer;
+    private int _dragSteerPwm = RumiCarApi.PwmMax;
     private int _dragDrive;
 
     private bool _keyLeft, _keyRight, _keyForward, _keyReverse;
@@ -101,6 +107,9 @@ public sealed class ManualInput
     /// <summary>Reverses the horizontal scroll (for touchpads set to the other scrolling direction).</summary>
     public bool InvertHorizontal { get; set; }
 
+    /// <summary>The pad gives RC_steer's strength from how far to the side it is held (else full). A drive setting the car keeps.</summary>
+    public bool PadSteerStrength { get; set; }
+
     public bool Dragging => _dragging;
     public int SetPoint => _setPoint;
 
@@ -128,7 +137,15 @@ public sealed class ManualInput
             -1 => x >= SteerEnter ? 1 : x > -SteerExit ? 0 : -1,
             _ => x <= -SteerEnter ? -1 : x < SteerExit ? 0 : 1,
         };
+        _dragSteerPwm = PadSteerPwm(x);
         _dragDrive = PadDrive(y, _maxDrive);
+    }
+
+    /// <summary>RC_steer's strength for a pad position with <see cref="PadSteerStrength"/>: proportional to |x|, 255 at the edge (1..255).</summary>
+    public static int PadSteerPwm(double x)
+    {
+        var a = Math.Abs(Math.Clamp(x, -1.0, 1.0));
+        return Math.Clamp((int)Math.Round(a * RumiCarApi.PwmMax, MidpointRounding.AwayFromZero), 1, RumiCarApi.PwmMax);
     }
 
     public void PadUp()
@@ -255,7 +272,8 @@ public sealed class ManualInput
                 _swipeAccumulator = 0;
             }
         }
-        if (_dragging) return ManualCommand.FromSigned(_dragSteer, _dragDrive, ManualSource.Pad);
+        if (_dragging)
+            return ManualCommand.FromSigned(_dragSteer, _dragDrive, ManualSource.Pad, PadSteerStrength ? _dragSteerPwm : RumiCarApi.PwmMax);
         var keySteer = KeySteer;
         var keyDrive = KeyDrive;
         var steer = keySteer != 0 ? keySteer : _swipeSteer;
