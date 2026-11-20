@@ -4,11 +4,11 @@ flowchart TD
     C --> E{"非常停止中？<br/>走行モードは？"}
     E -->|"非常停止中"| B1["ブレーキ"]
     E -->|"収録のみ"| B2["ブレーキ"]
-    E -->|"手動"| H["PC の manual_drive<br/>（RC_steer／RC_drive の値。操舵は強さ 255、デューティは max_drive_pwm 以下に制限）"]
+    E -->|"手動"| H["PC の manual_drive<br/>（RC_steer の向きと強さ、RC_drive の値）<br/>駆動 = min(指令, 手動の最大出力, max_drive_pwm)<br/>上げるときは手動の加速の傾きで（下げる・停止は即座）"]
     E -->|"自動"| F{"step() 成功？"}
     F -->|"失敗"| B3["ブレーキ"]
     F -->|"成功"| G["駆動を許容値で制限<br/>許容値 = min(0 から auto_accel_pwm_per_s で増加,<br/>自動の最大出力, max_drive_pwm)<br/>指令が BRAKE、または FAULT があればブレーキ"]
-    B1 --> MO["DRV8835 へ出力<br/>（操舵の強さ 1〜254 はソフトウェア PWM）"]
+    B1 --> MO["DRV8835 へ出力<br/>（操舵の強さ 1〜254 はソフトウェア PWM）<br/>発進・反転時は min(kick_pwm, そのモードの上限) を kick_ms 出力"]
     B2 --> MO
     B3 --> MO
     H --> MO

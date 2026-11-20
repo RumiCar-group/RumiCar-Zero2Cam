@@ -1,0 +1,22 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Noto Sans CJK JP, sans-serif",
+    "fontSize": "16px",
+    "primaryColor": "#E8EEF7",
+    "primaryBorderColor": "#1F3864",
+    "primaryTextColor": "#111111",
+    "lineColor": "#1F3864",
+    "secondaryColor": "#EEF7E8",
+    "tertiaryColor": "#FFF7D6",
+    "edgeLabelBackground": "#EEF7E8",
+    "noteBkgColor": "#FFF7D6",
+    "noteBorderColor": "#C9A227",
+    "noteTextColor": "#111111",
+    "textColor": "#111111"
+  },
+  "flowchart": {
+    "htmlLabels": true,
+    "wrappingWidth": 400
+  }
+}
