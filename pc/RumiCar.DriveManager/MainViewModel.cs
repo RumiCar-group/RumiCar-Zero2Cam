@@ -160,8 +160,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _manualEnabled;
     private string _manualStatus = "手動モードで操作可能";
     private int _autoLimit = RumiCarApi.PwmMax;
-    private bool _autoLimitEnabled;
-    private string _autoLimitNote = "接続時に車の設定値を取得します";
+    private int _manualAccel = DriveSettings.DefaultManualAccel;
+    private bool _padSteerStrength;
+    private bool _driveSettingsEnabled;
+    private string _driveSettingsNote = "接続時に車の設定値を取得します";
     private string _pcWifi = "PC の Wi-Fi: -";
     private bool _pcWifiWarning;
     private string _pcWifiHint = "";
@@ -224,7 +226,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<VersionRow> InstalledVersions { get; } = new();
     public BitmapImage? Image { get => _image; set => Set(ref _image, value); }
 
-    /// <summary>Upper limit of the manual drive (RC_drive duty 0..255) for the pad, the scroll and the ↑ ↓ keys.</summary>
+    /// <summary>Upper limit of the manual drive (RC_drive duty 26..255) for the pad, the scroll and the ↑ ↓ keys; a drive setting the car keeps.</summary>
     public int ManualMaxDrive
     {
         get => _manualMaxDrive;
@@ -238,16 +240,25 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public System.Windows.Visibility ManualHintVisibility => _manualEnabled ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
     /// <summary>The manual command being sent, in words.</summary>
     public string ManualStatus { get => _manualStatus; set => Set(ref _manualStatus, value); }
-    /// <summary>Cap of the drive in auto mode (RC_drive duty 0..255), as the car reports it; the slider changes it (set_auto_limit).</summary>
+    /// <summary>Cap of the drive in auto mode (RC_drive duty 0..255), as the car reports it; a drive setting the car keeps.</summary>
     public int AutoLimit
     {
         get => _autoLimit;
         set { if (Set(ref _autoLimit, Math.Clamp(value, 0, RumiCarApi.PwmMax))) OnPropertyChanged(nameof(AutoLimitText)); }
     }
     public string AutoLimitText => $"{_autoLimit}";
-    /// <summary>Connected to a car that knows set_auto_limit (core 0.3.0 and later).</summary>
-    public bool AutoLimitEnabled { get => _autoLimitEnabled; set => Set(ref _autoLimitEnabled, value); }
-    public string AutoLimitNote { get => _autoLimitNote; set => Set(ref _autoLimitNote, value); }
+    /// <summary>Growth of the manual drive per second (0..1020 on the slider; 0 = none); a drive setting the car keeps.</summary>
+    public int ManualAccel
+    {
+        get => _manualAccel;
+        set { if (Set(ref _manualAccel, Math.Clamp(value, 0, DriveSettings.AccelMax))) OnPropertyChanged(nameof(ManualAccelText)); }
+    }
+    public string ManualAccelText => DriveSettings.AccelText(_manualAccel);
+    /// <summary>The pad gives the steering strength from its horizontal position; a drive setting the car keeps.</summary>
+    public bool PadSteerStrength { get => _padSteerStrength; set => Set(ref _padSteerStrength, value); }
+    /// <summary>Connected, and the car reported its drive settings: the controls change them on the car.</summary>
+    public bool DriveSettingsEnabled { get => _driveSettingsEnabled; set => Set(ref _driveSettingsEnabled, value); }
+    public string DriveSettingsNote { get => _driveSettingsNote; set => Set(ref _driveSettingsNote, value); }
     /// <summary>The Wi-Fi network of this PC (shown in the header).</summary>
     public string PcWifi { get => _pcWifi; set => Set(ref _pcWifi, value); }
     /// <summary>The PC left the car's network while connected to the car.</summary>

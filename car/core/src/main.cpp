@@ -31,11 +31,12 @@
 
 #include <nlohmann/json.hpp>
 
-#include "auto_output.hpp"
 #include "camera/camera_control.hpp"
 #include "camera/image_source.hpp"
 #include "car_state.hpp"
 #include "config.hpp"
+#include "drive_settings.hpp"
+#include "frame_output.hpp"
 #include "hw/drv8835.hpp"
 #include "hw/gpio.hpp"
 #include "hw/i2c.hpp"
@@ -195,9 +196,12 @@ int main(int argc, char** argv) {
     try {
         std::vector<unsigned> lines{cfg.steer_in1, cfg.steer_in2, cfg.tof_xshut[0], cfg.tof_xshut[1], cfg.tof_xshut[2]};
         gpio = std::make_unique<hw::GpioOutputs>(cfg.gpio_chip, lines, "rumicar-core");
-        motors = std::make_unique<hw::Drv8835>(*gpio, cfg.steer_pwm_frequency_hz, cfg.pwm_chip, cfg.pwm_frequency_hz,
-                                               hw::Drv8835::Pins{cfg.steer_in1, cfg.steer_in2, cfg.drive_in1, cfg.drive_in2},
-                                               hw::Drv8835::Kick{cfg.kick_pwm, cfg.kick_ms});
+        hw::GpioOutputs& lines_out = *gpio;
+        const unsigned ain1 = cfg.steer_in1, ain2 = cfg.steer_in2;
+        motors = std::make_unique<hw::Drv8835>(
+            [&lines_out, ain1, ain2](unsigned line, bool level) { lines_out.set(line == 0 ? ain1 : ain2, level); },
+            cfg.steer_pwm_frequency_hz, cfg.pwm_chip, cfg.pwm_frequency_hz, hw::Drv8835::Pins{cfg.drive_in1, cfg.drive_in2},
+            hw::Drv8835::Kick{cfg.kick_pwm, cfg.kick_ms});
         motors->stop();
         bus = std::make_unique<hw::I2cBus>(cfg.i2c_bus);
         static const char* names[3] = {"tof-left", "tof-centre", "tof-right"};
@@ -220,6 +224,16 @@ int main(int argc, char** argv) {
     parse_drive_mode(cfg.startup_mode, startup_mode);   // validated by the config parser
     CarState state(cfg.heartbeat_timeout_ms, startup_mode);
     state.set_max_drive(cfg.max_drive_pwm);
+    {
+        // The drive settings the PC set before (docs 3.4), kept across a restart.
+        const DriveSettingsFile settings_file(cfg.state_dir);
+        std::string note;
+        const DriveSettings saved = settings_file.load(note);
+        if (!note.empty()) log::warn("drive settings: " + note);
+        state.set_drive_settings(state.clamped(saved));
+        log::info("drive settings: " + drive_settings_json(state.drive_settings()).dump() + " (max_drive_pwm " +
+                  std::to_string(cfg.max_drive_pwm) + ")");
+    }
     log::info(std::string("start-up mode ") + drive_mode_name(startup_mode) +
               (startup_mode == DriveMode::RecordOnly ? " (motors braked until the PC selects auto)" : " (drives as soon as the logic runs)"));
     Active active;
@@ -353,7 +367,7 @@ int main(int argc, char** argv) {
     int overruns = 0;
     const std::vector<uint8_t> no_image;
     uint32_t last_image_seq = 0;
-    AutoOutputLimiter auto_output(cfg.auto_accel_pwm_per_s);
+    FrameOutputStage output_stage(cfg.auto_accel_pwm_per_s);
     auto last_frame_time = Clock::now();
 
     log::info("control loop started, period " + std::to_string(cfg.loop_period_ms) + " ms");
@@ -410,39 +424,11 @@ int main(int argc, char** argv) {
             if (state.set_estop(true, "heartbeat")) log::warn("no heartbeat from the PC in manual mode: emergency stop");
             in.estop = true;
         }
-        // RC_steer / RC_drive values; braked unless a mode says otherwise.
-        uint8_t out_steer = RUMI_STEER_CENTER;
-        uint8_t out_steer_pwm = 0;
-        uint8_t out_dir = RUMI_DRIVE_BRAKE;
-        uint8_t out_pwm = 0;
         const double dt_s = std::chrono::duration<double>(t0 - last_frame_time).count();
         last_frame_time = t0;
-        const bool auto_driving = !in.estop && in.mode == DriveMode::Auto && rc == 0;
-        if (!auto_driving) auto_output.idle();   // the next auto run starts from rest
-        if (in.estop) {
-            // braked
-        } else if (in.mode == DriveMode::Auto) {
-            if (rc == 0) {
-                out_steer = cmd.steer;
-                out_steer_pwm = cmd.steer_pwm;
-                if (cmd.flags & RUMI_CMD_FLAG_FAULT) {
-                    out_dir = RUMI_DRIVE_BRAKE;
-                } else {
-                    out_dir = cmd.drive_dir;
-                    // Start ramp and the PC's auto limit (within max_drive_pwm, see CarState).
-                    out_pwm = static_cast<uint8_t>(
-                        auto_output.drive(cmd.drive_pwm, std::min(in.auto_limit, cfg.max_drive_pwm), dt_s));
-                }
-            }
-        } else if (in.mode == DriveMode::Manual) {
-            out_steer = in.manual_steer;
-            // Manual steering is full (manual_drive carries no strength): RC_steer(LEFT / RIGHT).
-            out_steer_pwm = in.manual_steer == RUMI_STEER_CENTER ? 0 : RUMI_PWM_MAX;
-            out_dir = in.manual_drive_dir;
-            out_pwm = static_cast<uint8_t>(std::min<int>(in.manual_drive_pwm, cfg.max_drive_pwm));
-        } // RecordOnly: braked
+        const FrameOutput out = output_stage.step(in, rc, cmd, cfg.max_drive_pwm, dt_s);
         try {
-            motors->apply(out_steer, out_steer_pwm, out_dir, out_pwm, t0);
+            motors->apply(out.steer, out.steer_pwm, out.drive_dir, out.drive_pwm, out.kick_cap);
         } catch (const std::exception& e) {
             log::error(std::string("motor output failed: ") + e.what());
         }
@@ -477,10 +463,10 @@ int main(int argc, char** argv) {
                     {"seq", frame.seq},
                     {"t_us", frame.t_us},
                     {"tof_mm", {frame.tof_mm[0], frame.tof_mm[1], frame.tof_mm[2]}},
-                    {"steer", out_steer},
-                    {"steer_pwm", out_steer_pwm},
-                    {"drive_dir", out_dir},
-                    {"drive_pwm", out_pwm},
+                    {"steer", out.steer},
+                    {"steer_pwm", out.steer_pwm},
+                    {"drive_dir", out.drive_dir},
+                    {"drive_pwm", out.drive_pwm},
                     {"state", rc == 0 ? cmd.state : last_state},
                     {"state_name", active.instance->state_name(rc == 0 ? cmd.state : last_state)},
                     {"flags", rc == 0 ? cmd.flags : 0u},

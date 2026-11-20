@@ -26,6 +26,8 @@ add_library(rumicar_core_lib STATIC
   src/power.cpp
   src/upload.cpp
   src/util/process.cpp
+  src/util/atomic_file.cpp
+  src/drive_settings.cpp
   src/net/socket.cpp
   src/net/telemetry_frame.cpp
   src/net/telemetry_server.cpp

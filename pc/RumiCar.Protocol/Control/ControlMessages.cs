@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace RumiCar.Protocol.Control;
 
-/// <summary>Request types understood by the car's control server (protocol version 2).</summary>
+/// <summary>Request types understood by the car's control server (protocol version 3).</summary>
 public static class RequestType
 {
     public const string Hello = "hello";
@@ -17,7 +17,7 @@ public static class RequestType
     public const string Activate = "activate";
     public const string ActivatePair = "activate_pair";
     public const string Rollback = "rollback";
-    public const string SetAutoLimit = "set_auto_limit";
+    public const string SetDriveSettings = "set_drive_settings";
     public const string SetWifi = "set_wifi";
     public const string GetLog = "get_log";
     public const string UploadBegin = "upload_begin";
@@ -35,10 +35,16 @@ public static class DriveMode
     public const string RecordOnly = "record_only";
 }
 
-/// <summary>Protocol version carried in hello.  2 = RC_steer / RC_drive values in manual_drive and set_auto_limit (car ABI 3 and 4; manual steering carries no strength).</summary>
+/// <summary>
+/// Protocol version carried in hello.  3 = manual_drive carries RC_steer's
+/// strength (steer_pwm) and the car keeps the drive settings
+/// (set_drive_settings, in place of set_auto_limit), core 0.6.0 and later;
+/// 2 = RC_steer / RC_drive values without the manual steering strength (core 0.4.x and 0.5.x).
+/// The car accepts only its own version.
+/// </summary>
 public static class ControlProtocol
 {
-    public const int Version = 2;
+    public const int Version = 3;
 }
 
 /// <summary>A request from the PC. Serialised as one JSON object on one line.</summary>
@@ -118,14 +124,16 @@ public static class ControlCodec
     public static ControlRequest SetMode(long id, string mode) => Build(id, RequestType.SetMode, new { mode });
 
     /// <param name="steer">RC_steer: LEFT 0, CENTER 1, RIGHT 2</param>
+    /// <param name="steerPwm">RC_steer's strength 0..255 (255 = full; ignored for CENTER, 0 = neutral)</param>
     /// <param name="driveDir">RC_drive direction: FREE 0, REVERSE 1, FORWARD 2, BRAKE 3</param>
     /// <param name="drivePwm">RC_drive duty 0..255</param>
-    public static ControlRequest ManualDrive(long id, int steer, int driveDir, int drivePwm)
+    public static ControlRequest ManualDrive(long id, int steer, int steerPwm, int driveDir, int drivePwm)
     {
         if (steer is < RumiCarApi.Left or > RumiCarApi.Right) throw new ArgumentOutOfRangeException(nameof(steer));
+        if (steerPwm is < 0 or > RumiCarApi.PwmMax) throw new ArgumentOutOfRangeException(nameof(steerPwm));
         if (driveDir is < RumiCarApi.Free or > RumiCarApi.Brake) throw new ArgumentOutOfRangeException(nameof(driveDir));
         if (drivePwm is < 0 or > RumiCarApi.PwmMax) throw new ArgumentOutOfRangeException(nameof(drivePwm));
-        return Build(id, RequestType.ManualDrive, new { steer, drive_dir = driveDir, drive_pwm = drivePwm });
+        return Build(id, RequestType.ManualDrive, new { steer, steer_pwm = steerPwm, drive_dir = driveDir, drive_pwm = drivePwm });
     }
 
     public static ControlRequest Heartbeat(long id) => Build(id, RequestType.Heartbeat, null);
@@ -160,11 +168,27 @@ public static class ControlCodec
     /// <summary>Back to the previous logic and pack together (undoes activate_pair).</summary>
     public static ControlRequest RollbackBoth(long id) => Build(id, RequestType.Rollback, new { kind = "both" });
 
-    /// <summary>Cap of the drive duty in auto mode, 0..255 (the car clamps it to its max_drive_pwm).</summary>
-    public static ControlRequest SetAutoLimit(long id, int drivePwm)
+    /// <summary>
+    /// Changes some of the drive settings the car keeps across a restart
+    /// (<see cref="DriveSettings"/>); the others stay.  At least one is needed.
+    /// The car saves them, clamps the caps to its max_drive_pwm and answers
+    /// with all four as they now are.
+    /// </summary>
+    public static ControlRequest SetDriveSettings(long id, int? manualMaxPwm = null, int? autoLimit = null,
+                                                  int? manualAccelPwmPerS = null, bool? padSteerStrength = null)
     {
-        if (drivePwm is < 0 or > RumiCarApi.PwmMax) throw new ArgumentOutOfRangeException(nameof(drivePwm));
-        return Build(id, RequestType.SetAutoLimit, new { drive_pwm = drivePwm });
+        if (manualMaxPwm is < DriveSettings.ManualMaxMin or > RumiCarApi.PwmMax) throw new ArgumentOutOfRangeException(nameof(manualMaxPwm));
+        if (autoLimit is < 0 or > RumiCarApi.PwmMax) throw new ArgumentOutOfRangeException(nameof(autoLimit));
+        if (manualAccelPwmPerS is < 0 or > DriveSettings.AccelMax) throw new ArgumentOutOfRangeException(nameof(manualAccelPwmPerS));
+        if (manualMaxPwm is null && autoLimit is null && manualAccelPwmPerS is null && padSteerStrength is null)
+            throw new ArgumentException("no setting given");
+        return Build(id, RequestType.SetDriveSettings, new
+        {
+            manual_max_pwm = manualMaxPwm,
+            auto_limit = autoLimit,
+            manual_accel_pwm_per_s = manualAccelPwmPerS,
+            pad_steer_strength = padSteerStrength,
+        });   // a null leaves the key out (WhenWritingNull)
     }
 
     /// <summary>Temporary (until reboot) access-point change.</summary>

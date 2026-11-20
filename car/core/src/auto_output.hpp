@@ -6,7 +6,7 @@
 // with nothing in front it has been "driving" all along.  Without care the
 // car would leap forward.  This limiter starts every auto run from rest: the
 // PWM duty allowed in auto grows from 0 at accel_pwm_per_s (a start ramp)
-// and is always capped at the auto limit the PC sets (set_auto_limit).  Once
+// and is always capped at the auto limit the PC sets (set_drive_settings).  Once
 // the ramp has reached the cap it has no further effect, so the logic's own
 // speed control (slowing down, braking, reversing) is untouched while it
 // drives.  Pure computation; the loop passes the time step.

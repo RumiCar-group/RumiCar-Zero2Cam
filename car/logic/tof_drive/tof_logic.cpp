@@ -44,6 +44,8 @@ std::string validate(const Params& p) {
     if (p.steer_hold_ms < 0 || p.steer_hold_ms > 2000) return "steer_hold_ms out of range";
     if (!between(p.turn_steer_pwm, 0, RUMI_PWM_MAX)) return "turn_steer_pwm must be 0..255";
     if (!between(p.side_steer_pwm, 0, RUMI_PWM_MAX)) return "side_steer_pwm must be 0..255";
+    if (p.side_steer_pwm_min != -1 && !between(p.side_steer_pwm_min, 0, p.side_steer_pwm))
+        return "require 0 <= side_steer_pwm_min <= side_steer_pwm";
     if (!between(p.recover_steer_pwm, 0, RUMI_PWM_MAX)) return "recover_steer_pwm must be 0..255";
 
     if (p.brake_ms < 0 || p.brake_ms > 2000) return "brake_ms out of range";
@@ -125,6 +127,14 @@ void TofDriveLogic::condition(int idx, int32_t raw, uint64_t t_us) {
 // ---------------------------------------------------------------------------
 // Steering
 // ---------------------------------------------------------------------------
+int TofDriveLogic::side_strength(int wall_mm) const {
+    // side_steer_pwm_min with the wall at d_side_mm, side_steer_pwm at 0 mm.
+    const int lo = p_.side_steer_pwm_min < 0 ? p_.side_steer_pwm : p_.side_steer_pwm_min;
+    if (p_.d_side_mm <= 0) return p_.side_steer_pwm;
+    const int d = std::clamp(wall_mm, 0, p_.d_side_mm);
+    return lo + ((p_.side_steer_pwm - lo) * (p_.d_side_mm - d) + p_.d_side_mm / 2) / p_.d_side_mm;
+}
+
 void TofDriveLogic::decide_steer(int L, int C, int R, uint64_t t_us) {
     // Hysteresis on the "turning" condition (not while a logic on top holds
     // the lane or forces the steering: an obstacle ahead is then handled by
@@ -155,7 +165,8 @@ void TofDriveLogic::decide_steer(int L, int C, int R, uint64_t t_us) {
         } else {
             desired = RUMI_STEER_CENTER;
         }
-        desired_pwm = p_.side_steer_pwm;
+        // Away from the wall on the other side, the stronger the nearer it is.
+        desired_pwm = side_strength(desired == RUMI_STEER_LEFT ? R : L);
     }
     if (desired == RUMI_STEER_CENTER) desired_pwm = 0;
 

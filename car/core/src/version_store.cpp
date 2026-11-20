@@ -1,5 +1,7 @@
 #include "version_store.hpp"
 
+#include "util/atomic_file.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -255,24 +257,7 @@ void VersionStore::write_activation_result(bool ok, const ActiveSelection& attem
 }
 
 void VersionStore::write_atomic(const std::string& relative_path, const std::string& content) const {
-    const fs::path target = fs::path(state_dir_) / relative_path;
-    std::error_code ec;
-    fs::create_directories(target.parent_path(), ec);
-    const fs::path tmp = target.string() + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::trunc);
-        if (!out) throw std::runtime_error("cannot write " + tmp.string());
-        out << content;
-        out.flush();
-        if (!out) throw std::runtime_error("write failed for " + tmp.string());
-    }
-    // fsync the file before the rename so a power loss cannot leave a truncated target.
-    if (FILE* f = std::fopen(tmp.c_str(), "r")) {
-        fsync(fileno(f));
-        std::fclose(f);
-    }
-    fs::rename(tmp, target, ec);
-    if (ec) throw std::runtime_error("rename failed for " + target.string() + ": " + ec.message());
+    util::write_file_atomic((fs::path(state_dir_) / relative_path).string(), content);
 }
 
 } // namespace rumicar
