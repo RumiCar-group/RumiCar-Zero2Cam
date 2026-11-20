@@ -340,11 +340,13 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["error"].get<std::string>().find("hello") != std::string::npos);
     r = request(c, "hello", {{"client", "test"}, {"protocol", 1}});   // the 0.3.x PC: per-mille values
     CHECK(!r["ok"].get<bool>());
-    r = request(c, "hello", {{"client", "test"}, {"protocol", 2}});
+    r = request(c, "hello", {{"client", "test"}, {"protocol", 2}});   // the 0.4.x / 0.5.x PC: no steering strength in manual_drive
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "hello", {{"client", "test"}, {"protocol", 3}});
     CHECK(r["ok"].get<bool>());
     CHECK(r["result"]["car"] == "TestCar");
     CHECK(r["result"]["core_version"] == "9.9.9");
-    CHECK(r["result"]["protocol"] == 2);
+    CHECK(r["result"]["protocol"] == 3);
     for (int i = 0; i < 100 && connects.load() == 0; ++i) std::this_thread::sleep_for(10ms);
     CHECK(connects.load() == 1);
     CHECK(control.client_connected());
@@ -377,7 +379,7 @@ void test_servers(const fs::path& base_pack) {
     CHECK(state.update_throttled(0));
 
     // --- modes, manual drive, heartbeat -----------------------------------------
-    r = request(c, "manual_drive", {{"steer", 2}, {"drive_dir", 2}, {"drive_pwm", 128}});
+    r = request(c, "manual_drive", {{"steer", 2}, {"steer_pwm", 255}, {"drive_dir", 2}, {"drive_pwm", 128}});
     CHECK(!r["ok"].get<bool>());   // not in manual mode
     r = request(c, "set_mode", {{"mode", "sideways"}});
     CHECK(!r["ok"].get<bool>());
@@ -386,18 +388,26 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["ok"].get<bool>());
     json ev = wait_event(c, "status");
     CHECK(!ev.is_null() && ev["data"]["mode"] == "manual");
-    // RC_steer / RC_drive values: steer 0..2, drive_dir 0..3, drive_pwm 0..255.
-    r = request(c, "manual_drive", {{"steer", 2}, {"drive_dir", 2}, {"drive_pwm", 128}});
+    // RC_steer / RC_drive values: steer 0..2 with its strength 0..255, drive_dir 0..3, drive_pwm 0..255.
+    r = request(c, "manual_drive", {{"steer", 2}, {"steer_pwm", 128}, {"drive_dir", 2}, {"drive_pwm", 128}});
     CHECK(r["ok"].get<bool>());
     auto in = state.frame_inputs(CarState::Clock::now());
     CHECK(in.mode == DriveMode::Manual);
-    CHECK(in.manual_steer == 2 && in.manual_drive_dir == 2 && in.manual_drive_pwm == 128);
+    CHECK(in.manual_steer == 2 && in.manual_steer_pwm == 128 && in.manual_drive_dir == 2 && in.manual_drive_pwm == 128);
     CHECK(!in.manual_timed_out);
-    r = request(c, "manual_drive", {{"steer", 3}, {"drive_dir", 0}, {"drive_pwm", 0}});
+    r = request(c, "manual_drive", {{"steer", 0}, {"steer_pwm", 255}, {"drive_dir", 2}, {"drive_pwm", 100}});
+    CHECK(r["ok"].get<bool>());
+    in = state.frame_inputs(CarState::Clock::now());
+    CHECK(in.manual_steer == 0 && in.manual_steer_pwm == 255 && in.manual_drive_pwm == 100);
+    r = request(c, "manual_drive", {{"steer", 2}, {"drive_dir", 2}, {"drive_pwm", 128}});   // the protocol 2 form: no strength
     CHECK(!r["ok"].get<bool>());
-    r = request(c, "manual_drive", {{"steer", 0}, {"drive_dir", 4}, {"drive_pwm", 0}});
+    r = request(c, "manual_drive", {{"steer", 2}, {"steer_pwm", 256}, {"drive_dir", 2}, {"drive_pwm", 128}});
     CHECK(!r["ok"].get<bool>());
-    r = request(c, "manual_drive", {{"steer", 0}, {"drive_dir", 2}, {"drive_pwm", 256}});
+    r = request(c, "manual_drive", {{"steer", 3}, {"steer_pwm", 0}, {"drive_dir", 0}, {"drive_pwm", 0}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "manual_drive", {{"steer", 0}, {"steer_pwm", 0}, {"drive_dir", 4}, {"drive_pwm", 0}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "manual_drive", {{"steer", 0}, {"steer_pwm", 0}, {"drive_dir", 2}, {"drive_pwm", 256}});
     CHECK(!r["ok"].get<bool>());
     r = request(c, "manual_drive", {{"steer", 1}, {"drive_permille", 500}});   // the 0.3.x form
     CHECK(!r["ok"].get<bool>());
@@ -416,7 +426,8 @@ void test_servers(const fs::path& base_pack) {
     CHECK(!ev.is_null() && ev["data"]["active"] == true && ev["data"]["reason"] == "request");
     in = state.frame_inputs(CarState::Clock::now());
     CHECK(in.estop);
-    CHECK(in.manual_drive_dir == RUMI_DRIVE_FREE && in.manual_drive_pwm == 0 && in.manual_steer == RUMI_STEER_CENTER);   // the manual command is cleared by an e-stop
+    CHECK(in.manual_drive_dir == RUMI_DRIVE_FREE && in.manual_drive_pwm == 0 && in.manual_steer == RUMI_STEER_CENTER &&
+          in.manual_steer_pwm == 0);   // the manual command is cleared by an e-stop
     r = request(c, "get_status", nullptr);
     CHECK(r["result"]["estop"] == true && r["result"]["estop_reason"] == "request");
     r = request(c, "estop_clear", nullptr);
@@ -428,22 +439,85 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["ok"].get<bool>());
     CHECK(state.mode() == DriveMode::Auto);
 
-    // --- auto limit (docs 5.2): within max_drive_pwm, reported in the status ---------------
+    // --- drive settings (docs 5.2): kept by the car, caps within max_drive_pwm -----------
+    const fs::path settings_path = state_dir / "settings" / "drive.json";
+    CHECK(!fs::exists(settings_path));   // nothing saved yet: the defaults
     r = request(c, "get_status", nullptr);
-    CHECK(r["result"]["auto_limit"] == 204 && r["result"]["max_drive_pwm"] == 204);
-    r = request(c, "set_auto_limit", {{"drive_pwm", 115}}, &events);
-    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 115);
+    CHECK(r["result"]["max_drive_pwm"] == 204);
+    CHECK(r["result"]["auto_limit"] == 204);              // the maximum
+    CHECK(r["result"]["manual_max_pwm"] == 153);
+    CHECK(r["result"]["manual_accel_pwm_per_s"] == 287);
+    CHECK(r["result"]["pad_steer_strength"] == false);
+    r = request(c, "set_drive_settings", {{"auto_limit", 115}}, &events);
+    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 115 && r["result"]["manual_max_pwm"] == 153);
     ev = wait_event(c, "status");
     CHECK(!ev.is_null() && ev["data"]["auto_limit"] == 115);
     CHECK(state.frame_inputs(CarState::Clock::now()).auto_limit == 115);
-    r = request(c, "set_auto_limit", {{"drive_pwm", 255}});
-    CHECK(r["ok"].get<bool>() && r["result"]["auto_limit"] == 204);   // clamped to the maximum
-    r = request(c, "set_auto_limit", {{"drive_pwm", -1}});
+    CHECK(fs::exists(settings_path));
+    r = request(c, "set_drive_settings",
+                {{"manual_max_pwm", 255}, {"manual_accel_pwm_per_s", 100}, {"pad_steer_strength", true}});
+    CHECK(r["ok"].get<bool>());
+    CHECK(r["result"]["manual_max_pwm"] == 204);           // clamped to the maximum
+    CHECK(r["result"]["manual_accel_pwm_per_s"] == 100 && r["result"]["pad_steer_strength"] == true);
+    CHECK(r["result"]["auto_limit"] == 115);               // untouched
+    in = state.frame_inputs(CarState::Clock::now());
+    CHECK(in.manual_max_pwm == 204 && in.manual_accel_pwm_per_s == 100);
+    {
+        // What a restart reads back: the same values.
+        std::string note;
+        const DriveSettings saved = DriveSettingsFile(state_dir.string()).load(note);
+        CHECK_MSG(note.empty(), note);
+        CHECK(saved.auto_limit == 115 && saved.manual_max_pwm == 204 && saved.manual_accel_pwm_per_s == 100 && saved.pad_steer_strength);
+        CarState restarted(300);
+        restarted.set_max_drive(204);
+        restarted.set_drive_settings(restarted.clamped(saved));
+        CHECK(restarted.drive_settings() == state.drive_settings());
+        CarState lowered(300);   // max_drive_pwm lowered in core.json since: the caps follow it
+        lowered.set_max_drive(90);
+        lowered.set_drive_settings(lowered.clamped(saved));
+        CHECK(lowered.drive_settings().auto_limit == 90 && lowered.drive_settings().manual_max_pwm == 90);
+        const json st = lowered.status_json();
+        CHECK(st["auto_limit"] == 90 && st["manual_max_pwm"] == 90 && st["manual_accel_pwm_per_s"] == 100);
+    }
+    // Invalid requests change nothing (all keys are checked before any is applied).
+    const DriveSettings before = state.drive_settings();
+    r = request(c, "set_drive_settings", {{"auto_limit", 100}, {"manual_max_pwm", 25}});   // below the lowest manual cap
     CHECK(!r["ok"].get<bool>());
-    r = request(c, "set_auto_limit", {{"drive_permille", 450}});   // the 0.3.x form
+    r = request(c, "set_drive_settings", {{"auto_limit", 100}, {"turbo", 1}});
+    CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("turbo") != std::string::npos);
+    r = request(c, "set_drive_settings", {{"auto_limit", -1}});
     CHECK(!r["ok"].get<bool>());
-    r = request(c, "set_auto_limit", nullptr);
+    r = request(c, "set_drive_settings", {{"manual_accel_pwm_per_s", 25501}});
     CHECK(!r["ok"].get<bool>());
+    r = request(c, "set_drive_settings", {{"pad_steer_strength", 1}});
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "set_drive_settings", json::object());
+    CHECK(!r["ok"].get<bool>());
+    r = request(c, "set_drive_settings", nullptr);
+    CHECK(!r["ok"].get<bool>());
+    CHECK(state.drive_settings() == before);
+    r = request(c, "set_auto_limit", {{"drive_pwm", 115}});   // the protocol 2 request
+    CHECK(!r["ok"].get<bool>());
+    // A setting that cannot be saved does not take effect either.
+    fs::create_directories(settings_path.string() + ".tmp");   // the temporary file cannot be created
+    r = request(c, "set_drive_settings", {{"auto_limit", 60}});
+    CHECK(!r["ok"].get<bool>() && r["error"].get<std::string>().find("not saved") != std::string::npos);
+    CHECK(state.drive_settings() == before);
+    fs::remove_all(settings_path.string() + ".tmp");
+    {
+        // An unreadable file gives the defaults (the car still starts) and says why.
+        const fs::path broken_dir = state_dir / "broken-settings";
+        fs::create_directories(broken_dir / "settings");
+        std::ofstream(broken_dir / "settings" / "drive.json") << "{\"schema\": 1, \"auto_limit\": 300}";
+        std::string note;
+        const DriveSettings d = DriveSettingsFile(broken_dir.string()).load(note);
+        CHECK(!note.empty() && note.find("auto_limit") != std::string::npos);
+        CHECK(d == DriveSettings{});
+        std::ofstream(broken_dir / "settings" / "drive.json") << "{\"schema\": 1, \"manual_max_pwm\": 80}";   // an earlier, shorter file
+        const DriveSettings partial = DriveSettingsFile(broken_dir.string()).load(note);
+        CHECK(note.empty() && partial.manual_max_pwm == 80 && partial.auto_limit == 255 && partial.manual_accel_pwm_per_s == 287);
+        fs::remove_all(broken_dir);
+    }
 
     // --- versions: list / activate / rollback / failure --------------------------
     r = request(c, "list_versions", nullptr);
@@ -747,7 +821,7 @@ void test_servers(const fs::path& base_pack) {
     {
         Client again(control.port());
         CHECK(again.connected());
-        r = request(again, "hello", {{"client", "test2"}, {"protocol", 2}});
+        r = request(again, "hello", {{"client", "test2"}, {"protocol", 3}});
         CHECK(r["ok"].get<bool>());
         r = request(again, "get_status", nullptr);
         CHECK(r["ok"].get<bool>() && r["result"]["mode"] == "manual");

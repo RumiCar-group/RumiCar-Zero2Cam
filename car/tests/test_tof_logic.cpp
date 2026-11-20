@@ -355,6 +355,75 @@ void test_steering_strength() {
     CHECK(!validate(bad).empty());
 }
 
+void test_side_strength_by_distance() {
+    // tof_drive 0.5.0: moving away from a side wall, the strength grows from
+    // side_steer_pwm_min (wall at d_side_mm) to side_steer_pwm (wall at 0 mm).
+    Params p;
+    p.side_steer_pwm = 255;
+    p.side_steer_pwm_min = 64;
+    CHECK(validate(p).empty());
+    const auto settled = [&](int L, int R) {
+        Run r(p);
+        for (int i = 0; i < 30; ++i) r.step(L, OPEN, R);
+        return r.last;
+    };
+    // 64 + 191 * (60 - d) / 60, rounded.
+    rumi_command c = settled(OPEN, 30);
+    CHECK(c.steer == RUMI_STEER_LEFT && c.steer_pwm == 160);
+    c = settled(OPEN, 50);
+    CHECK(c.steer == RUMI_STEER_LEFT && c.steer_pwm == 96);
+    c = settled(OPEN, 59);
+    CHECK(c.steer == RUMI_STEER_LEFT && c.steer_pwm == 67);
+    c = settled(OPEN, 0);
+    CHECK(c.steer == RUMI_STEER_LEFT && c.steer_pwm == 255);
+    c = settled(10, OPEN);   // the left wall: to the right
+    CHECK(c.steer == RUMI_STEER_RIGHT && c.steer_pwm == 223);
+    c = settled(OPEN, 60);   // at d_side_mm: not near
+    CHECK(c.steer == RUMI_STEER_CENTER && c.steer_pwm == 0);
+    // Both near: away from the nearer one, with its distance.
+    c = settled(50, 20);
+    CHECK(c.steer == RUMI_STEER_LEFT && c.steer_pwm == 191);
+    // Approaching the wall: the strength follows at once while the direction stays.
+    {
+        Run r(p);
+        for (int i = 0; i < 30; ++i) r.step(OPEN, OPEN, 50);
+        CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 96);
+        for (int i = 0; i < 30; ++i) r.step(OPEN, OPEN, 20);
+        CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 191);
+    }
+    // Turning in front of an obstacle keeps turn_steer_pwm.
+    {
+        Params t = p;
+        t.turn_steer_pwm = 210;
+        Run r(t);
+        for (int i = 0; i < 30; ++i) r.step(150, 120, 40);
+        CHECK(r.last.state == static_cast<uint8_t>(State::TurnLeft) && r.last.steer_pwm == 210);
+    }
+    // Left out (-1): one strength at every distance, as before.
+    Params same;
+    same.side_steer_pwm = 96;
+    CHECK(validate(same).empty());
+    for (const int d : {5, 30, 59}) {
+        Run r(same);
+        for (int i = 0; i < 30; ++i) r.step(OPEN, OPEN, d);
+        CHECK(r.last.steer == RUMI_STEER_LEFT && r.last.steer_pwm == 96);
+    }
+    // Equal to side_steer_pwm: also one strength.
+    Params eq;
+    eq.side_steer_pwm = 120;
+    eq.side_steer_pwm_min = 120;
+    CHECK(validate(eq).empty());
+    // Range: 0..side_steer_pwm.
+    Params bad;
+    bad.side_steer_pwm = 100;
+    bad.side_steer_pwm_min = 101;
+    CHECK(!validate(bad).empty());
+    bad.side_steer_pwm_min = -2;
+    CHECK(!validate(bad).empty());
+    bad.side_steer_pwm_min = 0;
+    CHECK(validate(bad).empty());
+}
+
 void test_median_rejects_single_spike() {
     Params p;
     Run r(p);
@@ -479,6 +548,23 @@ void test_params_json_strict() {
     threw = false;
     try { parse_params_json(j.dump()); } catch (const std::exception&) { threw = true; }
     CHECK_MSG(threw, "a strength must be an integer");
+    // side_steer_pwm_min (tof_drive 0.5.0): left out of the bundled packs and
+    // of what is written unless set; 0..side_steer_pwm.
+    CHECK(text.find("side_steer_pwm_min") == std::string::npos);
+    CHECK(o.side_steer_pwm_min == -1);
+    j["side_steer_pwm"] = 200;
+    j["side_steer_pwm_min"] = 50;
+    o = parse_params_json(j.dump());
+    CHECK(o.side_steer_pwm == 200 && o.side_steer_pwm_min == 50);
+    CHECK(params_to_json(o).find("\"side_steer_pwm_min\": 50") != std::string::npos);
+    CHECK(parse_params_json(params_to_json(o)).side_steer_pwm_min == 50);
+    for (const int v : {201, -1, -5}) {
+        j["side_steer_pwm_min"] = v;
+        threw = false;
+        try { parse_params_json(j.dump()); } catch (const std::exception&) { threw = true; }
+        CHECK_MSG(threw, "side_steer_pwm_min must be 0..side_steer_pwm: " + std::to_string(v));
+    }
+    j.erase("side_steer_pwm_min");
 
     Params bad = p;
     bad.d_min_mm = 50; // violates d_emergency < d_min
@@ -515,6 +601,7 @@ int main() {
     test_steering_hysteresis_and_hold();
     test_side_wall_avoidance();
     test_steering_strength();
+    test_side_strength_by_distance();
     test_median_rejects_single_spike();
     test_sensor_fault_stops_and_resumes();
     test_stuck_detection();

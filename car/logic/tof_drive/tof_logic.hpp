@@ -47,7 +47,13 @@ struct Params {
     // Steering strength (RC_steer's second argument, 0..255) per situation.
     // Optional in params.json (default 255 = full, the output up to ABI 3).
     int    turn_steer_pwm    = 255; // turning towards the open side in front of an obstacle
-    int    side_steer_pwm    = 255; // moving away from a near side wall
+    int    side_steer_pwm    = 255; // moving away from a near side wall (with the wall at 0 mm)
+    // Moving away from a side wall: the strength grows linearly from
+    // side_steer_pwm_min, with the wall at d_side_mm, to side_steer_pwm, with
+    // the wall at 0 mm (the nearer, the stronger).  -1 (left out of
+    // params.json) = side_steer_pwm: one strength at every distance, as up to
+    // tof_drive 0.4.0.
+    int    side_steer_pwm_min = -1;
     int    recover_steer_pwm = 255; // while reversing out (recovery)
 
     // --- recovery ------------------------------------------------------------
@@ -128,6 +134,8 @@ private:
     void condition(int idx, int32_t raw, uint64_t t_us);
     static int median(const Sensor& s, int window);
     void decide_steer(int L, int C, int R, uint64_t t_us);
+    // Strength of moving away from a side wall `wall_mm` away (side_steer_pwm_min .. side_steer_pwm).
+    int side_strength(int wall_mm) const;
     void set_recover_steer();
     static uint8_t other_side(uint8_t steer) { return steer == RUMI_STEER_LEFT ? RUMI_STEER_RIGHT : RUMI_STEER_LEFT; }
     int  speed_target(int C, double closing_mm_s, bool turning) const;

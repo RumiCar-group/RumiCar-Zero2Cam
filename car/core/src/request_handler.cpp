@@ -51,7 +51,8 @@ json versions_json(const std::vector<InstalledVersion>& list) {
 
 RequestHandler::RequestHandler(CarState& state, const VersionStore& store, WifiAp& wifi, std::string car_name,
                                std::string core_version, std::chrono::milliseconds activation_wait)
-    : state_(state), store_(store), wifi_(wifi), uploads_(store.state_dir()), car_name_(std::move(car_name)),
+    : state_(state), store_(store), wifi_(wifi), uploads_(store.state_dir()), settings_file_(store.state_dir()),
+      car_name_(std::move(car_name)),
       core_version_(std::move(core_version)), activation_wait_(activation_wait) {
     uploads_.clean_incoming();
 }
@@ -93,21 +94,36 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         return nullptr;
     }
     if (type == "manual_drive") {
-        // RC_steer / RC_drive values: steer LEFT=0 CENTER=1 RIGHT=2, drive_dir FREE=0
+        // RC_steer / RC_drive values: steer LEFT=0 CENTER=1 RIGHT=2 with its
+        // strength steer_pwm 0..255 (ignored for CENTER), drive_dir FREE=0
         // REVERSE=1 FORWARD=2 BRAKE=3, drive_pwm 0..255.
         const int steer = require_int(params, "steer", RUMI_STEER_LEFT, RUMI_STEER_RIGHT);
+        const int steer_pwm = require_int(params, "steer_pwm", 0, RUMI_PWM_MAX);
         const int dir = require_int(params, "drive_dir", RUMI_DRIVE_FREE, RUMI_DRIVE_BRAKE);
         const int pwm = require_int(params, "drive_pwm", 0, RUMI_PWM_MAX);
         state_.heartbeat(now);
-        if (!state_.set_manual(static_cast<uint8_t>(steer), static_cast<uint8_t>(dir), static_cast<uint8_t>(pwm)))
+        if (!state_.set_manual(static_cast<uint8_t>(steer), static_cast<uint8_t>(steer_pwm), static_cast<uint8_t>(dir),
+                               static_cast<uint8_t>(pwm)))
             throw RequestError("not in manual mode");
         return nullptr;
     }
-    if (type == "set_auto_limit") {
-        // Cap of the drive duty in auto mode (docs 5.2); clamped to max_drive_pwm.
-        const int limit = require_int(params, "drive_pwm", 0, RUMI_PWM_MAX);
-        if (state_.set_auto_limit(limit)) log::info("auto limit set to " + std::to_string(state_.auto_limit()) + " by the PC");
-        return json{{"auto_limit", state_.auto_limit()}};
+    if (type == "set_drive_settings") {
+        // The drive settings the car keeps (docs 5.2): any of manual_max_pwm,
+        // auto_limit, manual_accel_pwm_per_s, pad_steer_strength.  Saved
+        // before they take effect; the caps are clamped to max_drive_pwm.
+        DriveSettings next;
+        try {
+            next = state_.clamped(apply_drive_settings(state_.drive_settings(), params));
+        } catch (const std::invalid_argument& e) {
+            throw RequestError(e.what());
+        }
+        try {
+            settings_file_.save(next);
+        } catch (const std::exception& e) {
+            throw RequestError(std::string("drive settings not saved, nothing changed: ") + e.what());
+        }
+        if (state_.set_drive_settings(next)) log::info("drive settings set by the PC: " + drive_settings_json(next).dump());
+        return drive_settings_json(state_.drive_settings());
     }
     if (type == "heartbeat") {
         state_.heartbeat(now);

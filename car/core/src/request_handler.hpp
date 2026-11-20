@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include "car_state.hpp"
+#include "drive_settings.hpp"
 #include "upload.hpp"
 #include "version_store.hpp"
 #include "wifi.hpp"
@@ -25,7 +26,10 @@ public:
     // The control client went away: an unfinished upload is discarded.
     void on_client_disconnected();
 
-    static constexpr int kProtocolVersion = 2;   // 2 = RC_steer / RC_drive values (manual_drive, set_auto_limit), since ABI 3 (unchanged in ABI 4)
+    // 3 = manual_drive carries RC_steer's strength (steer_pwm) and the drive
+    // settings the car keeps (set_drive_settings, in place of set_auto_limit);
+    // 2 = RC_steer / RC_drive values (core 0.4.x and 0.5.x).
+    static constexpr int kProtocolVersion = 3;
     static constexpr int kMaxLogLines = 500;
 
 private:
@@ -35,6 +39,7 @@ private:
     const VersionStore& store_;
     WifiAp& wifi_;
     UploadManager uploads_;
+    DriveSettingsFile settings_file_;
     std::string car_name_;
     std::string core_version_;
     std::chrono::milliseconds activation_wait_;

@@ -69,6 +69,11 @@ Params parse_params_json(const std::string& json_text) {
     // is the steering of packs written before them.
     take_optional(j, seen, "turn_steer_pwm", p.turn_steer_pwm);
     take_optional(j, seen, "side_steer_pwm", p.side_steer_pwm);
+    // tof_drive 0.5.0: the strength with the wall at d_side_mm (0..side_steer_pwm);
+    // left out, one strength at every distance (side_steer_pwm).
+    take_optional(j, seen, "side_steer_pwm_min", p.side_steer_pwm_min);
+    if (seen.count("side_steer_pwm_min") && p.side_steer_pwm_min < 0)
+        throw std::runtime_error("params.json: 'side_steer_pwm_min' must be 0..side_steer_pwm");
     take_optional(j, seen, "recover_steer_pwm", p.recover_steer_pwm);
 
     take(j, seen, "brake_ms", p.brake_ms);
@@ -109,6 +114,7 @@ std::string params_to_json(const Params& p) {
     j["steer_hold_ms"] = p.steer_hold_ms;
     j["turn_steer_pwm"] = p.turn_steer_pwm;
     j["side_steer_pwm"] = p.side_steer_pwm;
+    if (p.side_steer_pwm_min >= 0) j["side_steer_pwm_min"] = p.side_steer_pwm_min;   // left out = side_steer_pwm
     j["recover_steer_pwm"] = p.recover_steer_pwm;
     j["brake_ms"] = p.brake_ms;
     j["reverse_ms"] = p.reverse_ms;

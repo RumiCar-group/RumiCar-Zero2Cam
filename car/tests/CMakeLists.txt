@@ -37,6 +37,12 @@ if(RUMICAR_BUILD_CORE)
   target_link_libraries(test_soft_pwm PRIVATE rumicar_hw)
   add_test(NAME soft_pwm COMMAND test_soft_pwm)
 
+  # Drive output: manual acceleration, the frame's decision, and the start kick
+  # of the real DRV8835 driver on sysfs-style PWM files (real thread and timing).
+  add_executable(test_drive_output test_drive_output.cpp)
+  target_link_libraries(test_drive_output PRIVATE rumicar_hw rumicar_core_lib)
+  add_test(NAME drive_output COMMAND test_drive_output)
+
   add_executable(test_util test_util.cpp)
   target_link_libraries(test_util PRIVATE rumicar_core_lib)
   add_test(NAME util COMMAND test_util)

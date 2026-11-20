@@ -14,6 +14,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "drive_settings.hpp"
+
 namespace rumicar {
 
 enum class DriveMode { Auto, Manual, RecordOnly };
@@ -65,32 +67,37 @@ public:
     bool estop(std::string* reason = nullptr) const;
 
     // Returns false (and does nothing) unless the car is in manual mode.
-    // steer / drive_dir / drive_pwm as in rumi_command (RC_steer / RC_drive values).
-    bool set_manual(uint8_t steer, uint8_t drive_dir, uint8_t drive_pwm);
+    // steer / steer_pwm / drive_dir / drive_pwm as in rumi_command (RC_steer
+    // with its strength, RC_drive values).
+    bool set_manual(uint8_t steer, uint8_t steer_pwm, uint8_t drive_dir, uint8_t drive_pwm);
     void heartbeat(Clock::time_point now);
 
     void client_connected(bool connected);
     bool client_is_connected() const;
 
-    // --- drive limits ---------------------------------------------------------
+    // --- drive limits and settings ----------------------------------------------
     // max_drive_pwm (core.json) caps the PWM duty (0..255) in every mode.  The
-    // auto limit is the cap for auto mode that the PC sets at run time
-    // (set_auto_limit, docs 5.2); it starts at the maximum and never exceeds
-    // it.  Not kept across a restart.
+    // drive settings (drive_settings.hpp) are what the PC sets and the car
+    // keeps: the caps of manual and auto mode never exceed max_drive_pwm.
     void set_max_drive(int pwm);
-    // Returns true when the value changed (a status event is sent).  The value is clamped to 0..max.
-    bool set_auto_limit(int pwm);
-    int auto_limit() const;
+    // `s` with its caps clamped to max_drive_pwm (what set_drive_settings keeps).
+    DriveSettings clamped(DriveSettings s) const;
+    // Takes `s` clamped.  Returns true when anything changed (a status event is sent).
+    bool set_drive_settings(const DriveSettings& s);
+    DriveSettings drive_settings() const;
 
     // --- per-frame decision (loop) ------------------------------------------
     struct FrameInputs {
         DriveMode mode;
         bool estop;
         uint8_t manual_steer;
+        uint8_t manual_steer_pwm;
         uint8_t manual_drive_dir;
         uint8_t manual_drive_pwm;
         bool manual_timed_out;   // manual mode and no heartbeat within the timeout
-        int auto_limit;          // cap of the drive duty in auto mode (0..255)
+        int auto_limit;          // cap of the drive duty in auto mode (0..255, within max_drive_pwm)
+        int manual_max_pwm;      // cap of the drive duty in manual mode (0..255, within max_drive_pwm)
+        int manual_accel_pwm_per_s;   // growth of the manual drive duty per second (0 = none)
     };
     FrameInputs frame_inputs(Clock::time_point now) const;
 
@@ -127,12 +134,13 @@ private:
     bool estop_ = false;
     std::string estop_reason_;
     uint8_t manual_steer_ = 1;        // RUMI_STEER_CENTER
+    uint8_t manual_steer_pwm_ = 0;
     uint8_t manual_drive_dir_ = 0;    // RUMI_DRIVE_FREE
     uint8_t manual_drive_pwm_ = 0;
     Clock::time_point last_heartbeat_{};
     bool client_connected_ = false;
     int max_drive_ = 255;
-    int auto_limit_ = 255;
+    DriveSettings settings_;
 
     RunningStatus running_;
     uint32_t throttled_ = 0;
