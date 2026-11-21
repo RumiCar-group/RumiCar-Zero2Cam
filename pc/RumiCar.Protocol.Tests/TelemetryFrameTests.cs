@@ -12,7 +12,7 @@ public class TelemetryFrameTests
             Seq = seq,
             TimestampMicroseconds = 1_000_000 + seq * 50_000UL,
             Abi = RumiCarApi.Abi,
-            TofMm = new[] { 120, -3, -1 },
+            TofMm = new[] { 120, 1500, -1 },   // ABI 5: distances up to 2000 mm, not cut off at 200
             Steer = RumiCarApi.Right,
             SteerPwm = 140,
             DriveDir = seq % 3 == 0 ? RumiCarApi.Brake : RumiCarApi.Forward,
@@ -45,8 +45,8 @@ public class TelemetryFrameTests
         Assert.Equal(bytes.Length, consumed);
         Assert.NotNull(frame);
         Assert.Equal(5u, frame!.Header.Seq);
-        Assert.Equal(4, frame.Header.Abi);
-        Assert.Equal(new[] { 120, -3, -1 }, frame.Header.TofMm);
+        Assert.Equal(5, frame.Header.Abi);
+        Assert.Equal(new[] { 120, 1500, -1 }, frame.Header.TofMm);
         Assert.Equal("TURN_RIGHT", frame.Header.StateName);
         Assert.False(frame.Header.EStop);
         Assert.Equal(RumiCarApi.Right, frame.Header.Steer);
@@ -67,13 +67,15 @@ public class TelemetryFrameTests
     public void HeaderWrittenByTheCarDecodes()
     {
         // Exactly the key set rumicar-core writes (car/core/src/main.cpp), plus an unknown key a later version might add.
-        const string json = "{\"abi\":4,\"battery_mv\":0,\"drive_dir\":3,\"drive_pwm\":0,\"estop\":true,\"flags\":0,\"image_h\":0,\"image_w\":0," +
-                            "\"logic_drive_dir\":2,\"logic_drive_pwm\":179,\"logic_steer\":2,\"logic_steer_pwm\":128,\"logic_version\":\"0.4.0\",\"mode\":\"manual\"," +
+        const string json = "{\"abi\":5,\"battery_mv\":0,\"drive_dir\":3,\"drive_pwm\":0,\"estop\":true,\"flags\":0,\"image_h\":0,\"image_w\":0," +
+                            "\"logic_drive_dir\":2,\"logic_drive_pwm\":179,\"logic_steer\":2,\"logic_steer_pwm\":128,\"logic_version\":\"0.6.0\",\"mode\":\"manual\"," +
                             "\"pack_version\":\"0.3.0\",\"seq\":42,\"state\":2,\"state_name\":\"TURN_RIGHT\",\"steer\":1,\"steer_pwm\":0," +
-                            "\"t_us\":123456789,\"tof_mm\":[120,-3,-1],\"future_key\":{\"x\":1}}";
+                            "\"t_us\":123456789,\"tof_mm\":[120,1500,-3],\"future_key\":{\"x\":1}}";
         var h = TelemetryFrameCodec.HeaderFromJson(json);
         Assert.NotNull(h);
-        Assert.Equal(4, h!.Abi);
+        Assert.Equal(RumiCarApi.Abi, h!.Abi);
+        Assert.Equal(new[] { 120, 1500, -3 }, h.TofMm);   // the car's values, not cut off at 200 mm (ABI 5)
+        Assert.Equal("120 / 1500 / -3 範囲外", string.Join(" / ", h.TofMm.Select(RumiCarApi.TofText)));
         Assert.Equal(0, h.SteerPwm);
         Assert.Equal(128, h.LogicSteerPwm);
         Assert.Equal(42u, h.Seq);
@@ -85,6 +87,12 @@ public class TelemetryFrameTests
         Assert.Equal(RumiCarApi.Forward, h.LogicDriveDir);
         Assert.Equal(179, h.LogicDrivePwm);
         Assert.Equal(123456789UL, h.TimestampMicroseconds);
+        // A header of a 0.5.x / 0.6.x car (ABI 4): the same keys; that car cut the ToF readings off at 200 mm (-3 beyond).
+        var abi4 = TelemetryFrameCodec.HeaderFromJson("{\"abi\":4,\"seq\":8,\"tof_mm\":[200,-3,-1],\"steer\":2,\"steer_pwm\":128,\"logic_steer\":2,\"logic_steer_pwm\":128,\"drive_dir\":2,\"drive_pwm\":150}");
+        Assert.NotNull(abi4);
+        Assert.Equal(RumiCarApi.AbiWithTofCutOff, abi4!.Abi);
+        Assert.Equal(new[] { RumiCarApi.TofMaxMmAbi4, RumiCarApi.TofOutOfRange, RumiCarApi.TofTimeout }, abi4.TofMm);
+        Assert.Equal(128, abi4.SteerPwm);
         // A header of a 0.4.x car (ABI 3) has no steering strength: it reads as full (255), as its steering was.
         var abi3 = TelemetryFrameCodec.HeaderFromJson("{\"abi\":3,\"seq\":7,\"tof_mm\":[120,-3,-1],\"steer\":0,\"logic_steer\":2,\"drive_dir\":2,\"drive_pwm\":150}");
         Assert.NotNull(abi3);
@@ -110,6 +118,18 @@ public class TelemetryFrameTests
         Assert.Equal(expected, RumiCarApi.CommandText(steer, steerPwm, dir, pwm));
     }
 
+    [Theory]
+    [InlineData(0, "0")]
+    [InlineData(200, "200")]
+    [InlineData(201, "201")]                      // beyond the 200 mm a car of ABI 3 / 4 cut off at: a distance from ABI 5
+    [InlineData(RumiCarApi.TofMaxMm, "2000")]
+    [InlineData(RumiCarApi.TofTimeout, "-1 タイムアウト")]
+    [InlineData(RumiCarApi.TofOutOfRange, "-3 範囲外")]
+    public void TofTextIsTheRcReadValue(int mm, string expected)
+    {
+        Assert.Equal(expected, RumiCarApi.TofText(mm));
+    }
+
     [Fact]
     public void RecordedHeaderKeepsTheSteeringStrength()
     {
@@ -117,7 +137,8 @@ public class TelemetryFrameTests
         var json = TelemetryFrameCodec.HeaderToJson(Sample(3, 0).Header);
         Assert.Contains("\"steer_pwm\":140", json);
         Assert.Contains("\"logic_steer_pwm\":96", json);
-        Assert.Contains("\"abi\":4", json);
+        Assert.Contains("\"abi\":5", json);
+        Assert.Contains("\"tof_mm\":[120,1500,-1]", json);
         var back = TelemetryFrameCodec.HeaderFromJson(json)!;
         Assert.Equal(140, back.SteerPwm);
         Assert.Equal(96, back.LogicSteerPwm);

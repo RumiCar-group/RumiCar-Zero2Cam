@@ -162,7 +162,7 @@
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="判断状態" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LogicState}" Style="{StaticResource Text.Value}"/>
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="ToF 左 / 中 / 右 [mm]" Style="{StaticResource Text.Label}" ToolTip="RC_read の値：0〜200 = 距離 [mm]、-1 = タイムアウト（読めない）、-3 = 範囲外（20 cm 以内に何もない）"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="ToF 左 / 中 / 右 [mm]" Style="{StaticResource Text.Label}" ToolTip="RC_read の値（上限を設定していない状態）：0〜2000 = 距離 [mm]、-1 = タイムアウト（読めない）、-3 = 範囲外（2000 mm より先、または対象物なし）。drive.py の RC_setReadLimit や判断データの conf_max_mm は、この表示には影響しません"/>
                             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Tof}" Style="{StaticResource Text.Value}"/>
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="モーター出力" Style="{StaticResource Text.Label}" ToolTip="実際にモーターへ出力した指令を RumiCar ライブラリの呼び出しの形で表示：RC_steer(LEFT / CENTER / RIGHT, 強さ 0〜255) / RC_drive(FREE / REVERSE / FORWARD / BRAKE, 0〜255)。値は PWM のデューティ（255 = 100%）。操舵の強さが 255（最大）のときは RC_steer(LEFT) のように省略して表示"/>
                             <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Command}" Style="{StaticResource Text.Value}"/>

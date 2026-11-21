@@ -14,8 +14,8 @@ namespace RumiCar.Protocol.Packs;
 public static class ProgramPack
 {
     public const string LogicName = "py_drive";
-    /// <summary>The program is written with RumiCar.py 0.6.0 (RC_steer with its strength): py_drive of ABI 4 (core 0.5.0) and later.</summary>
-    public const int MinAbi = 4;
+    /// <summary>The program is written with RumiCar.py 0.7.0 (RC_read up to 2000 mm, RC_setReadLimit): py_drive of ABI 5 (core 0.7.0) and later.</summary>
+    public const int MinAbi = 5;
     public const long MaxTotalBytes = 1024 * 1024;   // a program is text; anything bigger was probably chosen by mistake
     public const int MaxFiles = 64;
 
