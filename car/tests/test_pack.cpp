@@ -1,5 +1,6 @@
 // Tests for manifest parsing/verification, logic loading and core.json parsing.
-// Usage: test_pack <base pack dir> <path to libtof_drive.so>
+// Usage: test_pack <base pack dir> <libtof_drive.so> <cam-base pack dir> <libcam_drive.so>
+//                  <py_drive logic dir> <py-sample pack dir> <libother_abi.so>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -44,7 +45,9 @@ void test_committed_base_pack_is_consistent(const fs::path& pack_dir) {
     CHECK(m.kind == Manifest::Kind::Pack);
     CHECK(m.id == "base-tof");
     CHECK(m.logic_name == "tof_drive");
-    CHECK(m.logic_min_abi == RUMI_LOGIC_ABI_VERSION);   // the steering strengths (ABI 4) are in its params.json
+    // The steering strengths (ABI 4) are in its params.json; nothing in it needs
+    // ABI 5 (conf_max_mm 200), and the core loads a pack of an older min_abi.
+    CHECK(m.logic_min_abi == 4 && m.logic_min_abi <= RUMI_LOGIC_ABI_VERSION);
     CHECK(m.files.size() == 1 && m.files[0].path == "params.json");
     // The shipped pack says what it is (shown by the PC, docs 4.1).
     CHECK(!m.description.empty());
@@ -182,6 +185,63 @@ void test_logic_library_loads(const fs::path& tmp, const fs::path& so, const fs:
     m.version = "9.9.9";
     write_file(d2 / "manifest.json", manifest_to_json(m));
     CHECK_MSG(throws([&] { LogicLibrary x(d2.string()); }), "version mismatch must be refused");
+
+    // A pack that needs a newer ABI than the core's is refused; one of an older
+    // min_abi (as the bundled base pack) was loaded above.
+    const fs::path newer = tmp / "packs" / "newer";
+    fs::remove_all(newer);
+    write_file(newer / "params.json", read_file(pack_dir / "params.json"));
+    Manifest nm = load_and_verify_manifest(pack_dir.string());
+    nm.logic_min_abi = RUMI_LOGIC_ABI_VERSION + 1;
+    write_file(newer / "manifest.json", manifest_to_json(nm));
+    std::string msg;
+    CHECK_MSG(throws([&] { LogicInstance x(lib, newer.string()); }, &msg) &&
+                  msg.find("pack requires ABI " + std::to_string(RUMI_LOGIC_ABI_VERSION + 1)) != std::string::npos,
+              msg);
+}
+
+// The loader requires the ABI of a logic to equal the core's: a logic built for
+// ABI 4 is refused by a core of ABI 5 (its manifest says so), and so is a
+// plug-in whose own API table reports another ABI than its manifest claims.
+void test_logic_of_another_abi_is_refused(const fs::path& tmp, const fs::path& tof_so, const fs::path& other_abi_so) {
+    std::string msg;
+    // The real tof_drive with a manifest written for the previous ABI (what a
+    // logic directory of core 0.6.0, ABI 4, carries).
+    const fs::path d = tmp / "logic" / "tof_drive-previous-abi";
+    fs::remove_all(d);
+    fs::create_directories(d);
+    fs::copy_file(tof_so, d / "libtof_drive.so", fs::copy_options::overwrite_existing);
+    Manifest m;
+    m.kind = Manifest::Kind::Logic;
+    m.id = "tof_drive";
+    m.version = TOF_DRIVE_VERSION;
+    m.abi = RUMI_LOGIC_ABI_VERSION - 1;
+    m.entry = "libtof_drive.so";
+    m.files.push_back({"libtof_drive.so", sha256_file_hex((d / "libtof_drive.so").string()), fs::file_size(d / "libtof_drive.so")});
+    write_file(d / "manifest.json", manifest_to_json(m));
+    CHECK_MSG(throws([&] { LogicLibrary x(d.string()); }, &msg) &&
+                  msg.find("manifest declares ABI " + std::to_string(RUMI_LOGIC_ABI_VERSION - 1) + ", core supports " +
+                           std::to_string(RUMI_LOGIC_ABI_VERSION)) != std::string::npos,
+              msg);
+    // A manifest of a newer ABI is refused the same way (exact match, not "at least").
+    m.abi = RUMI_LOGIC_ABI_VERSION + 1;
+    write_file(d / "manifest.json", manifest_to_json(m));
+    CHECK_MSG(throws([&] { LogicLibrary x(d.string()); }, &msg) && msg.find("manifest declares ABI") != std::string::npos, msg);
+
+    // A plug-in compiled for the previous ABI whose manifest claims the current one.
+    const fs::path o = tmp / "logic" / "other_abi-1.0.0";
+    fs::remove_all(o);
+    fs::create_directories(o);
+    fs::copy_file(other_abi_so, o / "libother_abi.so", fs::copy_options::overwrite_existing);
+    Manifest om;
+    om.kind = Manifest::Kind::Logic;
+    om.id = "other_abi";
+    om.version = "1.0.0";
+    om.abi = RUMI_LOGIC_ABI_VERSION;
+    om.entry = "libother_abi.so";
+    om.files.push_back({"libother_abi.so", sha256_file_hex((o / "libother_abi.so").string()), fs::file_size(o / "libother_abi.so")});
+    write_file(o / "manifest.json", manifest_to_json(om));
+    CHECK_MSG(throws([&] { LogicLibrary x(o.string()); }, &msg) && msg.find("different ABI version") != std::string::npos, msg);
 }
 
 // The camera logic plug-in loads with the ToF-only cam-base pack, reports its
@@ -203,7 +263,7 @@ void test_cam_drive_library_loads(const fs::path& tmp, const fs::path& so, const
     auto lib = std::make_shared<LogicLibrary>(d.string());
     CHECK(std::string(lib->api().name) == "cam_drive");
     const Manifest cm = load_and_verify_manifest(cam_pack_dir.string());
-    CHECK(cm.id == "cam-base" && cm.logic_name == "cam_drive" && cm.logic_min_abi == RUMI_LOGIC_ABI_VERSION);
+    CHECK(cm.id == "cam-base" && cm.logic_name == "cam_drive" && cm.logic_min_abi == 4);   // as the base pack: distances within 200 mm
     CHECK(cm.capabilities.size() == 1 && cm.capabilities[0] == "walls");
     LogicInstance inst(lib, cam_pack_dir.string());
     CHECK(inst.aux_names().empty());   // no vision.bin: nothing to show
@@ -276,7 +336,8 @@ void test_py_drive_loads(const fs::path& staged_logic_dir, const fs::path& py_pa
     CHECK_MSG(lists_runner, "runner.py must be listed (and so verified) in the py_drive manifest");
     CHECK_MSG(lists_library, "RumiCar.py of the pinned commit must be listed (and so verified) in the py_drive manifest");
     const Manifest pm = load_and_verify_manifest(py_pack_dir.string());
-    CHECK(pm.id == "py-sample" && pm.logic_name == "py_drive" && pm.logic_min_abi == RUMI_LOGIC_ABI_VERSION);
+    // drive.py calls RC_setReadLimit: RumiCar.py 0.7.0, which comes with py_drive of ABI 5.
+    CHECK(pm.id == "py-sample" && pm.logic_name == "py_drive" && pm.logic_min_abi == 5 && pm.logic_min_abi == RUMI_LOGIC_ABI_VERSION);
     {
         LogicInstance inst(lib, py_pack_dir.string());   // starts drive.py, self-test (ping)
         rumi_sensor_frame f{};
@@ -300,8 +361,8 @@ void test_py_drive_loads(const fs::path& staged_logic_dir, const fs::path& py_pa
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 7) {
-        std::fprintf(stderr, "usage: test_pack <base pack dir> <libtof_drive.so> <cam-base pack dir> <libcam_drive.so> <py_drive logic dir> <py-sample pack dir>\n");
+    if (argc < 8) {
+        std::fprintf(stderr, "usage: test_pack <base pack dir> <libtof_drive.so> <cam-base pack dir> <libcam_drive.so> <py_drive logic dir> <py-sample pack dir> <libother_abi.so>\n");
         return 2;
     }
     const fs::path pack_dir = fs::absolute(argv[1]);
@@ -316,6 +377,7 @@ int main(int argc, char** argv) {
     test_manifest_rejections(tmp);
     test_manifest_metadata();
     test_logic_library_loads(tmp, so, pack_dir);
+    test_logic_of_another_abi_is_refused(tmp, so, fs::absolute(argv[7]));
     test_cam_drive_library_loads(tmp, cam_so, cam_pack_dir, pack_dir);
     test_py_drive_loads(fs::absolute(argv[5]), fs::absolute(argv[6]), pack_dir);
     test_core_config();

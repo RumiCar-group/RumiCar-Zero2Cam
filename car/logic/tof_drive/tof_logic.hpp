@@ -15,13 +15,23 @@
 namespace rumicar::tof {
 
 // Tunable parameters.  Loaded from params.json in the active pack.
-// Distances are RC_read values (0..200 mm; -3 = nothing within 20 cm is "open"),
-// drive values are RC_drive PWM duties (0..255), steering strengths are the
-// second argument of RC_steer (0..255; 255 = full steering, the only output
-// before ABI 4).
+// Distances are RC_read values (0..RUMI_TOF_MAX_MM mm; -3 = out of range is
+// "open"), drive values are RC_drive PWM duties (0..255), steering strengths
+// are the second argument of RC_steer (0..255; 255 = full steering, the only
+// output before ABI 4).
 struct Params {
     // --- sensor conditioning -------------------------------------------------
-    int    conf_max_mm      = 200;  // readings at/above this are treated as "open" (nothing near); at most RUMI_TOF_MAX_MM
+    // How far the readings are trusted: a reading at/above conf_max_mm is
+    // treated as "open" (nothing near), as -3 is.  This is the limit the
+    // logic sets for itself, the role RC_setReadLimit has in a program written
+    // with the RumiCar library (there a reading above the limit is -3; here
+    // the limit itself already counts as open).  1..RUMI_TOF_MAX_MM.  The
+    // default 200 is where the core cut the readings off up to ABI 4: the
+    // beam spreads out in a cone and picks up the floor at about 30 cm on the
+    // RumiCar model 32, and 200 leaves a margin.  A pack may widen it for a
+    // car and a course where longer readings are reliable; every distance
+    // threshold below must stay at or below it.
+    int    conf_max_mm      = 200;
     int    median_window    = 3;    // 1, 3 or 5 samples
     double ema_alpha        = 0.5;  // exponential smoothing weight of the newest sample (1.0 = none)
     int    invalid_hold_ms  = 300;  // keep the last value this long when a sensor returns no reading

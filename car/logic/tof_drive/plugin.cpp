@@ -63,7 +63,7 @@ int tof_self_test(void* inst, char* err, size_t err_len) {
         f.size = sizeof(f);
         f.seq = i;
         f.t_us = 1'000'000ull + static_cast<uint64_t>(i) * 50'000ull;
-        f.tof_mm[RUMI_TOF_LEFT] = RUMI_TOF_OUT_OF_RANGE;    // nothing within 20 cm
+        f.tof_mm[RUMI_TOF_LEFT] = RUMI_TOF_OUT_OF_RANGE;    // out of range: open
         f.tof_mm[RUMI_TOF_CENTER] = RUMI_TOF_OUT_OF_RANGE;
         f.tof_mm[RUMI_TOF_RIGHT] = RUMI_TOF_OUT_OF_RANGE;
         rumi_command c{};

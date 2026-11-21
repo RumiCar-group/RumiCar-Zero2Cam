@@ -27,6 +27,12 @@
  *                  second argument of RC_steer(direc, ipwm) of RumiCar-lib
  *                  v0.6.0 and RasPi/RumiCar.py 0.6.0.  The sensor frame is
  *                  the same as in ABI 3.
+ *              5 = ToF 0..2000 mm or -1 / -3: the core no longer cuts the
+ *                  readings off at 200 mm (RC_read of RumiCar-lib v0.7.0 and
+ *                  RasPi/RumiCar.py 0.7.0).  How far a reading is trusted is
+ *                  decided by the logic, not by the core.  The struct layouts
+ *                  are those of ABI 4; the number changes because the same
+ *                  field carries other values.
  */
 #ifndef RUMICAR_LOGIC_API_H
 #define RUMICAR_LOGIC_API_H
@@ -38,7 +44,7 @@
 extern "C" {
 #endif
 
-#define RUMI_LOGIC_ABI_VERSION 4u
+#define RUMI_LOGIC_ABI_VERSION 5u
 
 /* Name of the exported entry point. */
 #define RUMI_LOGIC_ENTRY_SYMBOL "rumi_logic_get_api"
@@ -50,17 +56,26 @@ extern "C" {
 #define RUMI_TOF_COUNT  3
 
 /* Time-of-flight reading conventions in rumi_sensor_frame::tof_mm: the
- * return value of RC_read() of the RumiCar library.
+ * return value of RC_read() of the RumiCar library with no limit set
+ * (RC_setReadLimit not called).
  *   0 .. RUMI_TOF_MAX_MM   : measured distance in millimetres
  *   RUMI_TOF_TIMEOUT       : no reading (timeout, communication error)
- *   RUMI_TOF_OUT_OF_RANGE  : farther than RUMI_TOF_MAX_MM, including "no
- *                            target": nothing within 20 cm.  The sensor's beam
- *                            spreads out and picks up the floor beyond that,
- *                            so longer readings are not trusted.  Driving
- *                            logic treats it as open road (not as a fault).
+ *   RUMI_TOF_OUT_OF_RANGE  : out of range: farther than RUMI_TOF_MAX_MM (the
+ *                            maximum range of the VL53L0X), including "no
+ *                            target" (the sensor reports 8190 / 8191 when
+ *                            nothing reflects).  Driving logic treats it as
+ *                            far, i.e. open road (not as a fault).
  * (-2, RC_read's bad-argument code, never appears in a frame.)
+ *
+ * The beam spreads out in a cone, so a sensor picks up the floor at some
+ * distance that depends on where it is mounted and on the car's height.  In
+ * ABI 3 and 4 the core therefore cut every reading off at 200 mm.  From ABI 5 it
+ * passes the readings on as the sensor gives them, and the logic decides how
+ * far it trusts them: tof_drive and cam_drive with conf_max_mm in params.json,
+ * a Python program (py_drive) with RC_setReadLimit().  A logic that needs the
+ * values of ABI 4 treats every distance above 200 as RUMI_TOF_OUT_OF_RANGE.
  */
-#define RUMI_TOF_MAX_MM       200
+#define RUMI_TOF_MAX_MM       2000
 #define RUMI_TOF_TIMEOUT      (-1)
 #define RUMI_TOF_OUT_OF_RANGE (-3)
 

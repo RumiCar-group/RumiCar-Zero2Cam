@@ -22,7 +22,8 @@ std::string validate(const Params& p) {
     if (p.median_window != 1 && p.median_window != 3 && p.median_window != 5)
         return "median_window must be 1, 3 or 5";
     if (!(p.ema_alpha > 0.0 && p.ema_alpha <= 1.0)) return "ema_alpha must be in (0, 1]";
-    if (p.conf_max_mm <= 0 || p.conf_max_mm > RUMI_TOF_MAX_MM) return "conf_max_mm must be 1..200 (RC_read returns -3 beyond 200 mm)";
+    if (p.conf_max_mm <= 0 || p.conf_max_mm > RUMI_TOF_MAX_MM)
+        return "conf_max_mm must be 1.." + std::to_string(RUMI_TOF_MAX_MM) + " (the car reports longer distances as -3)";
     if (p.invalid_hold_ms < 0 || p.invalid_hold_ms > 5000) return "invalid_hold_ms out of range";
 
     if (!(p.d_emergency_mm > 0 && p.d_emergency_mm < p.d_min_mm && p.d_min_mm < p.d_max_mm))
@@ -72,8 +73,11 @@ TofDriveLogic::TofDriveLogic(const Params& p) : p_(p) {}
 
 // ---------------------------------------------------------------------------
 // Sensor conditioning: raw -> (open / distance) -> median -> EMA -> filt_
-// raw is an RC_read value: 0..200 mm, -3 = nothing within 20 cm (open),
-// -1 = no reading (hold the last value, then flag missing).
+// raw is an RC_read value: 0..RUMI_TOF_MAX_MM mm, -3 = out of range (open),
+// -1 = no reading (hold the last value, then flag missing).  A distance
+// at/above conf_max_mm is open as well: with conf_max_mm 200 the readings
+// 200..2000 of ABI 5 are handled exactly as the -3 the core of ABI 4 gave
+// for them.
 // ---------------------------------------------------------------------------
 int TofDriveLogic::median(const Sensor& s, int window) {
     const size_t n = static_cast<size_t>(std::clamp(std::min(s.count, window), 1, 5));
