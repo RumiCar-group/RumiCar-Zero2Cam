@@ -15,12 +15,17 @@ target_link_libraries(test_cam_logic PRIVATE cam_drive_logic nlohmann_json::nloh
 add_test(NAME cam_logic COMMAND test_cam_logic ${CMAKE_SOURCE_DIR}/packs/cam-base)
 
 if(RUMICAR_BUILD_CORE)
+  # A plug-in that reports the previous ABI: the core must refuse it (test_pack).
+  add_library(other_abi_plugin MODULE other_abi_plugin.cpp)
+  target_link_libraries(other_abi_plugin PRIVATE rumicar_api)
+  set_target_properties(other_abi_plugin PROPERTIES PREFIX "lib" OUTPUT_NAME "other_abi" CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+
   add_executable(test_pack test_pack.cpp)
   target_link_libraries(test_pack PRIVATE rumicar_core_lib)
   target_compile_definitions(test_pack PRIVATE TOF_DRIVE_VERSION="${TOF_DRIVE_VERSION}")
-  add_dependencies(test_pack py_drive_manifest)
+  add_dependencies(test_pack py_drive_manifest other_abi_plugin)
   add_test(NAME pack COMMAND test_pack ${CMAKE_SOURCE_DIR}/packs/base $<TARGET_FILE:tof_drive> ${CMAKE_SOURCE_DIR}/packs/cam-base $<TARGET_FILE:cam_drive>
-           ${CMAKE_BINARY_DIR}/logic/stage/py_drive-${PY_DRIVE_VERSION} ${CMAKE_SOURCE_DIR}/packs/py-sample)
+           ${CMAKE_BINARY_DIR}/logic/stage/py_drive-${PY_DRIVE_VERSION} ${CMAKE_SOURCE_DIR}/packs/py-sample $<TARGET_FILE:other_abi_plugin>)
   target_compile_definitions(test_pack PRIVATE CAM_DRIVE_VERSION="${CAM_DRIVE_VERSION}" RUMICAR_PY_SHA256="${RUMICAR_PY_SHA256}")
 
   # Control/telemetry servers exercised over real TCP sockets on 127.0.0.1.

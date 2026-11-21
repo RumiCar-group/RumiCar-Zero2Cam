@@ -65,7 +65,7 @@ public partial class MainWindow : Window
     private bool _makingVideo;
     private string? _lastSessionDirectory;
     private uint _lastThrottled;
-    private bool _abiWarned;   // the car's telemetry is not ABI 4: said once per connection
+    private bool _abiWarned;   // the car's telemetry is not ABI 5: said once per connection
     private JsonElement? _lastStatus;
     private List<string> _auxNames = new();
     // Detectors (by aux slot) that have reported cells: they say where (Local); the others judge the whole view (Global).
@@ -637,9 +637,15 @@ public partial class MainWindow : Window
         if (h.Abi != RumiCarApi.Abi && !_abiWarned)
         {
             _abiWarned = true;
-            _vm.AddLog(h.Abi == RumiCarApi.AbiWithoutSteerStrength
-                ? $"注意：車の送るデータの形式は ABI {h.Abi}（本体 0.4.x）で、操舵の強さ（RC_steer の第 2 引数）を含みません。左右の操舵は強さ 255（最大）として表示・収録します（このアプリは ABI {RumiCarApi.Abi}）"
-                : $"警告：車の送るデータの形式（ABI {h.Abi}）がこのアプリ（ABI {RumiCarApi.Abi}：ToF 0〜200 / -1 / -3、RC_steer（強さ 0〜255 を含む）・RC_drive の値）と異なります。表示と収録の値は正しくありません");
+            _vm.AddLog(h.Abi switch
+            {
+                RumiCarApi.AbiWithTofCutOff =>
+                    $"注意：車の送るデータの形式は ABI {h.Abi}（本体 0.5.x・0.6.x）で、ToF の値は車が {RumiCarApi.TofMaxMmAbi4} mm で打ち切っています（それより先は -3 範囲外）。表示・収録はその値のままです（このアプリは ABI {RumiCarApi.Abi}：ToF 0〜{RumiCarApi.TofMaxMm}）",
+                RumiCarApi.AbiWithoutSteerStrength =>
+                    $"注意：車の送るデータの形式は ABI {h.Abi}（本体 0.4.x）で、ToF の値は車が {RumiCarApi.TofMaxMmAbi4} mm で打ち切っており、操舵の強さ（RC_steer の第 2 引数）を含みません。左右の操舵は強さ 255（最大）として表示・収録します（このアプリは ABI {RumiCarApi.Abi}）",
+                _ =>
+                    $"警告：車の送るデータの形式（ABI {h.Abi}）がこのアプリ（ABI {RumiCarApi.Abi}：ToF 0〜{RumiCarApi.TofMaxMm} / -1 / -3、RC_steer（強さ 0〜255 を含む）・RC_drive の値）と異なります。表示と収録の値は正しくありません",
+            });
         }
         _vm.Tof = $"{FormatTof(h.TofMm[0])} / {FormatTof(h.TofMm[1])} / {FormatTof(h.TofMm[2])}";
         _vm.LogicState = h.StateName.Length > 0 ? FormatState(h.StateName) : h.State.ToString();

@@ -15,7 +15,7 @@ public sealed class TelemetryHeader
     [JsonPropertyName("abi")] public int Abi { get; set; }
     [JsonPropertyName("seq")] public uint Seq { get; set; }
     [JsonPropertyName("t_us")] public ulong TimestampMicroseconds { get; set; }
-    /// <summary>RC_read values: 0..200 mm, -1 timeout, -3 nothing within 20 cm (<see cref="RumiCarApi"/>).</summary>
+    /// <summary>RC_read values with no limit set: 0..2000 mm, -1 timeout, -3 out of range (<see cref="RumiCarApi"/>). A car of ABI 3 / 4 cut them off at 200 mm.</summary>
     [JsonPropertyName("tof_mm")] public int[] TofMm { get; set; } = new int[3];
     /// <summary>What was actually sent to the motors, as RC_steer / RC_drive values: steer LEFT=0 CENTER=1 RIGHT=2 with steer_pwm (its strength 0..255, ABI 4), drive_dir FREE=0 REVERSE=1 FORWARD=2 BRAKE=3, drive_pwm 0..255.</summary>
     [JsonPropertyName("steer")] public int Steer { get; set; } = RumiCarApi.Center;

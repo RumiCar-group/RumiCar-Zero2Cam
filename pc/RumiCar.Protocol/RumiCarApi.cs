@@ -2,16 +2,20 @@ namespace RumiCar.Protocol;
 
 /// <summary>
 /// The values of the RumiCar library API (RC_read / RC_steer / RC_drive of
-/// RumiCar-lib v0.6.0 and RasPi/RumiCar.py 0.6.0), which the car uses on the
-/// wire and in recordings from ABI 3; ABI 4 adds RC_steer's strength
+/// RumiCar-lib v0.7.0 and RasPi/RumiCar.py 0.7.0), which the car uses on the
+/// wire and in recordings from ABI 3; ABI 4 adds RC_steer's strength; from
+/// ABI 5 the car no longer cuts the ToF readings off at 200 mm
 /// (car/include/rumicar/logic_api.h).
 /// </summary>
 public static class RumiCarApi
 {
     /// <summary>ABI of the car's logic interface whose values this PC speaks ("abi" in every telemetry header).</summary>
-    public const int Abi = 4;
+    public const int Abi = 5;
 
-    /// <summary>The previous ABI: the same values without RC_steer's strength (core 0.4.x). Its steering was always full (<see cref="PwmMax"/>).</summary>
+    /// <summary>ABI 4 (core 0.5.x / 0.6.x): the same values, but the car cut the ToF readings off at <see cref="TofMaxMmAbi4"/> (a longer distance arrived as <see cref="TofOutOfRange"/>).</summary>
+    public const int AbiWithTofCutOff = 4;
+
+    /// <summary>ABI 3 (core 0.4.x): as ABI 4 without RC_steer's strength. Its steering was always full (<see cref="PwmMax"/>).</summary>
     public const int AbiWithoutSteerStrength = 3;
 
     // RC_steer: direction ...
@@ -30,10 +34,15 @@ public static class RumiCarApi
     // ... and the PWM duty 0..255 (the share of full duty: 150 = 150/255).
     public const int PwmMax = 255;
 
-    // RC_read: 0..TofMaxMm is a distance in mm.
-    public const int TofMaxMm = 200;
+    // RC_read: 0..TofMaxMm is a distance in mm (the range of the VL53L0X).  These
+    // are the values of the car itself, with no limit: a limit that a program on
+    // the car sets for its own decisions (RC_setReadLimit in drive.py, conf_max_mm
+    // in params.json) does not change what the car sends and what is shown here.
+    public const int TofMaxMm = 2000;
+    /// <summary>Where a car of ABI 3 / 4 cut its ToF readings off.</summary>
+    public const int TofMaxMmAbi4 = 200;
     public const int TofTimeout = -1;        // no reading
-    public const int TofOutOfRange = -3;     // nothing within 20 cm (open road)
+    public const int TofOutOfRange = -3;     // out of range: beyond TofMaxMm or no target (far, open road)
 
     public static string SteerName(int steer) => steer switch
     {

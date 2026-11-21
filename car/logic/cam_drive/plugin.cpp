@@ -73,7 +73,7 @@ int cam_self_test(void* inst, char* err, size_t err_len) {
             f.size = sizeof(f);
             f.seq = i;
             f.t_us = 1'000'000ull + static_cast<uint64_t>(i) * 50'000ull;
-            f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_OUT_OF_RANGE;   // nothing within 20 cm
+            f.tof_mm[0] = f.tof_mm[1] = f.tof_mm[2] = RUMI_TOF_OUT_OF_RANGE;   // out of range: open
             rumi_command c{};
             if (!probe.step(f, c)) { put_err(err, err_len, "tof: step rejected a well-formed frame"); return 3; }
             const bool forward = c.drive_dir == RUMI_DRIVE_FORWARD || (c.drive_dir == RUMI_DRIVE_FREE && c.drive_pwm == 0);

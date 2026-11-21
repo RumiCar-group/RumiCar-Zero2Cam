@@ -57,6 +57,9 @@ private:
 
 bool valid_optional_name(const std::string& name) { return name.empty() || vision::valid_detector_name(name); }
 
+// "lo..RUMI_TOF_MAX_MM" for the messages: the upper end of a distance is the range of the car's readings.
+std::string tof_range(int lo) { return std::to_string(lo) + ".." + std::to_string(RUMI_TOF_MAX_MM); }
+
 SignalParams parse_signal(const json& j) {
     Section s(j, "signal");
     SignalParams p;
@@ -132,19 +135,19 @@ std::string validate(const VehicleParams& p, const tof::Params& tof) {
     if (!vision::valid_detector_name(p.detector)) return "vehicle.detector is not a valid detector name";
     if (p.lane_cols < 1 || p.lane_cols > 255) return "vehicle.lane_cols must be 1..255";
     if (p.follow_gap_mm <= tof.d_emergency_mm) return "vehicle.follow_gap_mm must be greater than tof.d_emergency_mm";
-    if (p.follow_gap_mm >= tof.conf_max_mm) return "vehicle.follow_gap_mm must be less than tof.conf_max_mm (the ToF cannot see the gap)";
-    if (p.follow_band_mm < 1 || p.follow_band_mm > RUMI_TOF_MAX_MM) return "vehicle.follow_band_mm must be 1..200";
-    if (p.follow_gap_mm + p.follow_band_mm > tof.conf_max_mm) return "vehicle.follow_gap_mm + follow_band_mm must not exceed tof.conf_max_mm (the ToF cannot see beyond it)";
+    if (p.follow_gap_mm >= tof.conf_max_mm) return "vehicle.follow_gap_mm must be less than tof.conf_max_mm (a reading at/above it counts as open: the gap would not be seen)";
+    if (p.follow_band_mm < 1 || p.follow_band_mm > RUMI_TOF_MAX_MM) return "vehicle.follow_band_mm must be " + tof_range(1);
+    if (p.follow_gap_mm + p.follow_band_mm > tof.conf_max_mm) return "vehicle.follow_gap_mm + follow_band_mm must not exceed tof.conf_max_mm (a reading at/above it counts as open)";
     if (p.follow_v < 0 || p.follow_v > RUMI_PWM_MAX) return "vehicle.follow_v out of range";
     if (p.parked_confirm_ms < 100 || p.parked_confirm_ms > 600000) return "vehicle.parked_confirm_ms must be 100..600000";
-    if (p.still_delta_mm < 0 || p.still_delta_mm > RUMI_TOF_MAX_MM) return "vehicle.still_delta_mm must be 0..200";
+    if (p.still_delta_mm < 0 || p.still_delta_mm > RUMI_TOF_MAX_MM) return "vehicle.still_delta_mm must be " + tof_range(0);
     if (p.overtake_side != "left" && p.overtake_side != "right" && p.overtake_side != "open")
         return "vehicle.overtake_side must be \"left\", \"right\" or \"open\"";
-    if (p.side_clear_mm < 0 || p.side_clear_mm > RUMI_TOF_MAX_MM) return "vehicle.side_clear_mm must be 0..200";
+    if (p.side_clear_mm < 0 || p.side_clear_mm > RUMI_TOF_MAX_MM) return "vehicle.side_clear_mm must be " + tof_range(0);
     if (p.overtake_v < 0 || p.overtake_v > RUMI_PWM_MAX) return "vehicle.overtake_v out of range";
     if (p.out_ms < 0 || p.out_ms > 60000) return "vehicle.out_ms out of range";
     if (p.pass_min_ms < 0 || p.pass_max_ms > 60000 || p.pass_min_ms > p.pass_max_ms) return "require 0 <= vehicle.pass_min_ms <= vehicle.pass_max_ms <= 60000";
-    if (p.pass_clear_mm < 0 || p.pass_clear_mm > RUMI_TOF_MAX_MM) return "vehicle.pass_clear_mm must be 0..200";
+    if (p.pass_clear_mm < 0 || p.pass_clear_mm > RUMI_TOF_MAX_MM) return "vehicle.pass_clear_mm must be " + tof_range(0);
     if (p.pass_clear_ms < 0 || p.pass_clear_ms > 60000) return "vehicle.pass_clear_ms out of range";
     if (p.in_ms < 0 || p.in_ms > 60000) return "vehicle.in_ms out of range";
     if (p.ignore_ms < 0 || p.ignore_ms > 60000) return "vehicle.ignore_ms out of range";
@@ -158,7 +161,7 @@ std::string validate(const IntersectionParams& p) {
     if (p.left_detector == p.right_detector) return "intersection.left_detector and right_detector must differ";
     if (p.approach_v < 0 || p.approach_v > RUMI_PWM_MAX) return "intersection.approach_v out of range";
     if (p.stop_trigger != "side_open" && p.stop_trigger != "detector") return "intersection.stop_trigger must be \"side_open\" or \"detector\"";
-    if (p.open_mm < 1 || p.open_mm > RUMI_TOF_MAX_MM) return "intersection.open_mm must be 1..200";
+    if (p.open_mm < 1 || p.open_mm > RUMI_TOF_MAX_MM) return "intersection.open_mm must be " + tof_range(1);
     if (p.stop_ms < 0 || p.stop_ms > 60000) return "intersection.stop_ms out of range";
     if (p.turn != "straight" && p.turn != "left" && p.turn != "right" && p.turn != "detector")
         return "intersection.turn must be \"straight\", \"left\", \"right\" or \"detector\"";

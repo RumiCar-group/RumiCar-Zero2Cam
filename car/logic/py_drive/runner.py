@@ -12,8 +12,9 @@ RumiCar-group/RumiCar, the same API as the Arduino library RumiCar-lib.
 
     def setup():         # optional: once, when the program starts
         RC_setup()
+        RC_setReadLimit(200)       # how far RC_read is trusted [mm]: beyond it RC_read returns -3
     def loop():          # every frame (20 times a second)
-        d = RC_read(CENTER)        # 0..200 mm, -1 timeout, -3 nothing within 20 cm
+        d = RC_read(CENTER)        # 0..limit mm (0..2000 with no limit set), -1 timeout, -3 out of range (far)
         RC_steer(LEFT, 128)        # LEFT / CENTER / RIGHT, strength 0..255 (255 when left out)
         RC_drive(FORWARD, 150)     # FREE / REVERSE / FORWARD / BRAKE, 0..255
 
@@ -25,7 +26,9 @@ registers it as the module `RumiCar` before drive.py is loaded.  The library's
 Zero2Cam hardware layer (RumiCar._use_zero2cam) does no output: the runner
 puts the frame's sensor values in it before each loop() and sends the values
 the RC_* functions left in it (steer, steer_pwm, drive_dir, drive_pwm, state)
-to the core after it.  Standard library only.
+to the core after it.  The sensor values are passed on as the core sent them
+(0..2000 mm, -1, -3); the limit set with RC_setReadLimit is applied by the
+library's RC_read, not here.  Standard library only.
 """
 import importlib.util
 import json

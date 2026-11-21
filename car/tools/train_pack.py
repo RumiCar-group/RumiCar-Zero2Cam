@@ -73,8 +73,9 @@ class Session:
                     self.lines.append(line)
         if self.lines and self.lines[0]["header"].get("abi", 0) not in SESSION_ABIS:
             raise SystemExit(f"error: {path} was recorded by a car with ABI {self.lines[0]['header'].get('abi', 0)}; "
-                             f"this version needs ABI {' or '.join(map(str, SESSION_ABIS))} (ToF 0..200 / -1 / -3, steer 0..2, "
-                             "drive_dir + drive_pwm): record the session again with the current car software")
+                             f"this version needs ABI {', '.join(map(str, SESSION_ABIS[:-1]))} or {SESSION_ABIS[-1]} "
+                             "(ToF in mm / -1 / -3, steer 0..2, drive_dir + drive_pwm): record the session again "
+                             "with the current car software")
         self.scenario = ""
         sj = os.path.join(self.path, "session.json")
         if os.path.isfile(sj):
@@ -368,8 +369,10 @@ def propose_blobs(s: Session, a, out_path: str) -> int:
 
 
 def tof_mm(line, i: int):
-    """ToF reading i of a meta line (an RC_read value): an int 0..200 mm, or None when the
-    sensor gave no reading (-1) or saw nothing within 20 cm (-3, "open")."""
+    """ToF reading i of a meta line (an RC_read value with no limit set): an int
+    0..TOF_MAX_MM mm, or None when the sensor gave no reading (-1) or the distance was
+    out of range (-3, "open").  A car of ABI 3 / 4 recorded -3 for every distance above
+    TOF_MAX_MM_ABI4."""
     v = line["header"].get("tof_mm")
     if not isinstance(v, list) or len(v) <= i or not isinstance(v[i], (int, float)):
         return None
@@ -377,12 +380,38 @@ def tof_mm(line, i: int):
     return v if 0 <= v <= TOF_MAX_MM else None
 
 
-TOF_MAX_MM = 200          # RC_read returns -3 beyond this (logic_api.h RUMI_TOF_MAX_MM)
-# "abi" in the recorded headers that this tool reads: ToF 0..200 / -1 / -3, steer 0..2,
-# drive_dir + drive_pwm.  ABI 4 adds steer_pwm (RC_steer's strength); the frames this
-# tool learns from (images, ToF) are the same in both.
-SESSION_ABIS = (3, 4)
-PACK_MIN_ABI = 4          # the packs written: params.json for cam_drive 0.4.0 (ABI 4, the tof section may set the steering strengths)
+TOF_MAX_MM = 2000         # the car records -3 beyond this (logic_api.h RUMI_TOF_MAX_MM, ABI 5): the range of the VL53L0X
+TOF_MAX_MM_ABI4 = 200     # where a car of ABI 3 / 4 cut its readings off, and the largest distance its logics accept in params.json
+# "abi" in the recorded headers that this tool reads: ToF in mm / -1 / -3, steer 0..2,
+# drive_dir + drive_pwm.  ABI 4 adds steer_pwm (RC_steer's strength).  ABI 5 records the
+# ToF readings up to TOF_MAX_MM; ABI 3 and 4 recorded -3 for every distance above
+# TOF_MAX_MM_ABI4.  The images this tool learns from are the same in all three.
+SESSION_ABIS = (3, 4, 5)
+# The ABI of the logic a written pack needs (manifest "min_abi"): cam_drive 0.4.0 (ABI 4:
+# the tof section may set the steering strengths), or cam_drive 0.6.0 (ABI 5) when one of
+# the distances below exceeds TOF_MAX_MM_ABI4, which an ABI 4 logic refuses.
+PACK_MIN_ABI = 4
+PACK_MIN_ABI_WIDE = 5
+# The distances of params.json that an ABI 4 logic limits to TOF_MAX_MM_ABI4 (the other
+# distances of the tof section are bounded by conf_max_mm).
+WIDE_DISTANCE_KEYS = {"tof": ("conf_max_mm",),
+                      "vehicle": ("follow_gap_mm", "follow_band_mm", "still_delta_mm", "side_clear_mm", "pass_clear_mm"),
+                      "intersection": ("open_mm",)}
+
+
+def pack_min_abi(params: dict) -> int:
+    """min_abi of a pack with these params: PACK_MIN_ABI_WIDE when it trusts or compares
+    the ToF beyond TOF_MAX_MM_ABI4 (only a car that does not cut its readings off there,
+    ABI 5, can run it), otherwise PACK_MIN_ABI."""
+    for section, keys in WIDE_DISTANCE_KEYS.items():
+        values = params.get(section)
+        if not isinstance(values, dict):
+            continue
+        for key in keys:
+            v = values.get(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > TOF_MAX_MM_ABI4:
+                return PACK_MIN_ABI_WIDE
+    return PACK_MIN_ABI
 
 
 def propose_near_frames(s: Session, a, out_path: str) -> int:
@@ -405,7 +434,7 @@ def propose_near_frames(s: Session, a, out_path: str) -> int:
 
 
 def propose_side_openings(s: Session, a, out_path: str) -> int:
-    """The moments a side ToF went from a wall (below --near-mm) to open (-3 or at/above --near-mm).
+    """The moments a side ToF went from a wall (below --near-mm) to open (-3, or at/above --near-mm).
     The side ToFs look 65 degrees forward, so this is the moment the car's front reached the
     corner of the opening: the --before-ms before it show the intersection ahead."""
     side = 0 if a.detector.endswith("left") else 2 if a.detector.endswith("right") else None
@@ -478,7 +507,8 @@ def load_parent(parent_dir: str):
 
 
 # The behaviour parameters and their defaults, as in car/logic/cam_drive/cam_params.hpp (docs 3.11).
-# Speeds are RC_drive PWM duties (0..255), distances RC_read values (0..200 mm).
+# Speeds are RC_drive PWM duties (0..255), distances RC_read values (0..TOF_MAX_MM mm) as the
+# ToF logic conditions them: a reading at/above tof.conf_max_mm is open.
 DEFAULT_SIGNAL = {"red_detector": "traffic_light_red", "green_detector": "traffic_light_green", "stop_min_cells": 2,
                   "approach_v": 128, "min_stop_ms": 1000, "resume_without_green_ms": 3000, "resume_ignore_ms": 1500}
 DEFAULT_VEHICLE = {"detector": "vehicle", "lane_cols": 4, "follow_gap_mm": 150, "follow_band_mm": 40, "follow_v": 179,
@@ -682,12 +712,16 @@ def cmd_train(a) -> int:
         if s.scenario and s.scenario not in scenarios:
             scenarios.append(s.scenario)
     parent_name = parent_manifest.get("id", "") + "-" + parent_manifest.get("version", "")
-    ns = argparse.Namespace(dir=a.out_dir, id=a.id, version=a.version, logic="cam_drive", min_abi=PACK_MIN_ABI,
+    min_abi = pack_min_abi(params)
+    ns = argparse.Namespace(dir=a.out_dir, id=a.id, version=a.version, logic="cam_drive", min_abi=min_abi,
                             description=a.description or f"{', '.join(d.name for d in pack.detectors)} learned from {', '.join(s.name for s in train)}",
                             capability=capabilities, scenario=scenarios, parent=parent_name)
     make_manifest.cmd_pack(ns)
     print(f"pack {a.id}-{a.version} written to {a.out_dir}: {len(pack.detectors)} detectors, capabilities {capabilities}, "
-          f"behaviours {', '.join(behaviours) or '-'}")
+          f"behaviours {', '.join(behaviours) or '-'}, min_abi {min_abi}")
+    if min_abi == PACK_MIN_ABI_WIDE:
+        print(f"note: a distance in params.json exceeds {TOF_MAX_MM_ABI4} mm: this pack needs a car whose core is 0.7.0 or later "
+              f"(ABI {PACK_MIN_ABI_WIDE}); recordings of an older car carry no ToF value above {TOF_MAX_MM_ABI4} mm")
     print("next: rumicar-replay or `train_pack.py replay` on a session you did not train on, then send it with the drive manager")
     return 0
 
@@ -806,7 +840,10 @@ def main() -> int:
     pr.add_argument("--detector", default="traffic_light_red")
     pr.add_argument("--color-class", default=0, help="pixel class to look for when --detector is not a known name (0 red .. 5 magenta)")
     pr.add_argument("--min-pixels", type=int, default=3, help="smallest blob in small-image pixels")
-    pr.add_argument("--near-mm", type=int, default=200, help="vehicle: centre ToF below this is 'close'; intersection: a side below this is a wall (RC_read values: 0..200 mm; -3 = nothing within 20 cm = open)")
+    pr.add_argument("--near-mm", type=int, default=200,
+                    help="vehicle: centre ToF below this is 'close'; intersection: a side below this is a wall, at/above it (or -3) open. "
+                         "The car's readings are 0..2000 mm and -3 = out of range (a car of ABI 3 / 4 recorded -3 above 200 mm). "
+                         "Use the conf_max_mm of the pack you make (its default is 200): the logic treats a reading at/above it as open")
     pr.add_argument("--before-ms", type=int, default=2000, help="intersection: how long before the side opened the stretch starts")
     pr.add_argument("--every", type=int, default=1, help="look at every n-th frame")
     pr.add_argument("--out")

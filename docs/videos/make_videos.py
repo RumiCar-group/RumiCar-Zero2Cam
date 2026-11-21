@@ -1,12 +1,13 @@
 """Explainer videos for RumiCar Zero2Cam (Japanese and English), 1280x720, 30 fps, silent.
 
 Videos (each in ja and en, written as <out dir>/<name>-<lang>.mp4):
-  01-tof-readings  what the ToF readings mean (0..200 mm / -3 / -1) and the "open" of tof_drive
+  01-tof-readings  what the ToF readings mean (0..2000 mm / -3 / -1) and the limit a driving logic sets
+                   for them (conf_max_mm of tof_drive: at or above it "open"; RC_setReadLimit in drive.py)
   02-auto-start    start ramp and auto limit when auto mode is entered (no sudden start)
   03-overtaking    following and overtaking a parked vehicle (cam_drive vehicle behaviour)
 
-Every number shown is a default in the sources (ABI 3, v0.4.0): core/src/main.cpp to_tof_value and
-include/rumicar/logic_api.h (RUMI_TOF_MAX_MM 200, -3, -1), core.json (tof_read_timeout_ms 100,
+Every number shown is a default in the sources (ABI 5, v0.7.0): core/src/main.cpp to_tof_value and
+include/rumicar/logic_api.h (RUMI_TOF_MAX_MM 2000, -3, -1), core.json (tof_read_timeout_ms 100,
 auto_accel_pwm_per_s 287, max_drive_pwm 255), tof_logic.hpp (conf_max_mm 200, invalid_hold_ms 300),
 cam_params.hpp (follow_gap_mm 150, follow_v 179, parked_confirm_ms 2000, side_clear_mm 120, overtake_v 128,
 out_ms 500, pass_min_ms 800, pass_max_ms 3000, pass_clear_mm 150, pass_clear_ms 700, in_ms 500, ignore_ms 1500)
@@ -192,28 +193,30 @@ def ray_hit(sx, sy, dx, dy, rects, y_wall):
 T1 = {
     "ja": {
         "title": "ToF センサーの読み取り値と表示",
-        "s0": ["RumiCar Zero2Cam：VL53L0X（ToF 距離センサー）×3 の値の意味", "0〜200 mm・−3・−1 の違いと、走行ロジック tof_drive での扱い", "値は RumiCar ライブラリ（Arduino・RasPi・drive.py の RC_read）と同じ"],
-        "s1": ["レーザーが対象物で反射して戻ると、往復時間から距離を算出します", "0〜200 mm はそのまま距離。表示：測距値 [mm]（例 180）　drive.py：RC_read() = 180"],
-        "s2": ["対象物を検出できなかった場合（反射光が戻らない・測距範囲外）と、", "200 mm を超える距離は −3（20 cm 以内に何もない＝開けている）", "表示：-3 範囲外　drive.py：RC_read() = -3"],
+        "s0": ["RumiCar Zero2Cam：VL53L0X（ToF 距離センサー）×3 の値の意味", "0〜2000 mm・−3・−1 の違いと、走行ロジックが決める「信頼する距離の上限」", "値は RumiCar ライブラリ（Arduino・RasPi・drive.py の RC_read）と同じ"],
+        "s1": ["レーザーが対象物で反射して戻ると、往復時間から距離を算出します", "0〜2000 mm はそのまま距離。表示：測距値 [mm]（例 180）　drive.py：RC_read() = 180"],
+        "s2": ["対象物を検出できなかった場合（反射光が戻らない）と、", "2000 mm（センサーの測距範囲）を超える距離は −3（範囲外＝遠い）", "表示：-3 範囲外　drive.py：RC_read() = -3"],
         "s3": ["反射光が戻っても受信した信号が弱く、規定値に満たない場合も −3", "（暗い面・浅い角度の面など）。表示：-3 範囲外"],
         "s4": ["既定 100 ms（i2c.tof_read_timeout_ms）以内に測定結果が得られない、", "または I2C 通信エラー → −1（読めない）。表示：-1 タイムアウト　drive.py：RC_read() = -1", "tof_drive は前の値を 300 ms（invalid_hold_ms）保持し、超過すると SENSOR_FAULT で停止"],
-        "s5": ["tof_drive は conf_max_mm（既定 200 mm）以上の読みと −3 を「開放」", "（判断対象の距離内に障害物なし）として扱います", "−3 は数としては最も小さいので、drive.py では比較の前に大きな値へ置き換えます"],
-        "mm": "測距値", "nores": "反射光なし／200 mm 超", "weak": "受信信号 < 規定値", "timeout": "タイムアウト／I2C エラー",
-        "sensor": "VL53L0X", "obj": "対象物", "dark": "暗い面・浅い角度", "range": "20 cm（RC_read の上限）",
-        "open_zone": "開放", "dist_zone": "距離として使用", "axis": "読み取り値 [mm]",
+        "s5": ["本体は値を途中で打ち切りません。どの距離まで信頼するか（上限）は走行ロジックが決めます", "tof_drive：conf_max_mm（既定 200）以上の読みと −3 を「開放」として扱う", "drive.py：RC_setReadLimit(上限) を超えると RC_read() が −3（比較の前に大きな値へ置き換える）"],
+        "mm": "測距値", "nores": "反射光なし／2000 mm 超", "weak": "受信信号 < 規定値", "timeout": "タイムアウト／I2C エラー",
+        "sensor": "VL53L0X", "obj": "対象物", "dark": "暗い面・浅い角度", "range": "2000 mm（測距範囲）",
+        "open_zone": "開放（上限より先）", "dist_zone": "距離として使用", "axis": "本体の読み取り値 [mm]（表示・収録はこの値）",
+        "limit": "上限：conf_max_mm = 200（既定）", "core": "本体", "logic": "tof_drive", "open": "開放", "beyond": "−3 範囲外",
         "schem": "模式図（縮尺は実際と異なる）", "hold": "前の値を保持 300 ms", "fault": "SENSOR_FAULT（停止）",
     },
     "en": {
         "title": "ToF sensor readings and their display",
-        "s0": ["RumiCar Zero2Cam: what the values of the three VL53L0X (ToF distance sensors) mean", "0–200 mm, −3 and −1, and how the driving logic tof_drive uses them", "The values are those of the RumiCar library (Arduino, RasPi, RC_read in drive.py)"],
-        "s1": ["When the laser light is reflected by an object and returns, the distance is", "computed from the round-trip time. 0–200 mm is the distance. Display: range in mm (e.g. 180)", "drive.py: RC_read() = 180"],
-        "s2": ["When no target is detected (no light returns, beyond the measuring range) and", "for distances over 200 mm the value is −3 (nothing within 20 cm = open)", "Display: -3 範囲外 (out of range)    drive.py: RC_read() = -3"],
+        "s0": ["RumiCar Zero2Cam: what the values of the three VL53L0X (ToF distance sensors) mean", "0–2000 mm, −3 and −1, and the limit up to which a driving logic trusts them", "The values are those of the RumiCar library (Arduino, RasPi, RC_read in drive.py)"],
+        "s1": ["When the laser light is reflected by an object and returns, the distance is", "computed from the round-trip time. 0–2000 mm is the distance. Display: range in mm (e.g. 180)", "drive.py: RC_read() = 180"],
+        "s2": ["When no target is detected (no light returns) and for distances over", "2000 mm (the sensor's measuring range) the value is −3 (out of range = far)", "Display: -3 範囲外 (out of range)    drive.py: RC_read() = -3"],
         "s3": ["Also −3 when light returns but the received signal is too weak,", "below the configured limit (dark or grazing surfaces). Display: -3 範囲外"],
         "s4": ["No measurement within 100 ms (i2c.tof_read_timeout_ms, default), or an I2C", "error → −1 (no reading). Display: -1 タイムアウト (timeout)    drive.py: RC_read() = -1", "tof_drive holds the previous value for 300 ms (invalid_hold_ms), then stops in SENSOR_FAULT"],
-        "s5": ["tof_drive treats readings at or above conf_max_mm (default 200 mm) and −3", "as \"open\" (no obstacle within the judged distance).", "−3 is the smallest number, so drive.py replaces it with a large value before comparing"],
-        "mm": "range", "nores": "no reflected light / over 200 mm", "weak": "received signal < limit", "timeout": "timeout / I2C error",
-        "sensor": "VL53L0X", "obj": "object", "dark": "dark / grazing surface", "range": "20 cm (RC_read limit)",
-        "open_zone": "open", "dist_zone": "used as a distance", "axis": "reading [mm]",
+        "s5": ["The core does not cut the values off. How far they are trusted (the limit) is up to the driving logic.", "tof_drive: a reading at or above conf_max_mm (default 200), and −3, is \"open\"", "drive.py: above RC_setReadLimit(limit) RC_read() gives −3 (replace it with a large value before comparing)"],
+        "mm": "range", "nores": "no reflected light / over 2000 mm", "weak": "received signal < limit", "timeout": "timeout / I2C error",
+        "sensor": "VL53L0X", "obj": "object", "dark": "dark / grazing surface", "range": "2000 mm (measuring range)",
+        "open_zone": "open (beyond the limit)", "dist_zone": "used as a distance", "axis": "the core's reading [mm] (what is displayed and recorded)",
+        "limit": "limit: conf_max_mm = 200 (default)", "core": "core", "logic": "tof_drive", "open": "open", "beyond": "−3 範囲外",
         "schem": "Schematic (not to scale)", "hold": "previous value held 300 ms", "fault": "SENSOR_FAULT (stop)",
     },
 }
@@ -284,29 +287,50 @@ def beam_scene(d, L, t, mode):
             label(d, ((hold_end + x1) / 2, y - 22), L["fault"], 22, RED, True, "md")
 
 
+CONF_MAX_MM = 200     # tof_logic.hpp: the default limit of tof_drive (a reading at or above it is open)
+TOF_MAX_MM = 2000     # logic_api.h RUMI_TOF_MAX_MM: the core gives -3 beyond it
+
+
 def numberline(d, L, t):
-    x0, x1, y = 160, 1120, 330
-    mm_max = 250   # the sensor reading is cut off at 200 mm (RUMI_TOF_MAX_MM): beyond it the value is -3
+    """The core's reading on an axis 0..2000 mm and beyond, and what tof_drive makes of it.
+    The axis is in three linear pieces so that the default limit (200) stays readable:
+    0..250 mm on the left half, 250..2000 mm compressed, then the part beyond the range."""
+    x0, xa, xb, x1, y = 150, 640, 1010, 1130, 330
+    near_mm, past_mm = 250, 2400
 
     def X(mm):
-        return lerp(x0, x1, mm / mm_max)
+        if mm <= near_mm:
+            return lerp(x0, xa, mm / near_mm)
+        if mm <= TOF_MAX_MM:
+            return lerp(xa, xb, (mm - near_mm) / (TOF_MAX_MM - near_mm))
+        return lerp(xb, x1, min(1.0, (mm - TOF_MAX_MM) / (past_mm - TOF_MAX_MM)))
 
-    cmax = 200
-    d.rectangle([X(cmax), y - 70, x1, y + 18], fill=(222, 240, 226))
-    d.rectangle([x0, y - 70, X(cmax), y + 18], fill=(232, 238, 247))
-    label(d, ((X(cmax) + x1) / 2, y - 60), L["open_zone"], 26, GREEN, True, "ma")
-    label(d, ((x0 + X(cmax)) / 2, y - 60), L["dist_zone"], 26, NAVY, True, "ma")
+    xc = X(CONF_MAX_MM)
+    d.rectangle([x0, y - 70, xc, y + 18], fill=(232, 238, 247))
+    d.rectangle([xc, y - 70, xb, y + 18], fill=(222, 240, 226))
+    d.rectangle([xb, y - 70, x1, y + 18], fill=(250, 232, 208))
+    label(d, ((x0 + xc) / 2, y - 60), L["dist_zone"], 26, NAVY, True, "ma")
+    label(d, ((xc + xb) / 2, y - 60), L["open_zone"], 26, GREEN, True, "ma")
+    label(d, ((xb + x1) / 2, y - 56), L["beyond"], 20, ORANGE, True, "ma")
     d.line([x0, y + 18, x1, y + 18], fill=INK, width=3)
-    for mm in range(0, 201, 50):
+    for mm in (0, 50, 100, 150, 200, 1000, 2000):
         d.line([X(mm), y + 18, X(mm), y + 30], fill=INK, width=2)
         label(d, (X(mm), y + 34), str(mm), 20, INK, False, "ma")
-    label(d, ((X(cmax) + x1) / 2, y - 26), "−3", 22, GREEN, True, "ma")
-    d.line([X(cmax), y - 80, X(cmax), y + 30], fill=RED, width=3)
-    label(d, (X(cmax), y - 84), "conf_max_mm = 200 = RC_read の上限" if L["mm"] == "測距値" else "conf_max_mm = 200 = RC_read limit", 22, RED, True, "md")
+    # the break in the scale between its near and its far part
+    for dx in (-5, 5):
+        d.line([xa + dx - 5, y + 28, xa + dx + 5, y + 8], fill=INK, width=2)
+    d.line([xc, y - 80, xc, y + 30], fill=RED, width=3)
+    label(d, (xc, y - 84), L["limit"], 22, RED, True, "md")
     label(d, ((x0 + x1) / 2, y + 66), L["axis"], 22, GREY, False, "ma")
-    v = 60 + 180 * (0.5 - 0.5 * math.cos(t * 1.3))   # true distance 60..240 mm; the reading is -3 beyond 200
+    # the true distance sweeps 60 .. 2300 mm and back (slowly through the near part)
+    u = 0.5 - 0.5 * math.cos(t * 0.8)
+    v = 60 + (near_mm - 60) * min(1.0, u / 0.5) if u < 0.5 else near_mm + (2300 - near_mm) * (u - 0.5) / 0.5
+    reading = "−3" if v > TOF_MAX_MM else f"{int(v)} mm"                       # what the core gives
+    is_open = v >= CONF_MAX_MM                                                 # what tof_drive makes of it
     d.polygon([(X(v), y + 12), (X(v) - 12, y - 10), (X(v) + 12, y - 10)], fill=ORANGE)
-    pill(d, (X(v) - 70, y - 160), "−3" if v > cmax else f"{int(v)} mm", bg=GREEN if v > cmax else NAVY, size=24)
+    text = f"{L['core']}: {reading}  →  {L['logic']}: {L['open'] if is_open else reading}"
+    tw = d.textlength(text, font=font(24, True)) + 32
+    pill(d, (clamp(X(v) - tw / 2, 40, W - 40 - tw), y - 170), text, bg=GREEN if is_open else NAVY, size=24)
 
 
 def video1(lang):
@@ -318,7 +342,7 @@ def video1(lang):
         (8.0, lambda t: scene(L, 3, n, L["s2"], t, lambda d: beam_scene(d, L, t, "none"))),
         (7.0, lambda t: scene(L, 4, n, L["s3"], t, lambda d: beam_scene(d, L, t, "weak"))),
         (8.0, lambda t: scene(L, 5, n, L["s4"], t, lambda d: beam_scene(d, L, t, "fail"))),
-        (9.0, lambda t: scene(L, 6, n, L["s5"], t, lambda d: numberline(d, L, t))),
+        (10.0, lambda t: scene(L, 6, n, L["s5"], t, lambda d: numberline(d, L, t))),
     ]
 
 
@@ -423,25 +447,27 @@ T3 = {
         "title": "駐車車両の追い越し（cam_drive の車両の挙動）",
         "s0": ["RumiCar Zero2Cam：前方車両への追従と駐車車両の追い越し", "状態 FOLLOW → OVERTAKE_OUT → OVERTAKE_PASS → OVERTAKE_IN（既定値で説明）"],
         "s1": ["自車線に車両を確定すると FOLLOW：旋回せずに追従し、車間（ToF 中央）で速度を制限", "車間 150 mm（follow_gap_mm）以下で速度の上限 0（停止）、190 mm で 179（follow_v）", "ToF は 3 基とも車体の前にあり、左右は前方 65° 向き（真横ではない）"],
-        "s2": ["停止したまま車間が広がらない状態が 2 秒（parked_confirm_ms）続くと駐車車両と判定", "追い越し側の ToF（前方 65°）が 120 mm（side_clear_mm）以上か −3 なら OVERTAKE_OUT、", "未満なら FOLLOW_WAIT"],
+        "s2": ["停止したまま車間が広がらない状態が 2 秒（parked_confirm_ms）続くと駐車車両と判定", "追い越し側の ToF（前方 65°）が 120 mm（side_clear_mm）以上か開放なら OVERTAKE_OUT、", "未満なら FOLLOW_WAIT"],
         "s3": ["OVERTAKE_OUT：追い越し側へ最大舵角で 500 ms（out_ms）進路変更", "速度の上限 128（overtake_v・全開 255 の約 50%）"],
-        "s4": ["OVERTAKE_PASS：操舵を中立にして並走。内側の ToF が 150 mm 未満（車両を検出）の後、150 mm 以上", "か −3 が 700 ms（pass_clear_ms）続き、かつ 800 ms 以上経過で通過完了（最長 3000 ms）", "内側の ToF は前方 65° 向きなので、自車の前端が車両の前端を過ぎると見失う。700 ms で車体の残りが通過"],
+        "s4": ["OVERTAKE_PASS：操舵を中立にして並走。内側の ToF が 150 mm 未満（車両を検出）の後、150 mm 以上", "か開放が 700 ms（pass_clear_ms）続き、かつ 800 ms 以上経過で通過完了（最長 3000 ms）", "内側の ToF は前方 65° 向きなので、自車の前端が車両の前端を過ぎると見失う。700 ms で車体の残りが通過"],
         "s5": ["OVERTAKE_IN：反対側へ最大舵角で 500 ms（in_ms）元の車線へ復帰", "その後 1.5 秒（ignore_ms）は車両の検出を無視。赤信号・交差点で中止"],
         "parked": "駐車車両", "own": "自車", "gap": "車間", "timer": "停止・車間不変", "side": "追い越し側 ToF（前方 65°）",
         "inner": "内側 ToF（前方 65°）", "schem": "模式図（時間は既定値、距離・速度は実際と異なる）", "ignore": "車両の検出を無視",
         "tof3": "ToF ×3：中央は正面、左右は前方 65° 向き", "lost": "見失った（前端が車両の前端を過ぎた）→ 700 ms 計測",
+        "open": "開放", "open_note": "（開放）",
     },
     "en": {
         "title": "Overtaking a parked vehicle (cam_drive vehicle behaviour)",
         "s0": ["RumiCar Zero2Cam: following a vehicle ahead and overtaking a parked one", "States FOLLOW → OVERTAKE_OUT → OVERTAKE_PASS → OVERTAKE_IN (with the defaults)"],
         "s1": ["A vehicle confirmed in the own lane gives FOLLOW: no turning, speed limited by the gap", "(centre ToF). At 150 mm (follow_gap_mm) or less the cap is 0 (stop); at 190 mm it is 179 (follow_v)", "All three ToFs sit at the front of the body; the left and right ones look 65° forward, not sideways"],
-        "s2": ["Stopped with the gap unchanged for 2 s (parked_confirm_ms): classified as parked.", "Passing-side ToF (65° forward) ≥ 120 mm (side_clear_mm) or −3: OVERTAKE_OUT,", "otherwise FOLLOW_WAIT"],
+        "s2": ["Stopped with the gap unchanged for 2 s (parked_confirm_ms): classified as parked.", "Passing-side ToF (65° forward) ≥ 120 mm (side_clear_mm) or open: OVERTAKE_OUT,", "otherwise FOLLOW_WAIT"],
         "s3": ["OVERTAKE_OUT: maximum steering towards the passing side for 500 ms (out_ms)", "speed cap 128 (overtake_v, about 50 % of the full 255)"],
-        "s4": ["OVERTAKE_PASS: steering neutral, alongside. After the inner ToF reads < 150 mm (vehicle),", "≥ 150 mm or −3 for 700 ms (pass_clear_ms) and at least 800 ms elapsed: passed (at most 3000 ms)", "The inner ToF looks 65° forward, so it loses the vehicle once our front passes its front; 700 ms lets the rest pass"],
+        "s4": ["OVERTAKE_PASS: steering neutral, alongside. After the inner ToF reads < 150 mm (vehicle),", "≥ 150 mm or open for 700 ms (pass_clear_ms) and at least 800 ms elapsed: passed (at most 3000 ms)", "The inner ToF looks 65° forward, so it loses the vehicle once our front passes its front; 700 ms lets the rest pass"],
         "s5": ["OVERTAKE_IN: maximum steering the other way for 500 ms (in_ms) back to the lane", "then vehicle detections are ignored for 1.5 s (ignore_ms). Red light / intersection aborts"],
         "parked": "parked", "own": "own", "gap": "gap", "timer": "stopped, gap unchanged", "side": "passing-side ToF (65° fwd)",
         "inner": "inner ToF (65° fwd)", "schem": "Schematic (times are the defaults; distances and speeds are not to scale)", "ignore": "vehicle detections ignored",
         "tof3": "3 ToFs: centre straight ahead, left / right 65° forward", "lost": "lost (our front passed its front) → 700 ms timer",
+        "open": "open", "open_note": " (open)",
     },
 }
 
@@ -496,7 +522,8 @@ def ovt_scene(d, L, t, phase, dur):
         fx = p(TOF_C[0], 0)[0]
         gap_mm = int(lerp(600, 150, ease(u))) if phase == "follow" else 150
         d.line([fx, y, PARK_X - 55, y], fill=RED, width=3)
-        label(d, ((fx + PARK_X - 55) / 2, y - 40), f"{L['gap']} {gap_mm if gap_mm <= 200 else '−3'}" + (" mm" if gap_mm <= 200 else ""), 22, RED, True, "md")
+        # the centre ToF reads the distance; cam_drive treats a reading at or above tof.conf_max_mm (200) as open
+        label(d, ((fx + PARK_X - 55) / 2, y - 40), f"{L['gap']} {gap_mm} mm" + (L["open_note"] if gap_mm >= CONF_MAX_MM else ""), 22, RED, True, "md")
     if phase == "wait":
         prog = clamp(t / 4.0)
         bx, by = 300, 498   # between the lower wall (480) and the caption box (from 530 with three lines)
@@ -508,7 +535,7 @@ def ovt_scene(d, L, t, phase, dur):
         dx, dy = tof_dir(ang, "L")
         hx, hy, _ = ray_hit(sx, sy, dx, dy, [], 172)
         d.line([sx, sy, hx, hy], fill=GREEN, width=3)
-        txt = f"{L['side']} ≥ 120 mm / −3"
+        txt = f"{L['side']} ≥ 120 mm / {L['open']}"
         label(d, (min(hx + 12, W - 40 - d.textlength(txt, font=font(22, True))), 200), txt, 22, GREEN, True)
     if phase == "pass":
         # the inner side is the right (the parked vehicle is below): the right ToF looks 65 degrees forward-right
@@ -516,7 +543,7 @@ def ovt_scene(d, L, t, phase, dur):
         dx, dy = tof_dir(ang, "R")
         hx, hy, seen = ray_hit(sx, sy, dx, dy, [parked_rect], 468)
         d.line([sx, sy, hx, hy], fill=RED if seen else GREEN, width=3)
-        txt = f"{L['inner']} {'< 150 mm' if seen else '≥ 150 mm / −3'}"
+        txt = f"{L['inner']} {'< 150 mm' if seen else '≥ 150 mm / ' + L['open']}"
         lx = min(sx + 30, W - 40 - max(d.textlength(txt, font=font(22, True)), d.textlength(L["lost"], font=font(20))))
         label(d, (lx, 196), txt, 22, RED if seen else GREEN, True)
         if not seen and x > PARK_X - 60:

@@ -13,8 +13,10 @@ using namespace rumicar::tof;
 
 namespace {
 
-// Values are those of the RumiCar library: ToF 0..200 mm, -1 timeout, -3 nothing
-// within 20 cm (open road); drive as FREE / REVERSE / FORWARD / BRAKE + duty 0..255.
+// Values are those of the RumiCar library: ToF 0..2000 mm (RUMI_TOF_MAX_MM), -1
+// timeout, -3 out of range (far: open road); drive as FREE / REVERSE / FORWARD /
+// BRAKE + duty 0..255.  The logic trusts the distances below conf_max_mm (default
+// 200): a reading at/above it is open, as -3 is.
 constexpr int OPEN = RUMI_TOF_OUT_OF_RANGE;
 
 // The drive as a signed duty: FORWARD +pwm, REVERSE -pwm, FREE / BRAKE 0.
@@ -237,7 +239,7 @@ void test_recover_exits_early_when_room_regained() {
     for (int i = 0; i < 40; ++i) r.step(OPEN, OPEN, OPEN);
     for (int i = 0; i < 8; ++i) r.step(200, 50, 50);
     CHECK(r.last.state == static_cast<uint8_t>(State::RecoverReverse));
-    // Room regained: nothing within 20 cm ahead (above d_turn_exit) for the minimum reverse time (200 ms = 4 frames).
+    // Room regained: open ahead (out of range, above d_turn_exit) for the minimum reverse time (200 ms = 4 frames).
     for (int i = 0; i < 6; ++i) r.step(200, OPEN, 200);
     CHECK(r.last.state != static_cast<uint8_t>(State::RecoverReverse));
 }
@@ -453,7 +455,7 @@ void test_sensor_fault_stops_and_resumes() {
     CHECK(back.state == static_cast<uint8_t>(State::Cruise));
     CHECK((back.flags & RUMI_CMD_FLAG_FAULT) == 0);
     CHECK(drv(back) <= 15);
-    // -3 (nothing within 20 cm) is a reading, not a fault: 2 s of it on every
+    // -3 (out of range) is a reading, not a fault: 2 s of it on every
     // sensor is open road at full speed, with the steering centred.
     Run q(p);
     for (int i = 0; i < 40; ++i) q.step(OPEN, OPEN, OPEN);
@@ -504,7 +506,7 @@ void test_determinism() {
     std::vector<std::array<int, 3>> seq;
     for (int i = 0; i < 200; ++i) {
         int c = 200 - (i * 7) % 180;
-        seq.push_back({(i * 13) % 220 - 3, c, (i * 29) % 220 - 3});   // -3 .. 216: open, measured, beyond conf_max
+        seq.push_back({(i * 13) % 220 - 3, c, (i * 29) % 220 - 3});   // -3 .. 216: out of range, measured, at/above conf_max
     }
     auto run = [&]() {
         std::vector<int> out;
@@ -572,11 +574,123 @@ void test_params_json_strict() {
     bad = p;
     bad.v_max = 256;   // duty is 0..255
     CHECK(!validate(bad).empty());
-    bad = p;
-    bad.conf_max_mm = 250;   // RC_read never returns more than 200
-    bad.d_max_mm = 200;
-    CHECK(!validate(bad).empty());
+    // conf_max_mm: 1..RUMI_TOF_MAX_MM (the car reports -3 beyond that).  Up to
+    // ABI 4 its upper end was 200, where the core cut the readings off.
+    CHECK(RUMI_TOF_MAX_MM == 2000);
+    Params wide = p;
+    wide.conf_max_mm = 250;
+    CHECK_MSG(validate(wide).empty(), validate(wide));
+    wide.conf_max_mm = RUMI_TOF_MAX_MM;
+    CHECK_MSG(validate(wide).empty(), validate(wide));
+    for (const int v : {RUMI_TOF_MAX_MM + 1, 8190, 0, -3}) {
+        bad = p;
+        bad.conf_max_mm = v;
+        CHECK_MSG(validate(bad).find("conf_max_mm must be 1..2000") == 0, std::to_string(v) + ": " + validate(bad));
+    }
+    // The thresholds stay at or below conf_max_mm, whatever it is.
+    bad = wide;
+    bad.conf_max_mm = 400;
+    bad.d_max_mm = 401;
+    CHECK(validate(bad) == "d_max_mm must not exceed conf_max_mm");
+    bad.d_max_mm = 400;
+    bad.d_turn_exit_mm = 401;
+    CHECK(validate(bad) == "d_turn_exit_mm must not exceed conf_max_mm");
+    j["conf_max_mm"] = 400;
+    CHECK(parse_params_json(j.dump()).conf_max_mm == 400);
+    j["conf_max_mm"] = RUMI_TOF_MAX_MM + 1;
+    threw = false;
+    try { parse_params_json(j.dump()); } catch (const std::exception&) { threw = true; }
+    CHECK_MSG(threw, "conf_max_mm above the range of the readings must be rejected");
     CHECK(validate(p).empty());
+}
+
+// One frame's command, for comparing two runs.
+bool same_command(const rumi_command& a, const rumi_command& b) {
+    return a.steer == b.steer && a.steer_pwm == b.steer_pwm && a.drive_dir == b.drive_dir && a.drive_pwm == b.drive_pwm &&
+           a.state == b.state && a.flags == b.flags;
+}
+
+// A deterministic sequence of sensor outputs as the VL53L0X gives them: a
+// distance 0..2600 mm, 8190 (nothing reflects), or -1 (no reading), each held
+// for a few frames so that every state of the logic is visited.
+std::vector<std::array<int, 3>> sensor_sequence(int frames) {
+    std::vector<std::array<int, 3>> seq;
+    uint32_t x = 12345;
+    auto next = [&]() { x = x * 1664525u + 1013904223u; return x >> 8; };
+    std::array<int, 3> cur{8190, 8190, 8190};
+    for (int i = 0; i < frames; ++i) {
+        for (size_t k = 0; k < 3; ++k) {
+            if (next() % 6 != 0) continue;            // hold the value most of the time
+            const uint32_t kind = next() % 20;
+            if (kind == 0) cur[k] = -1;               // no reading
+            else if (kind <= 2) cur[k] = 8190;        // no target
+            else if (kind <= 11) cur[k] = static_cast<int>(next() % 260);    // near: 0..259
+            else if (kind <= 15) cur[k] = 150 + static_cast<int>(next() % 101);   // around the thresholds and conf_max: 150..250
+            else cur[k] = static_cast<int>(next() % 2601);                   // anywhere up to 2600
+        }
+        seq.push_back(cur);
+    }
+    return seq;
+}
+
+// What the core hands to the logic for a sensor output: from ABI 5 distances up
+// to RUMI_TOF_MAX_MM (core/src/main.cpp to_tof_value); up to ABI 4 the core cut
+// them off at 200 mm.
+int core_value(int sensor, int max_mm) { return sensor < 0 ? RUMI_TOF_TIMEOUT : sensor > max_mm ? RUMI_TOF_OUT_OF_RANGE : sensor; }
+
+void test_default_conf_max_decides_as_with_the_200_mm_cut_off() {
+    // With conf_max_mm 200 (the bundled packs) the logic decides exactly as it
+    // did when the core cut the readings off at 200 mm (ABI 3 / 4): a reading
+    // at/above conf_max_mm is open, and so was the -3 the old core gave for
+    // everything above 200.  Frame by frame, on 5 minutes of sensor outputs.
+    Params p;
+    CHECK(p.conf_max_mm == 200);
+    const auto seq = sensor_sequence(6000);
+    Run now(p), before(p);
+    int differ = 0, beyond = 0, states = 0;
+    for (const auto& sv : seq) {
+        const auto& a = now.step(core_value(sv[0], RUMI_TOF_MAX_MM), core_value(sv[1], RUMI_TOF_MAX_MM), core_value(sv[2], RUMI_TOF_MAX_MM));
+        const auto& b = before.step(core_value(sv[0], 200), core_value(sv[1], 200), core_value(sv[2], 200));
+        if (!same_command(a, b)) ++differ;
+        for (const int v : sv) beyond += (v > 200 && v <= RUMI_TOF_MAX_MM) ? 1 : 0;
+        states |= 1 << a.state;
+    }
+    CHECK_MSG(differ == 0, std::to_string(differ) + " frames differ");
+    CHECK_MSG(beyond > 1000, std::to_string(beyond) + " readings between 200 and 2000 mm");   // the case under test did occur
+    CHECK_MSG(states == 0x3f, "states visited: " + std::to_string(states));                    // all six states
+}
+
+void test_wider_conf_max_uses_longer_readings() {
+    // A pack may trust the sensors farther (ABI 5): conf_max_mm 500 with the
+    // speed and turning thresholds moved out.  A wall 300 mm ahead is open road
+    // for the default pack and something to slow down and turn for here.
+    Params def;
+    Params wide;
+    wide.conf_max_mm = 500;
+    wide.d_min_mm = 250;
+    wide.d_max_mm = 450;
+    wide.d_turn_enter_mm = 350;
+    wide.d_turn_exit_mm = 400;
+    CHECK_MSG(validate(wide).empty(), validate(wide));
+    Run d(def), w(wide);
+    for (int i = 0; i < 60; ++i) { d.step(OPEN, OPEN, OPEN); w.step(OPEN, OPEN, OPEN); }
+    CHECK(drv(d.last) == def.v_max && drv(w.last) == wide.v_max);
+    for (int i = 0; i < 20; ++i) { d.step(900, 300, 120); w.step(900, 300, 120); }
+    // Default: 300 >= conf_max_mm 200 -> open: full speed.  The right wall at 120 mm is beyond d_side_mm: straight.
+    CHECK(d.last.state == static_cast<uint8_t>(State::Cruise) && drv(d.last) == def.v_max && d.last.steer == RUMI_STEER_CENTER);
+    // Wide: 300 < d_turn_enter_mm 350 -> turning towards the larger side (left: 900 is open, the right wall is at 120), at v_min + 1/4 of the span.
+    CHECK(w.last.state == static_cast<uint8_t>(State::TurnLeft) && w.last.steer == RUMI_STEER_LEFT);
+    const int expected = wide.v_min + (wide.v_max - wide.v_min) / 4;   // (300 - 250) / (450 - 250)
+    CHECK_MSG(std::abs(drv(w.last) - expected) <= 2, std::to_string(drv(w.last)));
+    // The filtered values: at/above conf_max_mm is open, below it the distance.
+    CHECK(w.logic.filtered()[RUMI_TOF_LEFT] == TofDriveLogic::OPEN_MM && w.logic.filtered()[RUMI_TOF_CENTER] == 300 &&
+          w.logic.filtered()[RUMI_TOF_RIGHT] == 120);
+    CHECK(d.logic.filtered()[RUMI_TOF_CENTER] == TofDriveLogic::OPEN_MM);
+    // The boundary: conf_max_mm itself is open, one below is a distance.
+    Run e(wide);
+    for (int i = 0; i < 5; ++i) e.step(500, 499, 2000);
+    CHECK(e.logic.filtered()[RUMI_TOF_LEFT] == TofDriveLogic::OPEN_MM && e.logic.filtered()[RUMI_TOF_CENTER] == 499 &&
+          e.logic.filtered()[RUMI_TOF_RIGHT] == TofDriveLogic::OPEN_MM);
 }
 
 void test_malformed_frame_rejected() {
@@ -608,6 +722,8 @@ int main() {
     test_ttc_slows_when_closing_fast();
     test_determinism();
     test_params_json_strict();
+    test_default_conf_max_decides_as_with_the_200_mm_cut_off();
+    test_wider_conf_max_uses_longer_readings();
     test_malformed_frame_rejected();
     return check::summary("test_tof_logic");
 }

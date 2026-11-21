@@ -10,8 +10,12 @@
 
 and asserts that the car approaches, stops at the red light and resumes on
 green; and, with a second pack, that it follows the vehicle, passes it once it
-is parked, and stops at the intersection.  Run by CI after the build; needs
-numpy and Pillow.
+is parked, and stops at the intersection.  The sessions are those of cars of
+ABI 5 (ToF readings up to 2000 mm), ABI 4 and ABI 3 (cut off at 200 mm by the
+car): the same drive recorded by an ABI 5 and an ABI 4 car replays to the same
+decisions with the default conf_max_mm (200), and a pack whose conf_max_mm is
+wider uses the longer readings.  Run by CI after the build; needs numpy and
+Pillow.
 
   python3 car/tests/tools_smoke.py <build dir> [<work dir>]
 """
@@ -68,20 +72,33 @@ def make_frame(rng, kind, k, n):
     return img, box
 
 
-OPEN = (-3, -3, -3)      # RC_read: nothing within 20 cm
+# What the three sensors give [mm] where the course is open: walls far away, beyond the
+# 200 mm at which a car of ABI 3 / 4 cut its readings off (left, centre, right).
+LF, CF, RF = 900, 1500, 700
+FAR = (LF, CF, RF)
+TOF_MAX_MM = {3: 200, 4: 200, 5: 2000}   # the largest distance a car of each ABI records; beyond it -3
+CAR_OF_ABI = {3: ("0.3.0", "0.2.0"), 4: ("0.4.0", "0.3.0"), 5: ("0.6.0", "0.3.0")}   # tof_drive / base-tof versions in the header
 
 
-def write_session(path, plan, scenario, seed, abi=4):
-    """plan: (kind, frames) or (kind, frames, (L, C, R) ToF readings) entries, 50 ms apart.
-    abi 4 (core 0.5.0) records the steering strength (steer_pwm, logic_steer_pwm); abi 3
-    (core 0.4.x) did not.  The recorded steering is RIGHT, at strength 128 with abi 4."""
+def recorded_tof(sensor_mm, abi):
+    """The RC_read value a car of `abi` records for what a sensor gives (core/src/main.cpp to_tof_value)."""
+    return -3 if sensor_mm > TOF_MAX_MM.get(abi, 2000) else sensor_mm
+
+
+def write_session(path, plan, scenario, seed, abi=5):
+    """plan: (kind, frames) or (kind, frames, (L, C, R)) entries, 50 ms apart.  L / C / R are
+    what the sensors give [mm] (FAR when left out); the session records what a car of `abi`
+    makes of them: abi 5 (core 0.7.0) up to 2000 mm, abi 3 / 4 cut off at 200 mm (-3 above).
+    abi 4 and 5 record the steering strength (steer_pwm, logic_steer_pwm); abi 3 (core 0.4.x)
+    did not.  The recorded steering is RIGHT, at strength 128 from abi 4."""
     rng = np.random.default_rng(seed)
     os.makedirs(os.path.join(path, "frames"), exist_ok=True)
     meta, labels = [], []
     idx, t = 0, 5_000_000
+    logic_version, pack_version = CAR_OF_ABI.get(abi, ("0.6.0", "0.3.0"))
     for entry in plan:
         kind, n = entry[0], entry[1]
-        tof = list(entry[2]) if len(entry) > 2 else list(OPEN)
+        tof = [recorded_tof(v, abi) for v in (entry[2] if len(entry) > 2 else FAR)]
         for k in range(n):
             idx += 1
             img, box = make_frame(rng, kind, k, n)
@@ -90,10 +107,10 @@ def write_session(path, plan, scenario, seed, abi=4):
             hdr = {"abi": abi, "seq": idx, "t_us": t, "tof_mm": tof, "steer": 2, "drive_dir": 2, "drive_pwm": 230,
                    "state": 2, "state_name": "TURN_RIGHT", "flags": 0, "mode": "auto", "estop": False, "logic_steer": 2,
                    "logic_drive_dir": 2, "logic_drive_pwm": 230, "logic_name": "tof_drive",
-                   "logic_version": "0.4.0" if abi == 4 else "0.3.0", "pack_id": "base-tof",
-                   "pack_version": "0.3.0" if abi == 4 else "0.2.0", "battery_mv": 0, "throttled": 0, "image_w": W, "image_h": H,
+                   "logic_version": logic_version, "pack_id": "base-tof",
+                   "pack_version": pack_version, "battery_mv": 0, "throttled": 0, "image_w": W, "image_h": H,
                    "image_seq": idx, "image_t_us": t + 100}
-            if abi == 4:
+            if abi >= 4:
                 hdr["steer_pwm"] = 128
                 hdr["logic_steer_pwm"] = 128
             meta.append({"index": idx, "image": name, "received": "x", "header": hdr})
@@ -130,9 +147,14 @@ def main() -> int:
     sessions = os.path.join(work, "sessions")
     s1, s2, s3 = (os.path.join(sessions, n) for n in ("RumiCar_sig1", "RumiCar_sig2", "RumiCar_walls"))
     write_session(s1, [("walls", 20), ("red", 40), ("green", 20), ("walls", 10)], "信号機ありケース1", 1)
-    # recorded by a core 0.4.x (ABI 3, no steering strength): still read by the tools and replayed
+    # recorded by a core 0.4.x (ABI 3: ToF cut off at 200 mm, no steering strength): still read by the tools and replayed
     write_session(s2, [("walls", 10), ("red", 30), ("green", 15), ("walls", 10)], "信号機ありケース1", 2, abi=3)
-    write_session(s3, [("walls", 40)], "壁のみの走行データ", 3)
+    # recorded by a core 0.5.x / 0.6.x (ABI 4: ToF cut off at 200 mm): still read by the tools
+    write_session(s3, [("walls", 40)], "壁のみの走行データ", 3, abi=4)
+    with open(os.path.join(s1, "meta.jsonl"), encoding="utf-8") as f:
+        assert json.loads(f.readline())["header"]["tof_mm"] == [LF, CF, RF]      # ABI 5: the distances as they are
+    with open(os.path.join(s3, "meta.jsonl"), encoding="utf-8") as f:
+        assert json.loads(f.readline())["header"]["tof_mm"] == [-3, -3, -3]      # ABI 4: beyond 200 mm is -3
 
     pack = os.path.join(work, "cam-signal-0.1.0")
     py = sys.executable
@@ -147,7 +169,9 @@ def main() -> int:
         manifest = json.load(f)
     assert manifest["capabilities"] == ["walls", "traffic_light"], manifest["capabilities"]
     assert manifest["parent"] == "cam-base-0.3.0" and "信号機ありケース1" in manifest["scenarios"]
+    # Every distance of its params.json is within 200 mm: the pack also runs on cam_drive of ABI 4.
     assert manifest["logic"] == {"name": "cam_drive", "min_abi": 4}, manifest["logic"]
+    assert "min_abi 4" in out and "needs a car whose core is 0.7.0" not in out, out
     with open(os.path.join(pack, "training.json"), encoding="utf-8") as f:
         report = json.load(f)
     for name in ("traffic_light_red", "traffic_light_green"):
@@ -183,25 +207,27 @@ def main() -> int:
     # The ToF section comes from the parent, steering strengths included.
     assert all(params["tof"][k] == 255 for k in ("turn_steer_pwm", "side_steer_pwm", "recover_steer_pwm")), params["tof"]
 
-    # A recording of a car older than core 0.4.0 (no "abi", other values) is refused by both tools.
-    old = os.path.join(sessions, "RumiCar_abi2")
-    write_session(old, [("walls", 5)], "壁のみの走行データ", 6, abi=2)
-    r2 = subprocess.run([replay, logic_dir, pack, old], text=True, capture_output=True)
-    assert r2.returncode == 3 and "ABI 2" in r2.stderr, (r2.returncode, r2.stderr)
-    r2 = subprocess.run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "replay", pack, old], text=True, capture_output=True)
-    assert r2.returncode != 0 and "ABI 2" in r2.stderr, (r2.returncode, r2.stderr)
+    # A recording of a car older than core 0.4.0 (no "abi", other values) is refused by both tools,
+    # and so is one of a car newer than these tools (an ABI they do not know).
+    for other in (2, 6):
+        odd = os.path.join(sessions, f"RumiCar_abi{other}")
+        write_session(odd, [("walls", 5)], "壁のみの走行データ", 6, abi=other)
+        r2 = subprocess.run([replay, logic_dir, pack, odd], text=True, capture_output=True)
+        assert r2.returncode == 3 and f"ABI {other}" in r2.stderr, (r2.returncode, r2.stderr)
+        r2 = subprocess.run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "replay", pack, odd], text=True, capture_output=True)
+        assert r2.returncode != 0 and f"ABI {other}" in r2.stderr, (r2.returncode, r2.stderr)
 
     # --- a second pack: a vehicle and an intersection learned on top of the traffic lights -------------------
     # Every detector is learned again from all the sessions: the new scenes are negatives
     # for the old detectors (a vehicle's red tail lights are not a red light).
     s4, s5 = (os.path.join(sessions, n) for n in ("RumiCar_town1", "RumiCar_town2"))
-    write_session(s4, [("walls", 20), ("vehicle", 40, (-3, 180, -3)), ("walls", 10), ("xleft", 30, (120, -3, 120)),
-                       ("walls", 10, (120, -3, 120))], "車両と交差点ケース1", 4)
+    write_session(s4, [("walls", 20), ("vehicle", 40, (LF, 180, RF)), ("walls", 10), ("xleft", 30, (120, CF, 120)),
+                       ("walls", 10, (120, CF, 120))], "車両と交差点ケース1", 4)
     # a scripted drive: following a vehicle that stops (parked) with both sides open, then an intersection on the left
-    write_session(s5, [("walls", 20), ("vehicle", 4, (-3, 195, -3)), ("vehicle", 4, (-3, 175, -3)),
-                       ("vehicle", 70, (-3, 150, -3)), ("walls", 10, (60, -3, -3)), ("walls", 30),
-                       ("xleft", 20, (120, -3, 120)), ("xleft", 25, (-3, -3, 120)), ("walls", 20, (120, -3, 120))],
-                  "車両と交差点ケース1", 5)
+    town_drive = [("walls", 20), ("vehicle", 4, (LF, 195, RF)), ("vehicle", 4, (LF, 175, RF)),
+                  ("vehicle", 70, (LF, 150, RF)), ("walls", 10, (60, CF, RF)), ("walls", 30),
+                  ("xleft", 20, (120, CF, 120)), ("xleft", 25, (LF, CF, 120)), ("walls", 20, (120, CF, 120))]
+    write_session(s5, town_drive, "車両と交差点ケース1", 5)
     pack2 = os.path.join(work, "cam-town-0.1.0")
     out = run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "train", pack2, "--parent", pack,
                "--sessions", s1, s4, s3, "--validate", s2, s5, "--negatives-from-scenario", "壁のみの走行データ",
@@ -257,11 +283,84 @@ def main() -> int:
     assert follow_rows[-1]["drive_dir"] == 3 and follow_rows[-1]["drive_pwm"] == 0, follow_rows[-1]   # BRAKE
     assert all(r["steer"] == 2 and r["steer_pwm"] == 255 for r in rows if r["state_name"] == "OVERTAKE_OUT")   # pass on the RIGHT (2), full
     assert all(r["steer"] == 0 and r["steer_pwm"] == 255 for r in rows if r["state_name"] == "OVERTAKE_IN")    # back to the LEFT (0), full
-    assert all(r["recorded"]["steer_pwm"] == 128 for r in rows), rows[0]["recorded"]   # ABI 4 recording: its strength
+    assert all(r["recorded"]["steer_pwm"] == 128 for r in rows), rows[0]["recorded"]   # recorded from ABI 4 on: its strength
     istop = [r for r in rows if r["state_name"] == "INTERSECTION_STOP"]
     assert istop[-1]["drive_dir"] == 3 and istop[-1]["drive_pwm"] == 0, istop[-1]
     assert seq[-1] == "CRUISE" and rows[-1]["drive_dir"] == 2 and rows[-1]["drive_pwm"] > 0
     assert all(r["rc"] == 0 for r in rows)
+    assert rows[0]["tof_mm"] == [LF, CF, RF], rows[0]["tof_mm"]   # the recording of an ABI 5 car: walls beyond 200 mm as distances
+
+    # --- the same drive recorded by a car of ABI 4 (ToF cut off at 200 mm) ------------------------------------
+    # The pack trusts the ToF up to conf_max_mm 200, so the car's cut-off made no difference to it: every
+    # frame replays to the same decision, and the proposals for labelling are the same.
+    s5_abi4 = os.path.join(sessions, "RumiCar_town2_abi4")
+    write_session(s5_abi4, town_drive, "車両と交差点ケース1", 5, abi=4)
+    out4_path = os.path.join(work, "replay_town_abi4.jsonl")
+    run([replay, logic_dir, pack2, s5_abi4, "--out", out4_path])
+    rows4 = [json.loads(l) for l in open(out4_path, encoding="utf-8")]
+    decision = ("rc", "state", "state_name", "steer", "steer_pwm", "drive_dir", "drive_pwm", "flags", "aux_format", "aux")
+    assert len(rows4) == len(rows) and rows4[0]["tof_mm"] == [-3, -3, -3], (len(rows4), rows4[0]["tof_mm"])
+    differ = [r["index"] for r, r4 in zip(rows, rows4) if any(r.get(k) != r4.get(k) for k in decision)]
+    assert not differ, f"decisions differ between the ABI 5 and the ABI 4 recording at frames {differ[:10]}"
+    assert sum(1 for r, r4 in zip(rows, rows4) if r["tof_mm"] != r4["tof_mm"]) > 100   # the recordings do differ beyond 200 mm
+    for det, name in (("vehicle", "proposals_vehicle.jsonl"), ("intersection_left", "proposals_intersection_left.jsonl")):
+        run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "propose", s5_abi4, "--detector", det])
+        with open(os.path.join(s5, name), encoding="utf-8") as fa, open(os.path.join(s5_abi4, name), encoding="utf-8") as fb:
+            assert fa.read() == fb.read(), f"{name} differs between the ABI 5 and the ABI 4 recording"
+
+    # --- a pack that trusts the ToF beyond 200 mm (needs a car of ABI 5) ----------------------------------------
+    # conf_max_mm and the thresholds are widened by hand in a copy of the pack (README 6.2), which gets
+    # --min-abi 5; a pack trained from it inherits the values, and train_pack.py gives it min_abi 5 by itself.
+    wide_parent = os.path.join(work, "cam-wide-0.1.0")
+    os.makedirs(wide_parent, exist_ok=True)
+    with open(os.path.join(pack2, "params.json"), encoding="utf-8") as f:
+        wide = json.load(f)
+    wide["tof"].update({"conf_max_mm": 500, "d_max_mm": 450, "d_turn_exit_mm": 400})
+    wide["vehicle"].update({"follow_gap_mm": 300, "follow_band_mm": 100})
+    with open(os.path.join(wide_parent, "params.json"), "w", encoding="utf-8") as f:
+        json.dump(wide, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    with open(os.path.join(pack2, "vision.bin"), "rb") as fi, open(os.path.join(wide_parent, "vision.bin"), "wb") as fo:
+        fo.write(fi.read())
+    run([py, "-I", os.path.join(TOOLS, "make_manifest.py"), "pack", wide_parent, "--id", "cam-wide", "--version", "0.1.0",
+         "--logic", "cam_drive", "--min-abi", "5", "--capability", "walls", "--capability", "traffic_light", "--capability", "vehicle",
+         "--capability", "intersection", "--parent", "cam-town-0.1.0",
+         "--description", "cam-town 0.1.0 with the ToF trusted up to 500 mm and a gap of 300 mm behind a vehicle"])
+    run([py, "-I", os.path.join(TOOLS, "make_manifest.py"), "verify", wide_parent])
+    pack3 = os.path.join(work, "cam-wide-0.2.0")
+    out = run([py, "-I", os.path.join(TOOLS, "train_pack.py"), "train", pack3, "--parent", wide_parent,
+               "--sessions", s1, s4, s3, "--validate", s2, s5, "--negatives-from-scenario", "壁のみの走行データ",
+               "--detector", "traffic_light_red", "--detector", "traffic_light_green",
+               "--detector", "vehicle", "--detector", "intersection_left:global", "--id", "cam-wide", "--version", "0.2.0",
+               "--iterations", "300"]).stdout
+    print(out)
+    assert "min_abi 5" in out and "needs a car whose core is 0.7.0 or later" in out, out
+    run([py, "-I", os.path.join(TOOLS, "make_manifest.py"), "verify", pack3])
+    with open(os.path.join(pack3, "manifest.json"), encoding="utf-8") as f:
+        manifest = json.load(f)
+    assert manifest["logic"] == {"name": "cam_drive", "min_abi": 5} and manifest["parent"] == "cam-wide-0.1.0", manifest
+    with open(os.path.join(pack3, "params.json"), encoding="utf-8") as f:
+        params = json.load(f)
+    assert params["tof"]["conf_max_mm"] == 500 and params["vehicle"]["follow_gap_mm"] == 300, params
+    # A vehicle 350 mm, then 300 mm ahead, recorded by a car of ABI 5.  The wide pack slows down and stops at
+    # its gap of 300 mm; the default pack (conf_max_mm 200) does not see that far and keeps following at follow_v.
+    s6 = os.path.join(sessions, "RumiCar_gap")
+    write_session(s6, [("walls", 20), ("vehicle", 30, (LF, 350, RF)), ("vehicle", 30, (LF, 300, RF)), ("walls", 20)],
+                  "車両と交差点ケース1", 7)
+    wide_path, default_path = os.path.join(work, "replay_gap_wide.jsonl"), os.path.join(work, "replay_gap_default.jsonl")
+    res = run([replay, logic_dir, pack3, s6, "--out", wide_path])
+    print(res.stderr)
+    run([replay, logic_dir, pack2, s6, "--out", default_path])
+    wide_rows = [json.loads(l) for l in open(wide_path, encoding="utf-8")]
+    default_rows = [json.loads(l) for l in open(default_path, encoding="utf-8")]
+    follow_v = params["vehicle"]["follow_v"]
+    at_350, at_300 = wide_rows[49], wide_rows[79]      # the last frame of each stretch
+    assert at_350["tof_mm"][1] == 350 and at_300["tof_mm"][1] == 300, (at_350["tof_mm"], at_300["tof_mm"])
+    assert at_350["state_name"] == "FOLLOW" and at_350["drive_dir"] == 2 and abs(at_350["drive_pwm"] - follow_v / 2) <= 1, at_350
+    assert at_300["state_name"] == "FOLLOW" and at_300["drive_dir"] == 3 and at_300["drive_pwm"] == 0, at_300   # BRAKE at the gap
+    assert default_rows[49]["state_name"] == "FOLLOW" and default_rows[49]["drive_pwm"] == follow_v, default_rows[49]
+    assert default_rows[79]["state_name"] == "FOLLOW" and default_rows[79]["drive_pwm"] == follow_v, default_rows[79]
+    assert all(r["rc"] == 0 for r in wide_rows + default_rows)
     print("tools smoke test passed:", work)
     return 0
 

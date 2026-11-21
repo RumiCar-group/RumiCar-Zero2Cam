@@ -5,8 +5,11 @@
 // Usage: test_cam_logic <cam-base pack dir>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <functional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -25,8 +28,10 @@ using namespace rumicar::cam;
 namespace {
 
 constexpr unsigned W = 320, H = 240;
-// Values are those of the RumiCar library: ToF 0..200 mm, -3 nothing within
-// 20 cm (open road); drive as FREE / REVERSE / FORWARD / BRAKE + duty 0..255.
+// Values are those of the RumiCar library: ToF 0..2000 mm (RUMI_TOF_MAX_MM), -3
+// out of range (far: open road); drive as FREE / REVERSE / FORWARD / BRAKE + duty
+// 0..255.  The behaviours compare the distances as the ToF logic conditions
+// them: at/above tof.conf_max_mm (200 in cam-base) is open, as -3 is.
 constexpr int OPEN = RUMI_TOF_OUT_OF_RANGE;
 
 // The drive as a signed duty: FORWARD +pwm, REVERSE -pwm, FREE / BRAKE 0.
@@ -245,7 +250,36 @@ void test_params(const std::string& pack_dir) {
     CHECK(throws([&] { parse_cam_params_json(with_full("follow_gap_mm", "100")); }, &msg) && msg.find("d_emergency_mm") != std::string::npos);
     CHECK(throws([&] { parse_cam_params_json(with_full("follow_gap_mm", "200")); }, &msg) && msg.find("conf_max_mm") != std::string::npos);
     CHECK(throws([&] { parse_cam_params_json(with_full("follow_band_mm", "60")); }, &msg) && msg.find("conf_max_mm") != std::string::npos);   // 150 + 60 > 200
-    CHECK(throws([&] { parse_cam_params_json(with_full("open_mm", "250")); }));   // RC_read never returns more than 200
+    // The distances go up to the range of the car's readings (RUMI_TOF_MAX_MM, 2000); up to ABI 4 the limit was 200.
+    CHECK(parse_cam_params_json(with_full("open_mm", "250")).intersection->open_mm == 250);
+    CHECK(parse_cam_params_json(with_full("open_mm", "2000")).intersection->open_mm == 2000);
+    CHECK(throws([&] { parse_cam_params_json(with_full("open_mm", "2001")); }, &msg) && msg.find("[1, 2000]") != std::string::npos);
+    CHECK(throws([&] { parse_cam_params_json(with_full("side_clear_mm", "2001")); }, &msg) && msg.find("[0, 2000]") != std::string::npos);
+    CHECK(parse_cam_params_json(with_full("side_clear_mm", "600")).vehicle->side_clear_mm == 600);
+    CHECK(parse_cam_params_json(with_full("pass_clear_mm", "600")).vehicle->pass_clear_mm == 600);
+    {
+        CamParams q = full;
+        q.intersection->open_mm = RUMI_TOF_MAX_MM + 1;
+        CHECK(validate(*q.intersection) == "intersection.open_mm must be 1..2000");
+        q = full;
+        q.vehicle->still_delta_mm = RUMI_TOF_MAX_MM + 1;
+        CHECK(validate(*q.vehicle, q.tof) == "vehicle.still_delta_mm must be 0..2000");
+        // A pack that trusts the ToF farther: the gap to a vehicle ahead may lie beyond 200 mm,
+        // still below tof.conf_max_mm.
+        q = full;
+        q.tof.conf_max_mm = 500;
+        q.tof.d_max_mm = 450;
+        q.tof.d_turn_exit_mm = 400;
+        q.vehicle->follow_gap_mm = 300;
+        q.vehicle->follow_band_mm = 150;
+        q.intersection->open_mm = 480;
+        CHECK_MSG(tof::validate(q.tof).empty() && validate(*q.vehicle, q.tof).empty() && validate(*q.intersection).empty(),
+                  tof::validate(q.tof) + validate(*q.vehicle, q.tof) + validate(*q.intersection));
+        const CamParams back_wide = parse_cam_params_json(cam_params_to_json(q));
+        CHECK(back_wide.tof.conf_max_mm == 500 && back_wide.vehicle->follow_gap_mm == 300 && back_wide.intersection->open_mm == 480);
+        q.vehicle->follow_band_mm = 201;   // 300 + 201 > 500
+        CHECK(validate(*q.vehicle, q.tof).find("conf_max_mm") != std::string::npos);
+    }
     CHECK(throws([&] { parse_cam_params_json(with_full("pass_min_ms", "5000")); }));
     CHECK(throws([&] { parse_cam_params_json(with_full("turn", "\"around\"")); }, &msg) && msg.find("intersection.turn") != std::string::npos);
     CHECK(throws([&] { parse_cam_params_json(with_full("stop_trigger", "\"now\"")); }));
@@ -459,7 +493,7 @@ void test_follow_keeps_the_gap(const CamParams& p0) {
     }
     CHECK(monotone && drv(r.last) == 0 && braking(r.last));
     CHECK(r.in(State::Follow) && r.last.steer == RUMI_STEER_CENTER);
-    // It moves off: the gap opens (beyond 20 cm), we move again, at most follow_v.
+    // It moves off: the gap opens (out of range), we move again, at most follow_v.
     r.run(&car, 30, OPEN, OPEN, OPEN);
     CHECK(r.in(State::Follow) && drv(r.last) == vp.follow_v && !braking(r.last));
     // Gone (camera and ToF): the ToF logic's own driving again.
@@ -749,6 +783,90 @@ void test_behaviours_together(const CamParams& p0) {
     CHECK(std::string(state_name(19)) == "FOLLOW" && std::string(state_name(27)) == "INTERSECTION_TURN");
 }
 
+// --- ToF values of ABI 5 -----------------------------------------------------------------------------
+
+bool same_command(const rumi_command& a, const rumi_command& b) {
+    return a.steer == b.steer && a.steer_pwm == b.steer_pwm && a.drive_dir == b.drive_dir && a.drive_pwm == b.drive_pwm &&
+           a.state == b.state && a.flags == b.flags && a.aux_format == b.aux_format && a.aux_len == b.aux_len &&
+           std::memcmp(a.aux, b.aux, a.aux_len) == 0;
+}
+
+void test_default_conf_max_decides_as_with_the_200_mm_cut_off(const CamParams& p0) {
+    // With tof.conf_max_mm 200 (cam-base) every behaviour decides exactly as it
+    // did when the core cut the readings off at 200 mm (ABI 3 / 4).  One drive
+    // (following and passing a parked vehicle, an intersection with a left
+    // turn, a red light), with the distances as the sensors give them: walls
+    // and open sides far beyond 200 mm.  `now` gets what the core of ABI 5
+    // hands to the logic (up to RUMI_TOF_MAX_MM), `before` what the core of
+    // ABI 4 did (-3 above 200).
+    const CamParams p = with_intersection(with_vehicle(p0), "left");
+    CHECK(p.tof.conf_max_mm == 200);
+    const Scene road, car = scene_with(true), left = scene_with(false, true);
+    Scene red;
+    red.disc(180, 100, 40, 230, 20, 20);
+    struct Part { const Scene* scene; int frames; int L, C, R; };
+    const Part drive[] = {
+        {&road, 60, 900, 1500, 700},     // open road: walls far away
+        {&car, 12, 850, 195, 640},       // a vehicle ahead: follow
+        {&car, 40, 850, 150, 640},       // stopped behind it
+        {&car, 60, 850, 150, 640},       // it does not move: parked, both sides open -> pass on the right
+        {&road, 7, 900, 1200, 700},      // out, alongside ...
+        {&road, 10, 60, 1200, 700},      // ... the vehicle on the left ...
+        {&road, 40, 900, 1200, 700},     // ... passed: back in
+        {&road, 80, 120, 1800, 120},     // a corridor
+        {&left, 5, 120, 1800, 120},      // an intersection ahead
+        {&left, 60, 450, 1800, 120},     // the left side opens (450 mm): stop, then turn left
+        {&road, 80, 120, 2000, 120},
+        {&red, 30, 300, 2400, 300},      // a red light close (nothing ahead within range): stop
+        {&road, 60, 201, 200, 199},      // around the limit
+        {&road, 20, 2000, 2001, 8190},   // the end of the range, beyond it, no target
+    };
+    Run now(p, make_full_pack()), before(p, make_full_pack());
+    auto cut = [](int v, int max_mm) { return v > max_mm ? OPEN : v; };
+    int frames = 0, differ = 0;
+    std::set<uint8_t> seen;
+    for (const Part& part : drive) {
+        for (int i = 0; i < part.frames; ++i) {
+            const int ra = now.step(part.scene, cut(part.L, RUMI_TOF_MAX_MM), cut(part.C, RUMI_TOF_MAX_MM), cut(part.R, RUMI_TOF_MAX_MM));
+            const int rb = before.step(part.scene, cut(part.L, 200), cut(part.C, 200), cut(part.R, 200));
+            ++frames;
+            if (ra != rb || !same_command(now.last, before.last)) ++differ;
+            seen.insert(now.last.state);
+        }
+    }
+    CHECK_MSG(differ == 0, std::to_string(differ) + " of " + std::to_string(frames) + " frames differ");
+    for (const State st : {State::Follow, State::OvertakeOut, State::OvertakePass, State::OvertakeIn, State::IntersectionApproach,
+                           State::IntersectionStop, State::IntersectionTurn, State::SignalStop}) {
+        CHECK_MSG(seen.count(static_cast<uint8_t>(st)) == 1, std::string("the drive never reached ") + state_name(static_cast<uint8_t>(st)));
+    }
+}
+
+void test_wider_conf_max_follows_at_a_longer_gap(const CamParams& p0) {
+    // A pack that trusts the ToF up to 500 mm keeps a gap of 300 mm behind a
+    // vehicle: a distance the default pack does not see at all.
+    CamParams p = with_vehicle(p0);
+    p.tof.conf_max_mm = 500;
+    p.tof.d_max_mm = 450;
+    p.tof.d_turn_exit_mm = 400;
+    p.vehicle->follow_gap_mm = 300;
+    p.vehicle->follow_band_mm = 100;
+    CHECK(tof::validate(p.tof).empty() && validate(*p.vehicle, p.tof).empty());
+    Run wide(p, make_full_pack()), def(with_vehicle(p0), make_full_pack());
+    const Scene road, car = scene_with(true);
+    wide.run(&road, 60);
+    def.run(&road, 60);
+    wide.run(&car, 40, OPEN, 350, OPEN);
+    def.run(&car, 40, OPEN, 350, OPEN);
+    // 350 mm: halfway between the gap (300) and gap + band (400) -> half of follow_v.  The default pack sees open road.
+    CHECK(wide.in(State::Follow) && def.in(State::Follow));
+    CHECK_MSG(std::abs(drv(wide.last) - p.vehicle->follow_v / 2) <= 1, std::to_string(drv(wide.last)));
+    CHECK(drv(def.last) == p.vehicle->follow_v);
+    wide.run(&car, 30, OPEN, 300, OPEN);
+    def.run(&car, 30, OPEN, 300, OPEN);
+    CHECK(wide.in(State::Follow) && drv(wide.last) == 0 && braking(wide.last));   // at the gap: stopped
+    CHECK(drv(def.last) == p.vehicle->follow_v);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -773,5 +891,7 @@ int main(int argc, char** argv) {
     test_intersection_turns(p);
     test_intersection_waits_for_the_light(p);
     test_behaviours_together(p);
+    test_default_conf_max_decides_as_with_the_200_mm_cut_off(p);
+    test_wider_conf_max_follows_at_a_longer_gap(p);
     return check::summary("test_cam_logic");
 }

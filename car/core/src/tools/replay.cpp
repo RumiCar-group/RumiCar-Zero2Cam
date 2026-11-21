@@ -11,11 +11,16 @@
 //   {"index":1,"seq":10,"t_us":...,"tof_mm":[..],"image":true,"state":17,"state_name":"SIGNAL_STOP",
 //    "steer":1,"steer_pwm":0,"drive_dir":3,"drive_pwm":0,"flags":0,"aux_format":1,"aux":"<base64>","rc":0,
 //    "recorded":{"state":..,"steer":..,"steer_pwm":..,"drive_dir":..,"drive_pwm":..}}
-// Values as in the RumiCar library (logic_api.h ABI 4).  Sessions recorded
-// with ABI 3 (core 0.4.x) are replayed as well: their sensor frames are the
-// same, and their steering was always full ("recorded" steer_pwm 255, or 0
-// for CENTER).  A session of an older car (no "abi", or below 3) is refused:
-// its ToF values and commands have another meaning.
+// Values as in the RumiCar library (logic_api.h ABI 5).  Sessions recorded
+// with ABI 4 (core 0.5.x / 0.6.x) and ABI 3 (core 0.4.x) are replayed as
+// well.  Their ToF values were cut off at 200 mm by the car (a longer
+// distance was recorded as -3), which is a subset of what ABI 5 carries, so
+// a pack that trusts the sensors up to 200 mm (conf_max_mm <= 200) decides
+// on them exactly as on the car; what a pack with a larger conf_max_mm would
+// have seen beyond 200 mm is not in such a recording.  The steering of ABI 3
+// was always full ("recorded" steer_pwm 255, or 0 for CENTER).  A session of
+// an older car (no "abi", or below 3) is refused: its ToF values and commands
+// have another meaning.
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -40,6 +45,10 @@ std::vector<uint8_t> read_bytes(const std::string& path) {
     if (!in) throw std::runtime_error("cannot open " + path);
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
+
+// The oldest "abi" of a recording whose values this tool can hand to a logic:
+// from ABI 3 the ToF values and the commands are those of the RumiCar library.
+constexpr unsigned kOldestReplayedAbi = 3u;
 
 int usage() {
     std::fprintf(stderr, "usage: rumicar-replay <logic dir> <pack dir> <session dir> [--out replay.jsonl] [--no-image]\n");
@@ -91,10 +100,10 @@ int main(int argc, char** argv) {
             if (!rec.is_object() || !rec.contains("header") || !rec["header"].is_object()) continue;
             const json& h = rec["header"];
             const unsigned abi = h.value("abi", 0u);
-            if (abi != 3u && abi != RUMI_LOGIC_ABI_VERSION) {
-                std::fprintf(stderr, "%s: recorded by a car with ABI %u (this replay needs ABI 3 or %u: ToF 0..200 / -1 / -3, "
+            if (abi < kOldestReplayedAbi || abi > RUMI_LOGIC_ABI_VERSION) {
+                std::fprintf(stderr, "%s: recorded by a car with ABI %u (this replay needs ABI %u to %u: ToF in mm / -1 / -3, "
                                      "steer 0..2, drive_dir + drive_pwm); record the session again with the current car software\n",
-                             session.c_str(), abi, RUMI_LOGIC_ABI_VERSION);
+                             session.c_str(), abi, kOldestReplayedAbi, RUMI_LOGIC_ABI_VERSION);
                 return 3;
             }
             const int rec_steer = h.value("logic_steer", RUMI_STEER_CENTER);

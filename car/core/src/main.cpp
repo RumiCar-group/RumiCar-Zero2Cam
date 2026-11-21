@@ -123,8 +123,10 @@ void publish_running(rumicar::CarState& state, const Active& active, uint8_t log
     state.update_running(s);
 }
 
-// RC_read value of a sensor reading (logic_api.h): 0..200 mm, -3 beyond
-// 200 mm or no target (nothing within 20 cm), -1 when the sensor gave no reading.
+// RC_read value of a sensor reading (logic_api.h): 0..RUMI_TOF_MAX_MM (2000) mm,
+// -3 beyond that or no target, -1 when the sensor gave no reading.  The core
+// does not cut the readings off any earlier (ABI 5): how far a reading is
+// trusted is decided by the logic (conf_max_mm, RC_setReadLimit).
 int32_t to_tof_value(const rumicar::hw::Vl53l0x::Reading& r) {
     switch (r.status) {
     case rumicar::hw::Vl53l0x::Status::Ok:       return r.mm > RUMI_TOF_MAX_MM ? RUMI_TOF_OUT_OF_RANGE : r.mm;
@@ -135,7 +137,7 @@ int32_t to_tof_value(const rumicar::hw::Vl53l0x::Reading& r) {
     return RUMI_TOF_TIMEOUT;
 }
 
-// Whether the sensor gave a reading (a distance or "nothing within 20 cm")
+// Whether the sensor gave a reading (a distance or "out of range")
 // or not (timeout, bus error).  Only changes of this are logged: out of
 // range is a normal value on open road, not an event.
 bool tof_reading_ok(rumicar::hw::Vl53l0x::Status s) {
@@ -454,7 +456,7 @@ int main(int argc, char** argv) {
         publish_running(state, active, rc == 0 ? cmd.state : last_state, rc == 0 ? cmd.flags : 0u);
         if (network_up) {
             try {
-                // Values as in the RumiCar library: tof_mm = RC_read (0..200, -1, -3),
+                // Values as in the RumiCar library: tof_mm = RC_read (0..2000, -1, -3),
                 // steer / steer_pwm = RC_steer (0/1/2, strength 0..255),
                 // drive_dir / drive_pwm = RC_drive (0..3, 0..255).
                 // "abi" tells recordings of this format apart from older ones.

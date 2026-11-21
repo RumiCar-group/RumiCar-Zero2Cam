@@ -2,6 +2,7 @@
   "speed": 153,
   "slow_speed": 115,
   "back_speed": 128,
+  "read_limit_mm": 200,
   "stop_mm": 100,
   "turn_mm": 200,
   "side_mm": 60

@@ -4,6 +4,10 @@
 // behind another vehicle ("vehicle") and at intersections ("intersection").
 // An optional section that is absent means the behaviour is off; when it is
 // present every key of it is required.  Strict: no unknown keys (docs 3.11).
+// The distances are compared with the readings as conditioned by the ToF
+// logic: a reading at/above tof.conf_max_mm is "open" there, so a threshold
+// has an effect only below tof.conf_max_mm.  Their upper limit is the range
+// of the car's readings, RUMI_TOF_MAX_MM.
 #pragma once
 
 #include <optional>
@@ -28,7 +32,7 @@ struct VehicleParams {
     std::string detector = "vehicle";  // name of the Local detector for a vehicle (required)
     int lane_cols = 4;                 // the vehicle is "in our lane" when its best cell lies in the centre this many columns
     int follow_gap_mm = 150;           // keep at least this centre distance behind it (speed cap 0 at/below)
-    int follow_band_mm = 40;           // the cap rises from 0 at the gap to follow_v at gap + band (gap + band must stay within the ToF's 200 mm)
+    int follow_band_mm = 40;           // the cap rises from 0 at the gap to follow_v at gap + band (gap + band must stay within tof.conf_max_mm)
     int follow_v = 179;                // speed cap (PWM duty 0..255) while a vehicle is ahead
     int parked_confirm_ms = 2000;      // stopped behind a vehicle whose distance does not grow for this long -> it is parked
     int still_delta_mm = 20;           // the distance growing by more than this restarts that wait (it is moving off)
@@ -51,7 +55,8 @@ struct IntersectionParams {
     std::string right_detector = "intersection_right"; // ... to the right ("" = none); at least one is required
     int approach_v = 128;              // speed cap (PWM duty 0..255) while an intersection is seen but the car is not yet at it
     std::string stop_trigger = "side_open"; // stop when a side ToF opens up ("side_open") or as soon as it is seen ("detector")
-    int open_mm = 200;                 // a side ToF reading at/above this (or nothing within 20 cm) is an opening (at most 200)
+    int open_mm = 200;                 // a side ToF reading at/above this (or open: -3, or at/above tof.conf_max_mm) is an opening;
+                                       //     at/above tof.conf_max_mm only an open side counts (1..RUMI_TOF_MAX_MM)
     int stop_ms = 1000;                // stop this long
     std::string turn = "straight";     // then go "straight", turn "left", "right", or towards the "detector" that saw it
     int turn_v = 128;                  // speed cap (PWM duty 0..255) while crossing and turning
