@@ -1,11 +1,11 @@
 flowchart TD
     R["VL53L0X の読み取り"] --> Q{"i2c.tof_read_timeout_ms 以内に<br/>測定結果が得られた？<br/>I2C 通信は正常？"}
-    Q -->|"いいえ"| F["読み取り失敗 → −1（タイムアウト）<br/>表示 -1 タイムアウト、RC_read() も −1"]
-    Q -->|"はい"| V{"測距値が 200 mm を超える？<br/>（対象物未検出 8190 を含む）"}
-    V -->|"はい"| O["範囲外 → −3<br/>表示 -3 範囲外、RC_read() も −3<br/>（20 cm 以内に何もない。この搭載位置では<br/>20 cm より先は地面を捉えることがあるため<br/>信用しない）"]
-    V -->|"いいえ"| D["測距値 0〜200 [mm]"]
-    D --> T{"tof_drive：<br/>conf_max_mm（既定 200）以上？"}
-    T -->|"はい"| OPEN["tof_drive：開放<br/>（判断対象の距離内に障害物なし）"]
+    Q -->|"いいえ"| F["読み取り失敗 → −1（タイムアウト）<br/>表示 -1 タイムアウト"]
+    Q -->|"はい"| V{"測距値が 2000 mm を超える？<br/>（対象物未検出 8190 を含む）"}
+    V -->|"はい"| O["範囲外 → −3<br/>表示 -3 範囲外"]
+    V -->|"いいえ"| D["測距値 0〜2000 [mm]<br/>（本体は途中で打ち切らない。<br/>表示・収録はこの値）"]
+    D --> T{"走行ロジックが決めた上限より先？<br/>tof_drive・cam_drive：conf_max_mm 以上<br/>drive.py：RC_setReadLimit の上限を超える"}
+    T -->|"はい"| OPEN["開放（遠い）として扱う<br/>drive.py では RC_read() が −3"]
     O --> OPEN
-    T -->|"いいえ"| USE["tof_drive：距離として使用<br/>（中央値フィルタ・指数平滑）"]
-    F --> HOLD["tof_drive：前の値を invalid_hold_ms（既定 300 ms）保持<br/>超過で SENSOR_FAULT（停止）"]
+    T -->|"いいえ"| USE["距離として使用<br/>（tof_drive：中央値フィルタ・指数平滑）"]
+    F --> HOLD["tof_drive：前の値を invalid_hold_ms（既定 300 ms）保持<br/>超過で SENSOR_FAULT（停止）<br/>drive.py：RC_read() が −1"]
