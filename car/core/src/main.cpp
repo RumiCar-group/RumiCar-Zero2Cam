@@ -38,6 +38,7 @@
 #include "drive_settings.hpp"
 #include "frame_output.hpp"
 #include "hw/drv8835.hpp"
+#include "hw/motor_stop.hpp"
 #include "hw/gpio.hpp"
 #include "hw/i2c.hpp"
 #include "hw/vl53l0x.hpp"
@@ -172,7 +173,12 @@ void restore_links(const rumicar::VersionStore& store, const rumicar::ActiveSele
 int main(int argc, char** argv) {
     using namespace rumicar;
 
-    const std::string config_path = argc > 1 ? argv[1] : "/etc/rumicar/core.json";
+    // `rumicar-core --stop-motors [core.json]`: run by systemd after every stop of
+    // the service (ExecStopPost), so also after a crash or a SIGKILL, when the
+    // shutdown below did not run and the drive PWM would keep its last duty.
+    const bool stop_motors = argc > 1 && std::string(argv[1]) == "--stop-motors";
+    const int config_arg = stop_motors ? 2 : 1;
+    const std::string config_path = argc > config_arg ? argv[config_arg] : "/etc/rumicar/core.json";
     CoreConfig cfg;
     try {
         if (std::filesystem::exists(config_path)) {
@@ -186,8 +192,19 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (stop_motors) {
+        const auto problems = hw::stop_motor_outputs(
+            {cfg.pwm_chip, {cfg.drive_in1, cfg.drive_in2}, cfg.gpio_chip, {cfg.steer_in1, cfg.steer_in2}});
+        for (const auto& p : problems) log::warn("stop-motors: " + p);
+        if (problems.empty()) log::info("stop-motors: drive PWM off, steering lines low");
+        return problems.empty() ? 0 : 1;
+    }
+
+    // SIGHUP too: rumicar-core started by hand in a terminal (SSH) gets it when
+    // the session ends, and would otherwise die without stopping the motors.
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+    std::signal(SIGHUP, on_signal);
     std::signal(SIGPIPE, SIG_IGN);
 
     // --- hardware bring-up ---------------------------------------------------

@@ -17,6 +17,10 @@ SyslogIdentifier=rumicar-core
 # Stop promptly; the core brakes the motors on SIGTERM.
 TimeoutStopSec=5
 KillSignal=SIGTERM
+# After every stop, also after a crash or a SIGKILL (when the core's own
+# shutdown did not run): drive PWM off and steering lines low.  "-": a failure
+# is logged but does not change the service's result.
+ExecStopPost=-@RUMICAR_BINDIR@/rumicar-core --stop-motors /etc/rumicar/core.json
 
 [Install]
 WantedBy=multi-user.target

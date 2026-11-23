@@ -44,6 +44,7 @@ add_library(rumicar_hw STATIC
   src/hw/vl53l0x.cpp
   src/hw/soft_pwm.cpp
   src/hw/drv8835.cpp
+  src/hw/motor_stop.cpp
 )
 target_include_directories(rumicar_hw PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rumicar_hw PUBLIC rumicar_api PkgConfig::GPIOD Threads::Threads)
