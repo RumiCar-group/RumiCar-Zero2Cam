@@ -48,6 +48,13 @@ if(RUMICAR_BUILD_CORE)
   target_link_libraries(test_drive_output PRIVATE rumicar_hw rumicar_core_lib)
   add_test(NAME drive_output COMMAND test_drive_output)
 
+  # The stop after rumicar-core has ended (ExecStopPost): a killed core's PWM, and
+  # the real `rumicar-core --stop-motors` command on sysfs-style PWM files.
+  add_executable(test_motor_stop test_motor_stop.cpp)
+  target_link_libraries(test_motor_stop PRIVATE rumicar_hw)
+  add_dependencies(test_motor_stop rumicar-core)
+  add_test(NAME motor_stop COMMAND test_motor_stop $<TARGET_FILE:rumicar-core>)
+
   add_executable(test_util test_util.cpp)
   target_link_libraries(test_util PRIVATE rumicar_core_lib)
   add_test(NAME util COMMAND test_util)
