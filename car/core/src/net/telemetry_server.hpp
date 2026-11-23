@@ -24,7 +24,9 @@ public:
     using Frame = std::shared_ptr<const std::vector<uint8_t>>;
 
     // queue_frames: frames kept per client before the oldest is dropped.
-    TelemetryServer(std::string bind_address, uint16_t port, size_t queue_frames);
+    // user_timeout_ms: TCP_USER_TIMEOUT of each connection (a client whose
+    // frames stay unacknowledged that long is dropped; 0 = system default).
+    TelemetryServer(std::string bind_address, uint16_t port, size_t queue_frames, int user_timeout_ms = 5000);
     ~TelemetryServer();
     TelemetryServer(const TelemetryServer&) = delete;
     TelemetryServer& operator=(const TelemetryServer&) = delete;
@@ -56,6 +58,7 @@ private:
     std::string bind_address_;
     uint16_t port_;
     size_t queue_frames_;
+    int user_timeout_ms_;
     Fd listen_;
     std::thread acceptor_;
     std::atomic<bool> running_{false};

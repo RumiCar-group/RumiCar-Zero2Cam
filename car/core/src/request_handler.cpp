@@ -80,7 +80,9 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         std::string client = "?";
         if (const auto it = params.find("client"); it != params.end() && it->is_string()) client = it->get<std::string>();
         log::info("control client hello: " + client);
-        return json{{"car", car_name_}, {"core_version", core_version_}, {"protocol", kProtocolVersion}};
+        json result{{"car", car_name_}, {"core_version", core_version_}, {"protocol", kProtocolVersion}};
+        if (client_timeout_ms_ > 0) result["client_timeout_ms"] = client_timeout_ms_;
+        return result;
     }
     if (type == "get_status") {
         return state_.status_json();
@@ -134,6 +136,10 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         return nullptr;
     }
     if (type == "estop_clear") {
+        // Counts as a heartbeat (as set_mode does): right after a reconnection the
+        // last heartbeat is the old connection's, and the manual mode would stop
+        // again at once until the first heartbeat of the new connection arrives.
+        state_.heartbeat(now);
         if (state_.set_estop(false, "")) log::info("emergency stop cleared by the PC");
         return nullptr;
     }

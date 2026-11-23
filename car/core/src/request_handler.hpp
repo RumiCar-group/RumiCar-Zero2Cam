@@ -26,6 +26,10 @@ public:
     // The control client went away: an unfinished upload is discarded.
     void on_client_disconnected();
 
+    // Told to the PC in the result of hello (client_timeout_ms), so that the PC
+    // uses the same time to tell that the connection is lost (0 = not told).
+    void set_client_timeout_ms(int ms) { client_timeout_ms_ = ms; }
+
     // 3 = manual_drive carries RC_steer's strength (steer_pwm) and the drive
     // settings the car keeps (set_drive_settings, in place of set_auto_limit);
     // 2 = RC_steer / RC_drive values (core 0.4.x and 0.5.x).
@@ -43,6 +47,7 @@ private:
     std::string car_name_;
     std::string core_version_;
     std::chrono::milliseconds activation_wait_;
+    int client_timeout_ms_ = 0;
 };
 
 } // namespace rumicar

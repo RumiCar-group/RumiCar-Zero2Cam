@@ -2,6 +2,7 @@
 // 127.0.0.1, with the request handler and version store behind them.
 // Usage: test_network <base pack dir>
 #include <arpa/inet.h>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -317,13 +318,18 @@ void test_servers(const fs::path& base_pack) {
     state.set_max_drive(204);
     WifiAp wifi("/usr/bin/nmcli", "");   // no access point profile on the test host
     RequestHandler handler(state, store, wifi, "TestCar", "9.9.9", 2000ms);
+    // This test pauses on the control connection while it exercises the
+    // telemetry server, so the silent-client timeout is long here
+    // (test_control_client_timeout covers the timeout itself).
+    handler.set_client_timeout_ms(60000);
     std::atomic<int> connects{0}, disconnects{0};
     net::ControlServer control("127.0.0.1", 0,
         [&](const std::string& type, const json& params) { return handler.handle(type, params); },
         [&](bool connected, const std::string&) {
             if (connected) ++connects;
             else { ++disconnects; handler.on_client_disconnected(); }
-        });
+        },
+        60000);
     net::TelemetryServer telemetry("127.0.0.1", 0, 2);
     state.set_event_sink([&](const std::string& event, const json& data) { control.push_event(event, data); });
     control.start();
@@ -347,6 +353,7 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["result"]["car"] == "TestCar");
     CHECK(r["result"]["core_version"] == "9.9.9");
     CHECK(r["result"]["protocol"] == 3);
+    CHECK(r["result"]["client_timeout_ms"] == 60000);   // the PC uses the same time to tell that the link is lost
     for (int i = 0; i < 100 && connects.load() == 0; ++i) std::this_thread::sleep_for(10ms);
     CHECK(connects.load() == 1);
     CHECK(control.client_connected());
@@ -435,6 +442,13 @@ void test_servers(const fs::path& base_pack) {
     ev = wait_event(c, "estop");
     CHECK(!ev.is_null() && ev["data"]["active"] == false);
     CHECK(!state.estop());
+    // estop_clear counts as a heartbeat: after a reconnection the last heartbeat
+    // is old, and the manual mode must not stop again right after the clear.
+    std::this_thread::sleep_for(400ms);   // longer than the 300 ms heartbeat timeout
+    CHECK(state.frame_inputs(CarState::Clock::now()).manual_timed_out);
+    r = request(c, "estop_clear", nullptr);
+    CHECK(r["ok"].get<bool>());
+    CHECK(!state.frame_inputs(CarState::Clock::now()).manual_timed_out);
     r = request(c, "set_mode", {{"mode", "auto"}});
     CHECK(r["ok"].get<bool>());
     CHECK(state.mode() == DriveMode::Auto);
@@ -839,6 +853,84 @@ void test_servers(const fs::path& base_pack) {
     fs::remove_all(tmp);
 }
 
+// A control client that sends nothing for client_timeout_ms is closed so the
+// PC can connect again (a PC that left the Wi-Fi does not close the
+// connection); a client that keeps sending heartbeats, or waits for a request
+// that takes longer than the timeout, is kept.  Real TCP on 127.0.0.1.
+void test_control_client_timeout() {
+    using Clock = std::chrono::steady_clock;
+    constexpr int kTimeoutMs = 1000;   // the smallest value core.json accepts
+    std::atomic<int> connects{0}, disconnects{0};
+    std::atomic<int64_t> disconnect_ns{0};
+    net::ControlServer control("127.0.0.1", 0,
+        [&](const std::string& type, const json&) -> json {
+            if (type == "slow") std::this_thread::sleep_for(1500ms);   // longer than the timeout, as an activation can be
+            return nullptr;
+        },
+        [&](bool connected, const std::string&) {
+            if (connected) {
+                ++connects;
+            } else {
+                disconnect_ns.store(Clock::now().time_since_epoch().count());
+                ++disconnects;
+            }
+        },
+        kTimeoutMs);
+    CHECK(control.client_timeout_ms() == kTimeoutMs);
+    control.start();
+
+    // Heartbeats every 250 ms (as the PC sends them) keep the client for longer than the timeout.
+    Client a(control.port());
+    CHECK(a.connected());
+    json r = request(a, "hello", {{"client", "a"}, {"protocol", 3}});
+    CHECK(r["ok"].get<bool>());
+    for (int i = 0; i < 10; ++i) {   // 2.5 s
+        std::this_thread::sleep_for(250ms);
+        r = request(a, "heartbeat", nullptr);
+        CHECK(r["ok"].get<bool>());
+    }
+    CHECK(disconnects.load() == 0 && control.client_connected());
+
+    // A request that takes longer than the timeout is not silence from the client.
+    r = request(a, "slow", nullptr);
+    CHECK(r["ok"].get<bool>());
+    std::this_thread::sleep_for(500ms);
+    r = request(a, "heartbeat", nullptr);
+    CHECK(r["ok"].get<bool>());
+    CHECK(disconnects.load() == 0);
+
+    // While the client is there, a second connection is refused (one client at a time).
+    {
+        Client b(control.port());
+        CHECK(b.connected());
+        const std::string line = b.read_line();
+        const json m = json::parse(line, nullptr, false);
+        CHECK(!m.is_discarded() && m["ok"] == false && m["error"].get<std::string>().find("busy") != std::string::npos);
+    }
+
+    // The client falls silent without closing the connection (the PC left the Wi-Fi).
+    const auto silent_from = Clock::now();
+    for (int i = 0; i < 300 && disconnects.load() == 0; ++i) std::this_thread::sleep_for(10ms);
+    CHECK(disconnects.load() == 1);
+    const auto closed_after = Clock::time_point(Clock::duration(disconnect_ns.load())) - silent_from;
+    CHECK_MSG(closed_after >= std::chrono::milliseconds(kTimeoutMs), "closed before the timeout");
+    CHECK_MSG(closed_after < std::chrono::milliseconds(kTimeoutMs + 600), "not closed soon after the timeout");
+    CHECK(!control.client_connected());
+    CHECK(a.read_line().empty());   // the car closed the connection
+
+    // The slot is free again: a new connection is accepted at once.
+    Client c(control.port());
+    CHECK(c.connected());
+    r = request(c, "hello", {{"client", "c"}, {"protocol", 3}});
+    CHECK(r["ok"].get<bool>());
+    for (int i = 0; i < 100 && connects.load() < 2; ++i) std::this_thread::sleep_for(10ms);
+    CHECK(connects.load() == 2);
+    c.close();
+    for (int i = 0; i < 200 && disconnects.load() < 2; ++i) std::this_thread::sleep_for(10ms);
+    CHECK(disconnects.load() == 2);
+    control.stop();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -851,5 +943,6 @@ int main(int argc, char** argv) {
     test_startup_mode();
     test_version_store_names();
     test_servers(argv[1]);
+    test_control_client_timeout();
     return check::summary("test_network");
 }

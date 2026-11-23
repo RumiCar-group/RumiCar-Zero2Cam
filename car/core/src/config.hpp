@@ -68,6 +68,12 @@ struct CoreConfig {
     int control_port = 5600;
     int telemetry_port = 5601;
     int heartbeat_timeout_ms = 1000;  // manual mode: stop when the PC's heartbeat is older than this
+    // A control client that sends nothing this long is closed, and data that
+    // stays unacknowledged this long ends a control or telemetry connection
+    // (TCP_USER_TIMEOUT); the PC uses the same time (told in hello).  Longer
+    // than twice a short Wi-Fi interruption: TCP retransmits with a doubling
+    // interval, so after a 2 s interruption data resumes about 3 s after it began.
+    int client_timeout_ms = 5000;
     int telemetry_queue_frames = 16;  // per client; older frames are dropped beyond this
     std::string ap_connection = "RumiCar-AP";   // NetworkManager connection id of the access point ("" = no set_wifi)
     std::string nmcli_path = "/usr/bin/nmcli";

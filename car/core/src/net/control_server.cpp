@@ -1,5 +1,6 @@
 #include "control_server.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <sys/socket.h>
 
@@ -23,8 +24,10 @@ std::string response_line(long long id, bool ok, const json& result, const std::
 
 } // namespace
 
-ControlServer::ControlServer(std::string bind_address, uint16_t port, Handler handler, ClientCallback on_client)
-    : bind_address_(std::move(bind_address)), port_(port), handler_(std::move(handler)), on_client_(std::move(on_client)) {}
+ControlServer::ControlServer(std::string bind_address, uint16_t port, Handler handler, ClientCallback on_client,
+                             int client_timeout_ms)
+    : bind_address_(std::move(bind_address)), port_(port), handler_(std::move(handler)), on_client_(std::move(on_client)),
+      client_timeout_ms_(client_timeout_ms) {}
 
 ControlServer::~ControlServer() { stop(); }
 
@@ -63,6 +66,7 @@ void ControlServer::accept_loop() {
         if (!fd.valid()) break;
         set_timeouts(fd.get(), 2000, 100);
         set_nodelay(fd.get());
+        set_user_timeout(fd.get(), client_timeout_ms_);
 
         if (client_active_.load()) {
             const std::string busy = response_line(0, false, nullptr, "busy: another client is connected");
@@ -92,6 +96,8 @@ void ControlServer::client_loop(Fd fd, std::string peer) {
     std::string why;
     bool hello_done = false;
     char chunk[4096];
+    const auto idle_limit = std::chrono::milliseconds(client_timeout_ms_);
+    auto last_rx = std::chrono::steady_clock::now();
     while (running_.load()) {
         long n;
         try {
@@ -101,6 +107,10 @@ void ControlServer::client_loop(Fd fd, std::string peer) {
             break;
         }
         if (n == 0) break;   // peer closed
+        if (n < 0 && std::chrono::steady_clock::now() - last_rx > idle_limit) {
+            why = "nothing received for " + std::to_string(client_timeout_ms_) + " ms";
+            break;
+        }
         if (n > 0) {
             buffer.append(chunk, static_cast<size_t>(n));
             if (buffer.size() > kMaxLineBytes) {
@@ -124,6 +134,9 @@ void ControlServer::client_loop(Fd fd, std::string peer) {
                 }
             }
             if (failed) break;
+            // Counted from the end of the requests just handled: a request that
+            // takes a while (activation) is not silence from the client.
+            last_rx = std::chrono::steady_clock::now();
         }
         try {
             flush_events(fd.get());
