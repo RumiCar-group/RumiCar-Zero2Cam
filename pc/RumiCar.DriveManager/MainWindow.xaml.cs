@@ -166,7 +166,7 @@ public partial class MainWindow : Window
             _latestRelease = ReleaseCatalog.Latest(_releaseList);
             UpdateSdCardStatus();
             if (_latestRelease is not null && ReleaseCatalog.CompareVersions(AppVersion, _latestRelease.Version) < 0)
-                _vm.AddLog($"新しい Release {_latestRelease.Tag} があります（このアプリは {AppVersion}）。「SD カードを作る…」から車の SD カードを作り直し、アプリは {ReleaseCatalog.ReleasesPageUrl} から入れ替えてください");
+                _vm.AddLog($"新しい Release {_latestRelease.Tag} があります（このアプリは {AppVersion}）。「SD カードを作る…」から車の SD カードを作り直し、アプリは {ReleaseCatalog.ReleasesPageUrl} のインストーラー（RumiCarDriveManager-*-win-x64-setup.exe）を実行して更新してください（このアプリを終了してから。今の版の上に入れると置き換わります）");
         }
         catch (Exception)
         {
