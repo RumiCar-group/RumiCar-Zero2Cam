@@ -7,6 +7,9 @@
 #include "util/process.hpp"
 #include "wifi.hpp"
 #include "power.hpp"
+#include "run_identity.hpp"
+#include <sys/stat.h>
+#include <unistd.h>
 #include <filesystem>
 #include <fstream>
 
@@ -158,8 +161,73 @@ void test_auto_output_start_ramp() {
 
 } // namespace
 
+// The identity told to the PC in hello (docs 5.2).
+void test_run_identity() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("rumicar-run-" + std::to_string(::getpid()));
+    fs::remove_all(dir);
+    const std::string marker = (dir / "status" / "core-running").string();
+    {
+        RunMarker first(marker);                       // nothing left over: the previous run ended cleanly
+        CHECK(first.previous_exit() == "clean");
+        CHECK(fs::exists(marker));                     // written (and flushed) while the core runs
+    }
+    CHECK(!fs::exists(marker));                        // removed by the core's own shutdown
+    {
+        RunMarker running(marker);
+        // A second core started by hand while this one runs: not a cut run,
+        // and the running core's marker stays.
+        {
+            RunMarker beside(marker);
+            CHECK(beside.previous_exit() == "unknown");
+        }
+        CHECK(fs::exists(marker));
+    }
+    CHECK(!fs::exists(marker));
+    {
+        RunMarker second(marker);
+        CHECK(second.previous_exit() == "clean");
+        // A power loss, crash or SIGKILL ends the run without the destructor:
+        // the file stays for the next start.
+        fs::copy_file(marker, dir / "left", fs::copy_options::overwrite_existing);
+    }
+    fs::copy_file(dir / "left", marker, fs::copy_options::overwrite_existing);
+    {
+        RunMarker after_cut(marker);
+        CHECK(after_cut.previous_exit() == "unclean");
+    }
+    CHECK(!fs::exists(marker));
+    {
+        // A marker that cannot be written: reported as unknown, the core runs on.
+        RunMarker nowhere("/proc/rumicar-cannot-write/core-running");
+        CHECK(nowhere.previous_exit() == "unknown");
+    }
+
+    std::ofstream(dir / "boot_id") << "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\n";
+    CHECK(read_boot_id((dir / "boot_id").string()) == "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+    CHECK(read_boot_id((dir / "missing").string()).empty());
+    CHECK(read_boot_id().size() == 36);                // this machine's own boot id
+    const std::string a = make_instance_id(), b = make_instance_id();
+    CHECK(a.size() == 16 && a.find_first_not_of("0123456789abcdef") == std::string::npos);
+    CHECK(a != b);
+
+    // The access point's name from nmcli (-g escapes ':' and '\\'); a stand-in
+    // nmcli that answers only the exact query.
+    const fs::path fake = dir / "nmcli";
+    std::ofstream(fake) << "#!/bin/sh\n"
+                           "[ \"$*\" = \"-g 802-11-wireless.ssid connection show RumiCar-AP\" ] || exit 9\n"
+                           "printf 'Rumi\\\\:Car 01\\n'\n";
+    ::chmod(fake.c_str(), 0755);
+    CHECK(WifiAp(fake.string(), "RumiCar-AP").ssid() == "Rumi:Car 01");
+    CHECK(WifiAp(fake.string(), "Other-AP").ssid().empty());          // nmcli fails
+    CHECK(WifiAp("/nonexistent/nmcli", "RumiCar-AP").ssid().empty());   // nmcli cannot run
+    CHECK(WifiAp(fake.string(), "").ssid().empty());                   // no access point profile
+    fs::remove_all(dir);
+}
+
 int main() {
     test_run_process();
+    test_run_identity();
     test_wifi_validation();
     test_wifi_activation_and_tx_power();
     test_throttled_parsing();

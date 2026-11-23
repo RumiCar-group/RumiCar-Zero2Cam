@@ -71,6 +71,22 @@ bool WifiAp::is_active() const {
     return r.output.find("activated") != std::string::npos;
 }
 
+std::string WifiAp::ssid() const {
+    if (connection_.empty()) return "";
+    const auto r = util::run_process({nmcli_, "-g", "802-11-wireless.ssid", "connection", "show", connection_}, 3000);
+    if (r.exit_code != 0 || r.timed_out) return "";
+    std::string out = r.output;
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    if (out.find('\n') != std::string::npos) return "";   // not the single value asked for
+    // nmcli -g escapes ':' and '\' with a backslash.
+    std::string ssid;
+    for (size_t k = 0; k < out.size(); ++k) {
+        if (out[k] == '\\' && k + 1 < out.size()) ++k;
+        ssid.push_back(out[k]);
+    }
+    return ssid;
+}
+
 bool set_wifi_tx_power(const std::string& iw_path, const std::string& device, int dbm) {
     if (dbm < 1 || dbm > 30) {
         log::error("wifi: tx power " + std::to_string(dbm) + " dBm is out of range (1..30)");

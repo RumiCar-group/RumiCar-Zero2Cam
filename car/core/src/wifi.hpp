@@ -34,6 +34,12 @@ public:
     // True when NetworkManager reports the profile as activated.
     bool is_active() const;
 
+    // The access point's network name as NetworkManager has it now (with a
+    // set_wifi change until the next boot).  Told to the PC in hello so that
+    // it can put the PC back on this network (docs 6.2).  Empty when there
+    // is no profile or nmcli fails.
+    std::string ssid() const;
+
 private:
     std::string nmcli_;
     std::string connection_;
