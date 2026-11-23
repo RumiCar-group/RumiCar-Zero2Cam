@@ -312,6 +312,11 @@ void test_core_config() {
     CHECK(throws([] { parse_core_config("{\"network\": {\"ap_start\": \"later\"}}"); }));
     CHECK(throws([] { parse_core_config("{\"network\": {\"wifi_txpower_dbm\": 31}}"); }));
     CHECK(throws([] { parse_core_config("{\"power\": {\"unknown\": 1}}"); }));
+    // Time after which a silent control client is closed (and TCP_USER_TIMEOUT).
+    CHECK(parse_core_config("{}").client_timeout_ms == 5000);
+    CHECK(parse_core_config("{\"network\": {\"client_timeout_ms\": 5000}}").client_timeout_ms == 5000);
+    CHECK(throws([] { parse_core_config("{\"network\": {\"client_timeout_ms\": 999}}"); }));
+    CHECK(throws([] { parse_core_config("{\"network\": {\"client_timeout_ms\": 60001}}"); }));
     // Start ramp of auto mode (docs 3.5).
     CHECK(parse_core_config("{}").auto_accel_pwm_per_s == 287);
     CHECK(parse_core_config("{\"auto_accel_pwm_per_s\": 0}").auto_accel_pwm_per_s == 0);

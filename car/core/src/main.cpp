@@ -311,8 +311,9 @@ int main(int argc, char** argv) {
 
     // --- network (optional: the car drives without it) -------------------------
     RequestHandler handler(state, store, wifi, cfg.car_name, RUMICAR_CORE_VERSION);
+    handler.set_client_timeout_ms(cfg.client_timeout_ms);
     net::TelemetryServer telemetry(cfg.bind_address, static_cast<uint16_t>(cfg.telemetry_port),
-                                   static_cast<size_t>(cfg.telemetry_queue_frames));
+                                   static_cast<size_t>(cfg.telemetry_queue_frames), cfg.client_timeout_ms);
     net::ControlServer control(
         cfg.bind_address, static_cast<uint16_t>(cfg.control_port),
         [&](const std::string& type, const json& params) { return handler.handle(type, params); },
@@ -322,7 +323,8 @@ int main(int argc, char** argv) {
             if (!connected && state.mode() == DriveMode::Manual) {
                 if (state.set_estop(true, "disconnected")) log::warn("PC disconnected in manual mode: emergency stop");
             }
-        });
+        },
+        cfg.client_timeout_ms);
     state.set_event_sink([&](const std::string& event, const json& data) { control.push_event(event, data); });
     bool network_up = false;
     try {

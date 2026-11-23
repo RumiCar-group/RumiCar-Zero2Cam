@@ -8,8 +8,9 @@
 
 namespace rumicar::net {
 
-TelemetryServer::TelemetryServer(std::string bind_address, uint16_t port, size_t queue_frames)
-    : bind_address_(std::move(bind_address)), port_(port), queue_frames_(queue_frames == 0 ? 1 : queue_frames) {}
+TelemetryServer::TelemetryServer(std::string bind_address, uint16_t port, size_t queue_frames, int user_timeout_ms)
+    : bind_address_(std::move(bind_address)), port_(port), queue_frames_(queue_frames == 0 ? 1 : queue_frames),
+      user_timeout_ms_(user_timeout_ms) {}
 
 TelemetryServer::~TelemetryServer() { stop(); }
 
@@ -59,6 +60,7 @@ void TelemetryServer::accept_loop() {
         if (!fd.valid()) break;
         set_timeouts(fd.get(), 2000, 0);
         set_nodelay(fd.get());
+        set_user_timeout(fd.get(), user_timeout_ms_);
 
         auto c = std::make_unique<Client>();
         c->fd = std::move(fd);

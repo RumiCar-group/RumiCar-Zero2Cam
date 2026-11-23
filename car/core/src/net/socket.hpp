@@ -42,6 +42,11 @@ Fd accept_client(int listen_fd, std::string& peer);
 void set_timeouts(int fd, int send_ms, int recv_ms);
 void set_nodelay(int fd);
 
+// TCP_USER_TIMEOUT: the connection fails (the next send/recv reports an error)
+// when data it sent stays unacknowledged for longer than ms, for example when
+// the PC has left the Wi-Fi without closing the connection.
+void set_user_timeout(int fd, int ms);
+
 // Writes everything or throws std::runtime_error (timeout, peer closed).
 void write_all(int fd, const void* data, size_t len);
 

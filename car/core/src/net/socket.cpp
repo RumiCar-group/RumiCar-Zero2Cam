@@ -94,6 +94,11 @@ void set_nodelay(int fd) {
     ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
 }
 
+void set_user_timeout(int fd, int ms) {
+    const unsigned int v = ms > 0 ? static_cast<unsigned int>(ms) : 0u;
+    ::setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &v, sizeof v);
+}
+
 void write_all(int fd, const void* data, size_t len) {
     const auto* p = static_cast<const uint8_t*>(data);
     size_t done = 0;

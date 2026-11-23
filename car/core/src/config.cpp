@@ -177,6 +177,7 @@ CoreConfig parse_core_config(const std::string& json_text) {
         c.control_port = s.get_int("control_port", c.control_port, 1, 65535);
         c.telemetry_port = s.get_int("telemetry_port", c.telemetry_port, 1, 65535);
         c.heartbeat_timeout_ms = s.get_int("heartbeat_timeout_ms", c.heartbeat_timeout_ms, 200, 10000);
+        c.client_timeout_ms = s.get_int("client_timeout_ms", c.client_timeout_ms, 1000, 60000);
         c.telemetry_queue_frames = s.get_int("telemetry_queue_frames", c.telemetry_queue_frames, 1, 200);
         c.ap_connection = s.get_string_allow_empty("ap_connection", c.ap_connection);
         c.nmcli_path = s.get_string("nmcli", c.nmcli_path);
