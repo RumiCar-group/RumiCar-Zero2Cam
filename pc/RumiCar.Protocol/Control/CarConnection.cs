@@ -58,6 +58,9 @@ public sealed class CarConnection : IAsyncDisposable
     /// <summary>The connection was lost (null: the car closed it).  Not raised after <see cref="DisposeAsync"/>.</summary>
     public event Action<Exception?>? Disconnected;
 
+    /// <summary>How the connection ended (valid once <see cref="Disconnected"/> has been raised).</summary>
+    public LinkEnd EndKind { get; private set; } = LinkEnd.None;
+
     public CarConnection(string host) : this(host, Ports.Control, Ports.Telemetry) { }
 
     /// <summary>For a car that listens on other ports (the defaults are <see cref="Ports"/>).</summary>
@@ -70,7 +73,7 @@ public sealed class CarConnection : IAsyncDisposable
 
     public bool IsConnected => Volatile.Read(ref _ended) == 0 && _control?.Connected == true;
 
-    /// <summary>Result of the hello request (car name, core_version, protocol, client_timeout_ms), once connected.</summary>
+    /// <summary>Result of the hello request (car name, core_version, protocol, client_timeout_ms; from core 0.8.0 also boot_id, instance_id, previous_exit, wifi_ssid), once connected.</summary>
     public JsonElement? HelloResult { get; private set; }
 
     /// <summary>
@@ -189,7 +192,7 @@ public sealed class CarConnection : IAsyncDisposable
                     case ControlResponse { Id: 0, Ok: false } refusal:
                         // Not an answer to a request: the car refused the connection
                         // ("busy: another client is connected") and closes it.
-                        End(new IOException("車が接続を拒否しました: " + refusal.Error));
+                        End(new IOException("車が接続を拒否しました: " + refusal.Error), LinkEnd.Refused);
                         return;
                     case ControlResponse r:
                         TaskCompletionSource<ControlResponse>? tcs;
@@ -204,7 +207,7 @@ public sealed class CarConnection : IAsyncDisposable
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
         catch (Exception e) { failure = e; }
-        End(failure);
+        End(failure, failure is null ? LinkEnd.ClosedByCar : LinkEnd.Error);
     }
 
     private async Task ReadTelemetryLoopAsync(NetworkStream stream, CancellationToken ct)
@@ -224,7 +227,8 @@ public sealed class CarConnection : IAsyncDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
         catch (Exception e) { failure = e; }
         // Without telemetry there is nothing to show or record: the connection is over.
-        End(failure is null ? new IOException("車がテレメトリの接続を閉じました") : new IOException("テレメトリ: " + failure.Message, failure));
+        End(failure is null ? new IOException("車がテレメトリの接続を閉じました") : new IOException("テレメトリ: " + failure.Message, failure),
+            failure is null ? LinkEnd.ClosedByCar : LinkEnd.Error);
     }
 
     /// <summary>
@@ -269,7 +273,7 @@ public sealed class CarConnection : IAsyncDisposable
                 var silent = SinceLastReceived;
                 if (silent > LinkTimeout)
                 {
-                    End(new TimeoutException($"通信途絶（車から {silent.TotalSeconds:F1} 秒間受信なし）"));
+                    End(new TimeoutException($"通信途絶（車から {silent.TotalSeconds:F1} 秒間受信なし）"), LinkEnd.Silent);
                     return;
                 }
             }
@@ -284,10 +288,20 @@ public sealed class CarConnection : IAsyncDisposable
         foreach (var tcs in waiting) tcs.TrySetException(e);
     }
 
+    /// <summary>
+    /// Ends the connection now as lost, without waiting for <see cref="LinkTimeout"/>:
+    /// for when the PC knows that the car cannot be reached any more (its Wi-Fi
+    /// has moved to another network).  <see cref="Disconnected"/> is raised with
+    /// <paramref name="reason"/> as for any other loss; nothing happens when the
+    /// connection has already ended.
+    /// </summary>
+    public void Abort(Exception reason) => End(reason, LinkEnd.Aborted);
+
     /// <summary>The connection is over: close both channels, fail the waiting requests, tell once.</summary>
-    private void End(Exception? reason)
+    private void End(Exception? reason, LinkEnd kind)
     {
         if (Interlocked.Exchange(ref _ended, 1) != 0) return;
+        EndKind = kind;
         _endReason = reason ?? new IOException("車が接続を閉じました");
         FailPending(_endReason);   // before the cancellation, so the waiting requests carry the reason
         try { _cts.Cancel(); } catch (ObjectDisposedException) { }
@@ -322,4 +336,20 @@ public sealed class CarConnection : IAsyncDisposable
             return v.GetString();
         return null;
     }
+}
+
+/// <summary>How a connection to the car ended.</summary>
+public enum LinkEnd
+{
+    None,
+    /// <summary>Nothing came from the car for <see cref="CarConnection.LinkTimeout"/>.</summary>
+    Silent,
+    /// <summary>The car closed the connection (end of stream).</summary>
+    ClosedByCar,
+    /// <summary>The car refused the connection (another client is connected).</summary>
+    Refused,
+    /// <summary>The socket failed (reset, network unreachable, ...).</summary>
+    Error,
+    /// <summary>Ended by the PC through <see cref="CarConnection.Abort"/>.</summary>
+    Aborted,
 }

@@ -26,16 +26,22 @@ public class CarConnectionTests
         private readonly List<TcpClient> _clients = new();
         private readonly int? _clientTimeoutMs;
         private readonly bool _refuseBusy;
+        private readonly string _helloExtra;
         private TcpClient? _telemetryClient;
+
+        /// <summary>Completed when the PC has closed the control connection (the car reads end of stream).</summary>
+        public readonly TaskCompletionSource ControlClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public volatile bool AnswerHeartbeats = true;
         public volatile bool Silent;                  // sends nothing at all (the link is gone, the sockets stay open)
         public readonly ConcurrentQueue<long> HeartbeatTimes = new();   // Stopwatch timestamps of received heartbeats
 
-        public FakeCar(int? clientTimeoutMs = 1000, bool refuseBusy = false)
+        /// <param name="helloExtra">More members of the hello result, as JSON text after a comma (core 0.8.0: boot_id, ...).</param>
+        public FakeCar(int? clientTimeoutMs = 1000, bool refuseBusy = false, string helloExtra = "")
         {
             _clientTimeoutMs = clientTimeoutMs;
             _refuseBusy = refuseBusy;
+            _helloExtra = helloExtra.Length > 0 ? "," + helloExtra : "";
             _control.Start();
             _telemetry.Start();
             _tasks.Add(Task.Run(ControlAcceptAsync));
@@ -76,7 +82,11 @@ public class CarConnectionTests
                 while (!_cts.IsCancellationRequested)
                 {
                     var line = await reader.ReadLineAsync(_cts.Token);
-                    if (line is null) return;
+                    if (line is null)
+                    {
+                        ControlClosed.TrySetResult();
+                        return;
+                    }
                     using var doc = JsonDocument.Parse(line);
                     var id = doc.RootElement.GetProperty("id").GetInt64();
                     var type = doc.RootElement.GetProperty("type").GetString();
@@ -88,14 +98,14 @@ public class CarConnectionTests
                     if (Silent) continue;
                     var result = type == RequestType.Hello
                         ? (_clientTimeoutMs is int ms
-                            ? $"{{\"car\":\"Fake\",\"core_version\":\"9.9.9\",\"protocol\":3,\"client_timeout_ms\":{ms}}}"
+                            ? $"{{\"car\":\"Fake\",\"core_version\":\"9.9.9\",\"protocol\":3,\"client_timeout_ms\":{ms}{_helloExtra}}}"
                             : "{\"car\":\"Fake\",\"core_version\":\"0.7.0\",\"protocol\":3}")
                         : null;
                     await writer.WriteLineAsync(result is null ? $"{{\"id\":{id},\"ok\":true}}" : $"{{\"id\":{id},\"ok\":true,\"result\":{result}}}");
                 }
             }
             catch (Exception) when (_cts.IsCancellationRequested) { }
-            catch (IOException) { }
+            catch (IOException) { ControlClosed.TrySetResult(); }
         }
 
         private async Task TelemetryAcceptAsync()
@@ -192,6 +202,7 @@ public class CarConnectionTests
             Assert.True(after < TimeSpan.FromMilliseconds(2000), $"reported after {after.TotalMilliseconds} ms");
             var ex = await lost.Task;
             Assert.IsType<TimeoutException>(ex);
+            Assert.Equal(LinkEnd.Silent, car.EndKind);
             Assert.False(car.IsConnected);
             await Assert.ThrowsAnyAsync<Exception>(() => car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None));
         }
@@ -233,6 +244,7 @@ public class CarConnectionTests
             var started = Stopwatch.GetTimestamp();
             var ex = await Assert.ThrowsAnyAsync<Exception>(() => car.ConnectAsync("test", CancellationToken.None));
             Assert.Contains("busy", ex.Message);
+            Assert.Equal(LinkEnd.Refused, car.EndKind);
             Assert.True(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(2), "not after the 5 s request timeout");
         }
     }
@@ -249,6 +261,58 @@ public class CarConnectionTests
             var finished = await Task.WhenAny(lost.Task, Task.Delay(3000));
             Assert.Same(lost.Task, finished);
             Assert.IsAssignableFrom<IOException>(await lost.Task);
+            Assert.Equal(LinkEnd.ClosedByCar, car.EndKind);
         }
+    }
+
+    [Fact]
+    public async Task AbortEndsTheConnectionAtOnceAsLost()
+    {
+        // The PC's Wi-Fi has moved to another network: the connection ends now, not after the link timeout.
+        await using var fake = new FakeCar(clientTimeoutMs: 60000);
+        var (car, lost) = await ConnectAsync(fake);
+        await using (car)
+        {
+            var reports = 0;
+            car.Disconnected += _ => Interlocked.Increment(ref reports);
+            await Task.Delay(300);
+            var reason = new IOException("PC の Wi-Fi が別のネットワーク（Home）に切り替わりました");
+            var started = Stopwatch.GetTimestamp();
+            car.Abort(reason);
+            var finished = await Task.WhenAny(lost.Task, Task.Delay(1000));
+            Assert.Same(lost.Task, finished);
+            Assert.True(Stopwatch.GetElapsedTime(started) < TimeSpan.FromMilliseconds(500));
+            Assert.Same(reason, await lost.Task);
+            Assert.Equal(LinkEnd.Aborted, car.EndKind);
+            Assert.False(car.IsConnected);
+            var ex = await Assert.ThrowsAnyAsync<IOException>(() => car.RequestAsync(ControlCodec.GetStatus(car.NextId()), CancellationToken.None));
+            Assert.Contains("別のネットワーク", ex.Message);
+            car.Abort(new IOException("again"));   // already ended: nothing more
+            // The sockets are closed: the car sees the control connection end.
+            Assert.Same(fake.ControlClosed.Task, await Task.WhenAny(fake.ControlClosed.Task, Task.Delay(2000)));
+            await Task.Delay(100);
+            Assert.Equal(1, reports);
+        }
+    }
+
+    [Fact]
+    public async Task HelloTellsTheCarsRun()
+    {
+        await using var fake = new FakeCar(clientTimeoutMs: 60000,
+            helloExtra: "\"boot_id\":\"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\",\"instance_id\":\"00112233aabbccdd\",\"previous_exit\":\"unclean\",\"wifi_ssid\":\"RumiCar\"");
+        var (car, _) = await ConnectAsync(fake);
+        await using (car)
+        {
+            var run = Link.CarRun.FromHello(car.HelloResult);
+            Assert.NotNull(run);
+            Assert.Equal("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", run!.BootId);
+            Assert.Equal("00112233aabbccdd", run.InstanceId);
+            Assert.Equal("unclean", run.PreviousExit);
+            Assert.Equal("RumiCar", CarConnection.GetString(car.HelloResult, "wifi_ssid"));
+        }
+        // A car of 0.7.x: no run.
+        await using var old = new FakeCar(clientTimeoutMs: null);
+        var (oldCar, _) = await ConnectAsync(old);
+        await using (oldCar) Assert.Null(Link.CarRun.FromHello(oldCar.HelloResult));
     }
 }
