@@ -23,6 +23,13 @@ public partial class MainWindow : Window
     private CarConnection? _car;
     private bool _closing;
 
+    // Automatic reconnection after a lost connection (docs 6.2): an attempt every 2 s
+    // until connected or until 「再接続を中止」 is pressed.
+    private static readonly TimeSpan ReconnectInterval = TimeSpan.FromSeconds(2);
+    private CancellationTokenSource? _reconnectCts;
+    private string? _lastConnectFailure;   // a failure repeated by the next attempts is logged once
+    private bool _autoClearing;            // an automatic estop_clear is on its way
+
     // Recording runs on the telemetry thread so that every frame is written
     // even when the UI is busy; the lock covers start/stop from the UI thread.
     private readonly object _sessionLock = new();
@@ -209,34 +216,81 @@ public partial class MainWindow : Window
 
     private async void OnConnectClick(object sender, RoutedEventArgs e)
     {
+        if (_reconnectCts is not null)
+        {
+            _reconnectCts.Cancel();
+            _vm.AddLog("自動再接続を中止しました");
+            return;
+        }
         if (_car is not null)
         {
             await DisconnectAsync();
             return;
         }
+        ConnectButton.IsEnabled = false;
+        try
+        {
+            await TryConnectAsync(reconnecting: false, CancellationToken.None);
+        }
+        finally
+        {
+            ConnectButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Connects to the car at the address shown.  False when the car could not be
+    /// reached (logged; while reconnecting, a failure repeated from the previous
+    /// attempt is not logged again).
+    /// </summary>
+    private async Task<bool> TryConnectAsync(bool reconnecting, CancellationToken ct)
+    {
         var car = new CarConnection(_vm.Host.Trim());
         car.Log += line => Ui(() => _vm.AddLog(line));
         car.EventReceived += evt => Ui(() => OnCarEvent(evt));
         car.FrameReceived += OnFrameReceived;
         car.Disconnected += ex => Ui(() => OnDisconnected(car, ex));
-        _vm.ConnectionState = "接続中…";
-        ConnectButton.IsEnabled = false;
+        if (!reconnecting) _vm.ConnectionState = "接続中…";
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await car.ConnectAsync("RumiCarDriveManager", cts.Token);
-            _car = car;
-            _framesReceived = 0;
-            _imagesReceived = 0;
-            _vm.Frames = "0";
-            _vm.Images = "0";
-            _vm.Connected = true;
-            _vm.ConnectionState = "接続";
-            ConnectButton.Content = "切断";
-            _lastStatus = null;
-            _lastThrottled = 0;
-            _abiWarned = false;
-            if (_vm.AutoRecord) StartRecording();   // default: every connection is recorded
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(reconnecting ? 5 : 10));
+            await car.ConnectAsync("RumiCarDriveManager", timeout.Token);
+            ct.ThrowIfCancellationRequested();
+        }
+        catch (Exception ex)
+        {
+            await car.DisposeAsync();
+            if (ct.IsCancellationRequested) return false;
+            var message = ex is OperationCanceledException ? "時間内に応答がありません" : ex.Message;
+            if (!reconnecting || message != _lastConnectFailure)
+            {
+                _vm.AddLog((reconnecting ? "再接続できません: " : "接続失敗: ") + message);
+                if (ex.Message.Contains("unsupported protocol version", StringComparison.Ordinal))
+                    _vm.AddLog($"車の本体とこのアプリ（{AppVersion}、制御の通信 protocol {ControlProtocol.Version}）の版が対応していません。同じ Release の SD カードイメージ（または .deb）とアプリを使用してください");
+                if (reconnecting && ex.Message.Contains("busy", StringComparison.Ordinal))
+                    _vm.AddLog($"車は前の接続をまだ閉じていません（受信が途絶えた接続は車が {car.LinkTimeout.TotalSeconds:F0} 秒ほどで閉じます）。再接続を続けます");
+            }
+            _lastConnectFailure = message;
+            if (!reconnecting) _vm.ConnectionState = "切断";
+            return false;
+        }
+
+        _lastConnectFailure = null;
+        _car = car;
+        _framesReceived = 0;
+        _imagesReceived = 0;
+        _vm.Frames = "0";
+        _vm.Images = "0";
+        _vm.Connected = true;
+        _vm.ConnectionState = "接続";
+        ConnectButton.Content = "切断";
+        _lastStatus = null;
+        _lastThrottled = 0;
+        _abiWarned = false;
+        if (_vm.AutoRecord) StartRecording();   // default: every connection is recorded
+        try
+        {
             await RefreshWifiAsync();
             var wifi = _wifi;
             _carNetwork = wifi is { Kind: PcWifi.Kind.Connected } ? wifi.Ssid : null;
@@ -256,22 +310,18 @@ public partial class MainWindow : Window
                 ApplyStatus(result);
                 // The session started before the status was known: complete its description now.
                 lock (_sessionLock) _session?.UpdateInfo(BuildSessionInfo());
+                if (result.TryGetProperty("estop", out var es) && es.ValueKind == JsonValueKind.True)
+                    await ClearCommunicationEStopAsync(CarConnection.GetString(result, "estop_reason") ?? "");
             }
             else if (!status.Ok) _vm.AddLog("状態取得: 拒否 (" + status.Error + ")");
             await RefreshVersionsAsync();
         }
         catch (Exception ex)
         {
-            _vm.AddLog("接続失敗: " + ex.Message);
-            if (ex.Message.Contains("unsupported protocol version", StringComparison.Ordinal))
-                _vm.AddLog($"車の本体とこのアプリ（{AppVersion}、制御の通信 protocol {ControlProtocol.Version}）の版が対応していません。同じ Release の SD カードイメージ（または .deb）とアプリを使用してください");
-            _vm.ConnectionState = "切断";
-            await car.DisposeAsync();
+            // The connection itself is watched by CarConnection: when it is lost, OnDisconnected follows.
+            _vm.AddLog("接続後の状態取得に失敗: " + ex.Message);
         }
-        finally
-        {
-            ConnectButton.IsEnabled = true;
-        }
+        return true;
     }
 
     private async Task DisconnectAsync()
@@ -280,7 +330,7 @@ public partial class MainWindow : Window
         var car = _car;
         _car = null;
         _vm.Connected = false;
-        _vm.ConnectionState = "切断";
+        _vm.ConnectionState = _reconnectCts is null ? "切断" : "再接続待ち…";
         SetManualMode(false);
         _carNetwork = null;
         _settingsTimer.Stop();
@@ -288,12 +338,49 @@ public partial class MainWindow : Window
         _vm.DriveSettingsEnabled = false;
         _vm.DriveSettingsNote = "接続時に車の設定値を取得します";
         UpdateWifiDisplay();
-        ConnectButton.Content = "接続";
+        ConnectButton.Content = _reconnectCts is null ? "接続" : "再接続を中止";
         _vm.InstalledVersions.Clear();
         _vm.PushStatus = "-";
         _lastStatus = null;
         UpdateSdCardStatus();
         if (car is not null) await car.DisposeAsync();
+    }
+
+    /// <summary>
+    /// After a lost connection: an attempt every <see cref="ReconnectInterval"/>
+    /// until connected, or until 「再接続を中止」 is pressed or the window closes.
+    /// </summary>
+    private async Task ReconnectLoopAsync(CancellationTokenSource cts)
+    {
+        _vm.AddLog($"自動で再接続します（{ReconnectInterval.TotalSeconds:F0} 秒ごと。やめるときは「再接続を中止」）");
+        _lastConnectFailure = null;
+        var attempt = 0;
+        try
+        {
+            while (!cts.IsCancellationRequested && _car is null)
+            {
+                _vm.ConnectionState = "再接続待ち…";
+                await Task.Delay(ReconnectInterval, cts.Token);
+                attempt++;
+                _vm.ConnectionState = $"再接続中…（{attempt} 回目）";
+                if (await TryConnectAsync(reconnecting: true, cts.Token))
+                {
+                    _vm.AddLog($"再接続しました（{attempt} 回目）");
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (ReferenceEquals(_reconnectCts, cts)) _reconnectCts = null;
+            cts.Dispose();
+            if (_car is null)
+            {
+                ConnectButton.Content = "接続";
+                _vm.ConnectionState = "切断";
+            }
+        }
     }
 
     /// <summary>What the next (or current) recording is about: the chosen scenario and the car's logic/pack from the last status.</summary>
@@ -310,17 +397,31 @@ public partial class MainWindow : Window
     {
         if (!ReferenceEquals(source, _car)) return;   // already disconnected by the user
         _vm.AddLog(ex is null ? "車両側から接続が切断されました" : "接続が切断されました: " + ex.Message);
-        _ = DisconnectAsync();
+        _ = LostAsync();
+    }
+
+    /// <summary>The connection was lost (not 「切断」): close it and connect again automatically.</summary>
+    private async Task LostAsync()
+    {
+        CancellationTokenSource? reconnect = null;
+        if (!_closing && _reconnectCts is null)
+        {
+            reconnect = new CancellationTokenSource();
+            _reconnectCts = reconnect;   // set first: the button offers 「再接続を中止」 from now on
+        }
+        await DisconnectAsync();
+        if (reconnect is not null) await ReconnectLoopAsync(reconnect);
     }
 
     protected override async void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
         if (e.Cancel) return;
-        if (_car is null && _session is null) return;   // nothing to shut down: close proceeds
+        if (_car is null && _session is null && _reconnectCts is null) return;   // nothing to shut down: close proceeds
         e.Cancel = true;                                 // finish the disconnect first, then close again
         if (_closing) return;
         _closing = true;
+        _reconnectCts?.Cancel();
         await DisconnectAsync();
         Close();
     }
@@ -347,6 +448,8 @@ public partial class MainWindow : Window
                 var reason = CarConnection.GetString(evt.Data, "reason") ?? "";
                 _vm.EStop = FormatEStop(active, reason);
                 _vm.AddLog(active ? "非常停止 作動: " + DescribeEStopReason(reason) : "非常停止 解除");
+                // The event got through, so the car is reachable again: an e-stop the link caused is cleared.
+                if (active) _ = ClearCommunicationEStopAsync(reason);
                 break;
             }
             case "activation":
@@ -789,6 +892,43 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// An e-stop that the communication caused (heartbeat 途絶, 手動モード中に切断) is
+    /// cleared as soon as the car is reachable again (docs 6.2).  The car dropped
+    /// the manual command with the e-stop, and the PC's manual input starts from
+    /// stopped as well, so the car moves again only on a new key press or pad
+    /// touch.  An e-stop from 「非常停止」 (reason request) is never cleared here.
+    /// </summary>
+    private async Task ClearCommunicationEStopAsync(string reason)
+    {
+        if (reason != "heartbeat" && reason != "disconnected") return;
+        var car = _car;
+        if (car is null || _autoClearing) return;
+        _autoClearing = true;
+        try
+        {
+            var r = await car.RequestAsync(ControlCodec.EStopClear(car.NextId()), CancellationToken.None);
+            if (!r.Ok)
+            {
+                _vm.AddLog("非常停止の自動解除: 拒否 (" + r.Error + ")");
+                return;
+            }
+            _manual.Stop();
+            DrivePad.ReleaseMouseCapture();
+            _manualSent = null;
+            _vm.AddLog($"通信が回復したため、非常停止（{DescribeEStopReason(reason)}）を自動で解除しました。手動の操作は停止から再開します（キー・パッドを操作し直してください）");
+            ManualTick();
+        }
+        catch (Exception ex)
+        {
+            if (car.IsConnected) _vm.AddLog("非常停止の自動解除: 失敗 (" + ex.Message + ")");
+        }
+        finally
+        {
+            _autoClearing = false;
+        }
+    }
+
     private async void OnEStopClick(object sender, RoutedEventArgs e) =>
         await SendAsync(car => ControlCodec.EStop(car.NextId()), "非常停止");
 
@@ -920,7 +1060,8 @@ public partial class MainWindow : Window
             _ => "",
         };
         var setPoint = _manual.SetPoint != 0 && cmd.Source != ManualSource.Pad ? $"　設定速度 {_manual.SetPoint}" : "";
-        _vm.ManualStatus = DescribeCommand(cmd.Steer, cmd.SteerPwm, cmd.DriveDir, cmd.DrivePwm) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
+        var estop = _vm.EStop.StartsWith("作動中", StringComparison.Ordinal) ? "非常停止中のため車は動きません（「非常停止解除」）　" : "";
+        _vm.ManualStatus = estop + DescribeCommand(cmd.Steer, cmd.SteerPwm, cmd.DriveDir, cmd.DrivePwm) + (how.Length > 0 ? $"（{how}）" : "") + setPoint;
         DrawPad(cmd.SignedSteer, cmd.SignedDrive, true);
         var key = (cmd.Steer, cmd.SteerPwm, cmd.DriveDir, cmd.DrivePwm);
         if (_manualSent == key || _manualSending) return;
@@ -944,8 +1085,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            // While connected, the same command is sent again on the next tick; a lost
+            // connection is handled by the reconnection (the command starts from stopped).
+            if (!car.IsConnected) return;
             _vm.AddLog("手動操作の送信失敗: " + ex.Message);
-            _manualSent = c;
+            _manualSent = null;
         }
         finally
         {
