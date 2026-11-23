@@ -324,6 +324,7 @@ void test_servers(const fs::path& base_pack) {
     // (test_control_client_timeout covers the timeout itself).
     constexpr int kLongTimeoutMs = 24 * 60 * 60 * 1000;
     handler.set_client_timeout_ms(kLongTimeoutMs);
+    handler.set_run_identity("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", "00112233aabbccdd", "unclean");
     std::atomic<int> connects{0}, disconnects{0};
     net::ControlServer control("127.0.0.1", 0,
         [&](const std::string& type, const json& params) { return handler.handle(type, params); },
@@ -356,6 +357,11 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["result"]["core_version"] == "9.9.9");
     CHECK(r["result"]["protocol"] == 3);
     CHECK(r["result"]["client_timeout_ms"] == kLongTimeoutMs);   // the PC uses the same time to tell that the link is lost
+    // What the PC compares after a lost connection (docs 5.2).
+    CHECK(r["result"]["boot_id"] == "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+    CHECK(r["result"]["instance_id"] == "00112233aabbccdd");
+    CHECK(r["result"]["previous_exit"] == "unclean");
+    CHECK(!r["result"].contains("wifi_ssid"));   // no access point profile on the test host
     for (int i = 0; i < 100 && connects.load() == 0; ++i) std::this_thread::sleep_for(10ms);
     CHECK(connects.load() == 1);
     CHECK(control.client_connected());

@@ -50,6 +50,7 @@
 #include "net/telemetry_server.hpp"
 #include "power.hpp"
 #include "request_handler.hpp"
+#include "run_identity.hpp"
 #include "upload.hpp"
 #include "rumicar/logic_api.h"
 #include "version_store.hpp"
@@ -207,6 +208,14 @@ int main(int argc, char** argv) {
     std::signal(SIGHUP, on_signal);
     std::signal(SIGPIPE, SIG_IGN);
 
+    // Declared before the hardware: destroyed after it, so the marker goes
+    // only once the motors are stopped and released (docs 5.2, hello).
+    const RunMarker run_marker(cfg.state_dir + "/status/core-running");
+    const std::string boot_id = read_boot_id();
+    const std::string instance_id = make_instance_id();
+    log::info("boot " + (boot_id.empty() ? std::string("?") : boot_id) + ", instance " + instance_id
+              + ", previous run of the core: " + run_marker.previous_exit());
+
     // --- hardware bring-up ---------------------------------------------------
     std::unique_ptr<hw::GpioOutputs> gpio;
     std::unique_ptr<hw::Drv8835> motors;
@@ -329,6 +338,7 @@ int main(int argc, char** argv) {
     // --- network (optional: the car drives without it) -------------------------
     RequestHandler handler(state, store, wifi, cfg.car_name, RUMICAR_CORE_VERSION);
     handler.set_client_timeout_ms(cfg.client_timeout_ms);
+    handler.set_run_identity(boot_id, instance_id, run_marker.previous_exit());
     net::TelemetryServer telemetry(cfg.bind_address, static_cast<uint16_t>(cfg.telemetry_port),
                                    static_cast<size_t>(cfg.telemetry_queue_frames), cfg.client_timeout_ms);
     net::ControlServer control(

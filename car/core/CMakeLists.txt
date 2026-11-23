@@ -32,6 +32,7 @@ add_library(rumicar_core_lib STATIC
   src/net/telemetry_frame.cpp
   src/net/telemetry_server.cpp
   src/net/control_server.cpp
+  src/run_identity.cpp
 )
 target_include_directories(rumicar_core_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rumicar_core_lib PUBLIC rumicar_api nlohmann_json::nlohmann_json OpenSSL::Crypto Threads::Threads ${CMAKE_DL_LIBS})

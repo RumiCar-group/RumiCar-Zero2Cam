@@ -97,27 +97,6 @@ public static class Capability
     };
 }
 
-/// <summary>Firmware throttling flags (telemetry "throttled"), shown in Japanese (docs 3.9).</summary>
-public static class PowerFlags
-{
-    public const uint UnderVoltageNow = 0x1;
-    public const uint UnderVoltageSinceBoot = 0x10000;
-    public const uint ThrottledNow = 0x4;
-    public const uint SoftTemperatureLimit = 0x8;
-
-    public static string Describe(uint flags)
-    {
-        if (flags == 0) return "正常（低電圧なし）";
-        var parts = new List<string>();
-        if ((flags & UnderVoltageNow) != 0) parts.Add("低電圧（現在）");
-        else if ((flags & UnderVoltageSinceBoot) != 0) parts.Add("低電圧あり（起動後）");
-        if ((flags & ThrottledNow) != 0) parts.Add("処理速度制限中");
-        if ((flags & SoftTemperatureLimit) != 0) parts.Add("温度制限中");
-        if (parts.Count == 0) parts.Add($"フラグ 0x{flags:X}");
-        return string.Join("、", parts);
-    }
-}
-
 /// <summary>State shown by the main window.  Updated on the UI thread only.</summary>
 public sealed class MainViewModel : INotifyPropertyChanged
 {
@@ -167,6 +146,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _pcWifi = "PC の Wi-Fi: -";
     private bool _pcWifiWarning;
     private string _pcWifiHint = "";
+    private bool _autoWifi = true;
+    private string _linkNote = "-";
+    private string _linkNoteDetail = "接続が途切れたとき、その原因の手がかりをここに表示します";
 
     public string Host { get => _host; set => Set(ref _host, value); }
     public string CarName { get => _carName; set => Set(ref _carName, value); }
@@ -264,6 +246,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>The PC left the car's network while connected to the car.</summary>
     public bool PcWifiWarning { get => _pcWifiWarning; set => Set(ref _pcWifiWarning, value); }
     public string PcWifiHint { get => _pcWifiHint; set => Set(ref _pcWifiHint, value); }
+    /// <summary>While the car is in use, put the PC's Wi-Fi back on the car's network (docs 6.2).</summary>
+    public bool AutoWifi { get => _autoWifi; set => Set(ref _autoWifi, value); }
+    /// <summary>Why the last connection was lost, in one line (docs 5.1).</summary>
+    public string LinkNote { get => _linkNote; set => Set(ref _linkNote, value); }
+    /// <summary>The lines that support <see cref="LinkNote"/> (tooltip).</summary>
+    public string LinkNoteDetail { get => _linkNoteDetail; set => Set(ref _linkNoteDetail, value); }
     /// <summary>Version of this application (the release tag's number), shown in the header.</summary>
     public string AppVersion { get; init; } = "";
 

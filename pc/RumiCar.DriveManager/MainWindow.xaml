@@ -158,7 +158,7 @@
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
-                                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="判断状態" Style="{StaticResource Text.Label}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LogicState}" Style="{StaticResource Text.Value}"/>
@@ -182,7 +182,13 @@
                             <TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding Battery}" Style="{StaticResource Text.Value}"/>
                             <TextBlock Grid.Row="10" Grid.Column="0" Text="検出" Style="{StaticResource Text.Label}" ToolTip="ロジックの検出器ごとのスコア（0〜1）、位置（セルの列,行）、しきい値を超えたセル数。● = 確定"/>
                             <TextBlock Grid.Row="10" Grid.Column="1" Text="{Binding Detections}" Style="{StaticResource Text.Value}" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Row="11" Grid.Column="0" Text="前回の通信断" Style="{StaticResource Text.Label}"
+                                       ToolTip="車との接続が途切れたときの原因の手がかり。車の再起動・rumicar-core の再起動・PC の Wi-Fi の切り替え・低電圧などを、再接続のときに判定します（詳細はポインターを重ねるとログと同じ内容を表示）"/>
+                            <TextBlock Grid.Row="11" Grid.Column="1" Text="{Binding LinkNote}" Style="{StaticResource Text.Value}" TextWrapping="Wrap"
+                                       ToolTip="{Binding LinkNoteDetail}"/>
                         </Grid>
+                        <CheckBox Content="PC の Wi-Fi を自動でつなぎ直す" IsChecked="{Binding AutoWifi}" Margin="0,8,0,0"
+                                  ToolTip="車と接続中（または通信断の後の再接続中）に、PC の Wi-Fi が車のネットワークから外れたとき、車のネットワークに接続し直します。PC の Wi-Fi は車のネットワークにあるのに車へ届かない状態が続くときは、Wi-Fi を一度切ってつなぎ直します（手で切断・再接続するのと同じ操作）。「切断」を押した後は何もしません"/>
                     </StackPanel>
                 </Border>
 

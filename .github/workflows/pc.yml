@@ -60,6 +60,85 @@ jobs:
           path: publish
           if-no-files-found: error
 
+      # The installer carries the published exe only: check that it is the only file.
+      - name: Installer (NSIS, for the current user)
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem publish -File -Recurse | ForEach-Object Name)
+          if ($files.Count -ne 1 -or $files[0] -ne 'RumiCarDriveManager.exe') { throw "publish holds more than the exe: $($files -join ', ')" }
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            choco install nsis --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "choco install nsis: $LASTEXITCODE" }
+          }
+          & $makensis -VERSION
+          $version = (Select-Xml -Path pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj -XPath '//Version').Node.InnerText
+          New-Item -ItemType Directory -Force installer-out | Out-Null
+          & $makensis -V2 -WX -INPUTCHARSET UTF8 "-DVERSION=$version" "-DSOURCE=$PWD\publish\RumiCarDriveManager.exe" `
+            "-DOUTFILE=$PWD\installer-out\RumiCarDriveManager-win-x64-setup.exe" pc/installer/RumiCarDriveManager.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis: $LASTEXITCODE" }
+          Get-Item installer-out\*.exe | Format-Table Name, Length
+
+      # As a user runs it: silent install, the application starts, an install
+      # while it runs gives up, a reinstall over it, then the removal.
+      - name: Installer test (install, start, reinstall, uninstall)
+        shell: pwsh
+        run: |
+          $setup = "$PWD\installer-out\RumiCarDriveManager-win-x64-setup.exe"
+          $version = (Select-Xml -Path pc/RumiCar.DriveManager/RumiCar.DriveManager.csproj -XPath '//Version').Node.InnerText
+          $dir = "$env:LOCALAPPDATA\Programs\RumiCar Drive Manager"
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\RumiCarDriveManager'
+          $startMenu = "$([Environment]::GetFolderPath('Programs'))\RumiCar 走行管理.lnk"
+          $desktop = "$([Environment]::GetFolderPath('Desktop'))\RumiCar 走行管理.lnk"
+          $data = "$env:USERPROFILE\RumiCarData"
+          New-Item -ItemType Directory -Force $data | Out-Null
+          Set-Content "$data\keep.txt" 'recordings stay'
+          $script:failed = $false
+          function Check([bool]$ok, [string]$what) { if ($ok) { "OK   $what" } else { "FAIL $what"; $script:failed = $true } }
+
+          $p = Start-Process $setup -ArgumentList '/S' -Wait -PassThru
+          Check ($p.ExitCode -eq 0) "install: exit code $($p.ExitCode)"
+          Check (Test-Path "$dir\RumiCarDriveManager.exe") 'application installed'
+          Check ((Get-FileHash "$dir\RumiCarDriveManager.exe").Hash -eq (Get-FileHash publish\RumiCarDriveManager.exe).Hash) 'installed exe is the published exe'
+          Check (Test-Path "$dir\uninstall.exe") 'uninstaller installed'
+          $reg = Get-ItemProperty $key -ErrorAction SilentlyContinue
+          Check ($reg.DisplayName -eq 'RumiCar 走行管理') "DisplayName $($reg.DisplayName)"
+          Check ($reg.DisplayVersion -eq $version) "DisplayVersion $($reg.DisplayVersion)"
+          Check ($reg.InstallLocation -eq $dir) "InstallLocation $($reg.InstallLocation)"
+          Check ($reg.QuietUninstallString -eq "`"$dir\uninstall.exe`" /S") "QuietUninstallString $($reg.QuietUninstallString)"
+          Check (Test-Path $startMenu) 'Start menu shortcut'
+          Check (Test-Path $desktop) 'desktop shortcut'
+
+          $app = Start-Process "$dir\RumiCarDriveManager.exe" -PassThru
+          Start-Sleep -Seconds 10
+          Check (-not $app.HasExited) 'the installed application runs (10 s after start)'
+          $p = Start-Process $setup -ArgumentList '/S' -Wait -PassThru
+          Check ($p.ExitCode -eq 2) "install while the application runs gives up: exit code $($p.ExitCode)"
+          Check (-not $app.HasExited) 'the running application was left alone'
+          Stop-Process -Id $app.Id -Force
+          $app.WaitForExit()
+
+          $p = Start-Process $setup -ArgumentList '/S' -Wait -PassThru
+          Check ($p.ExitCode -eq 0) "reinstall over the installed version: exit code $($p.ExitCode)"
+          Check (Test-Path "$dir\RumiCarDriveManager.exe") 'application still installed'
+
+          # The uninstaller copies itself to %TEMP% and returns at once: wait for the folder to go.
+          Start-Process "$dir\uninstall.exe" -ArgumentList '/S' -Wait | Out-Null
+          for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
+          Check (-not (Test-Path $dir)) 'install folder removed'
+          Check (-not (Test-Path $key)) 'uninstall entry removed'
+          Check (-not (Test-Path $startMenu)) 'Start menu shortcut removed'
+          Check (-not (Test-Path $desktop)) 'desktop shortcut removed'
+          Check (Test-Path "$data\keep.txt") 'RumiCarData left untouched'
+          if ($script:failed) { exit 1 }
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v5
+        with:
+          name: RumiCarDriveManager-win-x64-setup
+          path: installer-out
+          if-no-files-found: error
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v5

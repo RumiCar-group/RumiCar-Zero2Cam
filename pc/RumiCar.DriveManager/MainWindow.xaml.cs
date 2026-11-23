@@ -10,6 +10,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RumiCar.Protocol;
 using RumiCar.Protocol.Control;
+using RumiCar.Protocol.Link;
 using RumiCar.Protocol.Packs;
 using RumiCar.Protocol.Recording;
 using RumiCar.Protocol.Releases;
@@ -64,6 +65,16 @@ public partial class MainWindow : Window
     private string? _carNetwork;
     private bool _wifiQuerying;
     private bool _wifiHiddenLogged;
+
+    // Why a connection was lost, and putting the PC's Wi-Fi back on the car's network (docs 5.1, 6.2).
+    private readonly LinkMonitor _monitor = new();
+    private DateTime _lostAt;
+    private WifiManager? _wlan;
+    private WifiManager.Target? _wifiTarget;      // the car's network: the profile and interface to join it with
+    private readonly WifiRecoveryPolicy _wifiPolicy = new();
+    private PcNetwork _pcNetwork = PcNetwork.Unknown;
+    private bool _wifiActing;                     // a rejoin is in progress
+    private string? _lastWifiFailure;             // a connection failure repeated is logged once
 
     // What list_versions last said is current and previous (directory names), for the activation planner.
     private string _currentLogic = "", _currentPack = "", _previousLogic = "", _previousPack = "";
@@ -127,9 +138,14 @@ public partial class MainWindow : Window
             _settingsTimer.Stop();
             _settingsTimer.Start();
         };
-        _wifiTimer.Tick += async (_, _) => await RefreshWifiAsync();
+        _wifiTimer.Tick += async (_, _) =>
+        {
+            await RefreshWifiAsync();
+            await EvaluateWifiAsync();
+        };
         _wifiTimer.Start();
         _ = RefreshWifiAsync();
+        OpenWifiManager();
         LoadScenarioHistory();
         _ = CheckLatestReleaseAsync();
     }
@@ -150,7 +166,7 @@ public partial class MainWindow : Window
             _latestRelease = ReleaseCatalog.Latest(_releaseList);
             UpdateSdCardStatus();
             if (_latestRelease is not null && ReleaseCatalog.CompareVersions(AppVersion, _latestRelease.Version) < 0)
-                _vm.AddLog($"新しい Release {_latestRelease.Tag} があります（このアプリは {AppVersion}）。「SD カードを作る…」から車の SD カードを作り直し、アプリは {ReleaseCatalog.ReleasesPageUrl} から入れ替えてください");
+                _vm.AddLog($"新しい Release {_latestRelease.Tag} があります（このアプリは {AppVersion}）。「SD カードを作る…」から車の SD カードを作り直し、アプリは {ReleaseCatalog.ReleasesPageUrl} のインストーラー（RumiCarDriveManager-*-win-x64-setup.exe）を実行して更新してください（このアプリを終了してから。今の版の上に入れると置き換わります）");
         }
         catch (Exception)
         {
@@ -278,6 +294,8 @@ public partial class MainWindow : Window
 
         _lastConnectFailure = null;
         _car = car;
+        if (!reconnecting) _monitor.Connected(car.HelloResult);
+        _wifiPolicy.ObserveLink(_clock.Elapsed, up: true);
         _framesReceived = 0;
         _imagesReceived = 0;
         _vm.Frames = "0";
@@ -296,6 +314,7 @@ public partial class MainWindow : Window
             _carNetwork = wifi is { Kind: PcWifi.Kind.Connected } ? wifi.Ssid : null;
             if (_carNetwork is not null) _vm.AddLog($"PC の Wi-Fi: {_carNetwork}（接続中に変化した場合は警告を記録します）");
             UpdateWifiDisplay();
+            await FindWifiTargetAsync(CarConnection.GetString(car.HelloResult, "wifi_ssid"));
             var carName = CarConnection.GetString(car.HelloResult, "car");
             var coreVersion = CarConnection.GetString(car.HelloResult, "core_version");
             if (carName is not null) _vm.AddLog($"車両 {carName}, 本体 {coreVersion ?? "?"}, このアプリ {AppVersion}");
@@ -308,6 +327,11 @@ public partial class MainWindow : Window
             if (status.Ok && status.Result is JsonElement result)
             {
                 ApplyStatus(result);
+                if (reconnecting)
+                {
+                    var throttled = result.TryGetProperty("throttled", out var th) && th.TryGetUInt32(out var flags) ? flags : 0u;
+                    if (_monitor.Reconnected(car.HelloResult, throttled, DateTime.Now) is Diagnosis final) ShowDiagnosis(final, isFinal: true);
+                }
                 // The session started before the status was known: complete its description now.
                 lock (_sessionLock) _session?.UpdateInfo(BuildSessionInfo());
                 if (result.TryGetProperty("estop", out var es) && es.ValueKind == JsonValueKind.True)
@@ -379,6 +403,7 @@ public partial class MainWindow : Window
             {
                 ConnectButton.Content = "接続";
                 _vm.ConnectionState = "切断";
+                _monitor.Reset();   // the cause after the loss stays unknown: the note at the loss remains
             }
         }
     }
@@ -397,6 +422,10 @@ public partial class MainWindow : Window
     {
         if (!ReferenceEquals(source, _car)) return;   // already disconnected by the user
         _vm.AddLog(ex is null ? "車両側から接続が切断されました" : "接続が切断されました: " + ex.Message);
+        // The loss began with the last data received (a silent link is found only after the link timeout).
+        _lostAt = DateTime.Now - source.SinceLastReceived;
+        _wifiPolicy.ObserveLink(_clock.Elapsed, up: false);
+        ShowDiagnosis(_monitor.Lost(_lostAt, source.EndKind, ex?.Message ?? "車両側から接続が切断されました"), isFinal: false);
         _ = LostAsync();
     }
 
@@ -423,6 +452,8 @@ public partial class MainWindow : Window
         _closing = true;
         _reconnectCts?.Cancel();
         await DisconnectAsync();
+        _wlan?.Dispose();
+        _wlan = null;
         Close();
     }
 
@@ -578,7 +609,11 @@ public partial class MainWindow : Window
             var before = _wifi;
             var now = await Task.Run(() => PcWifi.Query());
             _wifi = now;
-            if (before is not null && _carNetwork is not null && _car is not null
+            if (now.Kind == PcWifi.Kind.Connected) SetPcNetwork(_wifiTarget is not null ? (now.Ssid == _wifiTarget.Ssid ? PcNetwork.CarNetwork : PcNetwork.OtherNetwork)
+                                                                : _carNetwork is not null ? (now.Ssid == _carNetwork ? PcNetwork.CarNetwork : PcNetwork.OtherNetwork) : PcNetwork.Unknown);
+            else if (now.Kind == PcWifi.Kind.Disconnected) SetPcNetwork(PcNetwork.NotConnected);
+            // With the WLAN notifications the changes are logged as they happen (OnWifiNotice).
+            if (_wlan is null && before is not null && _carNetwork is not null && _car is not null
                 && (before.Kind != now.Kind || before.Ssid != now.Ssid))
             {
                 _vm.AddLog(now.Kind == PcWifi.Kind.Connected
@@ -626,6 +661,160 @@ public partial class MainWindow : Window
               + (w.Detail.Length > 0 ? "\n" + w.Detail : "");
     }
 
+    // --- why the link was lost, and the PC's Wi-Fi (docs 5.1, 6.2) ----------------------------
+
+    /// <summary>The first note at the loss (the cause is judged at the reconnect), or the final one.</summary>
+    private void ShowDiagnosis(Diagnosis d, bool isFinal)
+    {
+        _vm.LinkNote = $"{_lostAt:HH:mm:ss} {d.Headline}" + (isFinal ? "" : "（原因は再接続のときに判定します）");
+        _vm.LinkNoteDetail = d.Details.Count == 0 ? d.Headline : string.Join("\n", d.Details);
+        _vm.AddLog((isFinal ? "通信断の診断: " : "通信断: ") + d.Headline);
+        foreach (var line in d.Details) _vm.AddLog("  " + line);
+    }
+
+    private void OpenWifiManager()
+    {
+        _wlan = WifiManager.TryOpen(out var problem);
+        if (_wlan is null)
+        {
+            _vm.AddLog("PC の Wi-Fi を監視できません（" + problem + "）。PC の Wi-Fi の自動つなぎ直しは行いません");
+            return;
+        }
+        _wlan.NoticeReceived += notice => Ui(() => OnWifiNotice(notice));
+    }
+
+    /// <summary>
+    /// The profile and interface of the car's network, after a connection: the
+    /// network the car tells (hello wifi_ssid, core 0.8.0), otherwise the one the
+    /// PC is on.  Not when the PC reaches the car from another network.
+    /// </summary>
+    private async Task FindWifiTargetAsync(string? carSsid)
+    {
+        var wlan = _wlan;
+        if (wlan is null) return;
+        var known = carSsid ?? _carNetwork;
+        if (string.IsNullOrEmpty(known))
+        {
+            if (_wifiTarget is null)
+                _vm.AddLog("車の本体が 0.8.0 より前で、PC の Wi-Fi のネットワーク名も取得できないため、PC の Wi-Fi の自動つなぎ直しは行いません");
+            return;
+        }
+        string ssid = known;
+        if (_wifi is { Kind: PcWifi.Kind.Connected } w && w.Ssid != ssid)
+        {
+            _wifiTarget = null;
+            _monitor.PcWifiWatched = false;
+            _vm.AddLog($"PC は車のネットワーク（{ssid}）以外の {w.Ssid} から車に接続しています。PC の Wi-Fi の自動つなぎ直しは行いません");
+            return;
+        }
+        if (_wifiTarget?.Ssid == ssid) return;
+        var (target, problem) = await Task.Run(() => (wlan.FindTarget(ssid, out var p), p));
+        _wifiTarget = target;
+        // The notifications are followed for the interface of the car's network only: without it, they say nothing about the link.
+        _monitor.PcWifiWatched = target is not null;
+        _vm.AddLog(target is null
+            ? "PC の Wi-Fi の自動つなぎ直し: " + problem
+            : $"PC の Wi-Fi の自動つなぎ直しの対象: {ssid}（プロファイル {target.Profile}、{target.InterfaceName}）");
+        if (target is not null && _pcNetwork == PcNetwork.Unknown && _wifi is { Kind: PcWifi.Kind.Connected }) SetPcNetwork(PcNetwork.CarNetwork);
+    }
+
+    private void SetPcNetwork(PcNetwork network)
+    {
+        _pcNetwork = network;
+        _wifiPolicy.ObserveNetwork(_clock.Elapsed, network);
+    }
+
+    /// <summary>A WLAN notification of the interface that joins the car's network (UI thread).</summary>
+    private void OnWifiNotice(WifiManager.Notice n)
+    {
+        var target = _wifiTarget;
+        if (target is null || n.Interface != target.Interface) return;
+        var name = n.Ssid.Length > 0 ? n.Ssid : n.Profile;
+        var isCar = n.Profile == target.Profile || n.Ssid == target.Ssid;
+        var inUse = _car is not null || _reconnectCts is not null;
+        var wasCar = _pcNetwork == PcNetwork.CarNetwork;
+        PcWifiEvent? e = null;
+        switch (n.Kind)
+        {
+            case WifiManager.NoticeKind.ConnectionComplete when isCar:
+                SetPcNetwork(PcNetwork.CarNetwork);
+                _lastWifiFailure = null;
+                if (!wasCar) e = new PcWifiEvent(DateTime.Now, PcWifiChange.BackOnCarNetwork, name, "");
+                break;
+            case WifiManager.NoticeKind.ConnectionComplete:
+                SetPcNetwork(PcNetwork.OtherNetwork);
+                e = new PcWifiEvent(DateTime.Now, PcWifiChange.MovedToOtherNetwork, name, "");
+                break;
+            case WifiManager.NoticeKind.Disconnected:
+                SetPcNetwork(PcNetwork.NotConnected);
+                if (isCar) e = new PcWifiEvent(DateTime.Now, PcWifiChange.LeftCarNetwork, name, n.Reason);
+                break;
+            case WifiManager.NoticeKind.ConnectionFailed when isCar:
+                e = new PcWifiEvent(DateTime.Now, PcWifiChange.ConnectFailed, name, n.Reason);
+                break;
+        }
+        if (e is null) return;
+        _monitor.OnPcWifi(e);
+        if (inUse)
+        {
+            switch (e.Change)
+            {
+                case PcWifiChange.LeftCarNetwork:
+                    _vm.AddLog($"PC の Wi-Fi が車のネットワーク（{name}）から切断されました" + (e.Reason.Length > 0 ? "：" + e.Reason : ""));
+                    break;
+                case PcWifiChange.MovedToOtherNetwork:
+                    _vm.AddLog($"警告：PC の Wi-Fi が別のネットワーク（{name}）に切り替わりました");
+                    break;
+                case PcWifiChange.BackOnCarNetwork:
+                    _vm.AddLog($"PC の Wi-Fi が車のネットワーク（{name}）に接続しました");
+                    break;
+                case PcWifiChange.ConnectFailed:
+                    var failure = e.Reason.Length > 0 ? e.Reason : "理由不明";
+                    if (failure != _lastWifiFailure) _vm.AddLog($"車のネットワーク（{name}）に接続できません：{failure}");
+                    _lastWifiFailure = failure;
+                    break;
+            }
+        }
+        // On another network the car cannot be reached: the connection is over now, not after the link timeout.
+        if (e.Change == PcWifiChange.MovedToOtherNetwork && _car is { } car)
+            car.Abort(new IOException($"PC の Wi-Fi が別のネットワーク（{name}）に切り替わりました"));
+        _ = EvaluateWifiAsync();
+    }
+
+    /// <summary>Puts the PC's Wi-Fi back on the car's network when the policy says so (UI thread).</summary>
+    private async Task EvaluateWifiAsync()
+    {
+        var wlan = _wlan;
+        var target = _wifiTarget;
+        if (wlan is null || target is null || _wifiActing || _closing) return;
+        var wanted = _car is not null || _reconnectCts is not null;
+        switch (_wifiPolicy.Decide(_clock.Elapsed, _vm.AutoWifi, wanted))
+        {
+            case WifiAction.Connect:
+            {
+                _vm.AddLog($"PC の Wi-Fi を車のネットワーク（{target.Ssid}）に接続します");
+                var error = await Task.Run(() => wlan.Connect(target));
+                if (error.Length > 0) _vm.AddLog("PC の Wi-Fi の接続を要求できません: " + error);
+                break;
+            }
+            case WifiAction.Rejoin:
+            {
+                _wifiActing = true;
+                try
+                {
+                    _vm.AddLog($"車に届かない状態が {WifiRecoveryPolicy.RejoinAfter.TotalSeconds:F0} 秒以上続いているため、PC の Wi-Fi を車のネットワーク（{target.Ssid}）につなぎ直します");
+                    var error = await wlan.RejoinAsync(target);
+                    if (error.Length > 0) _vm.AddLog("PC の Wi-Fi をつなぎ直せません: " + error);
+                }
+                finally
+                {
+                    _wifiActing = false;
+                }
+                break;
+            }
+        }
+    }
+
     private static List<string> GetStringList(JsonElement data, string key)
     {
         var list = new List<string>();
@@ -648,6 +837,7 @@ public partial class MainWindow : Window
     {
         var text = PowerFlags.Describe(throttled);
         if (_vm.Power != text) _vm.Power = text;
+        _monitor.OnThrottled(throttled);
         var nowUv = (throttled & PowerFlags.UnderVoltageNow) != 0;
         var wasUv = (_lastThrottled & PowerFlags.UnderVoltageNow) != 0;
         if (nowUv && !wasUv) _vm.AddLog("電源: 車のファームウェアが低電圧を検出しました（" + text + "）");
@@ -697,6 +887,7 @@ public partial class MainWindow : Window
     // Telemetry thread.
     private void OnFrameReceived(TelemetryFrame frame)
     {
+        _monitor.OnFrame(frame.Header, DateTime.Now);
         Interlocked.Increment(ref _framesReceived);
         if (frame.Jpeg.Length > 0) Interlocked.Increment(ref _imagesReceived);
         try

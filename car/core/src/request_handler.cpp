@@ -82,6 +82,10 @@ json RequestHandler::handle(const std::string& type, const json& params) {
         log::info("control client hello: " + client);
         json result{{"car", car_name_}, {"core_version", core_version_}, {"protocol", kProtocolVersion}};
         if (client_timeout_ms_ > 0) result["client_timeout_ms"] = client_timeout_ms_;
+        if (!boot_id_.empty()) result["boot_id"] = boot_id_;
+        if (!instance_id_.empty()) result["instance_id"] = instance_id_;
+        if (!previous_exit_.empty()) result["previous_exit"] = previous_exit_;
+        if (const std::string ssid = wifi_.ssid(); !ssid.empty()) result["wifi_ssid"] = ssid;
         return result;
     }
     if (type == "get_status") {
