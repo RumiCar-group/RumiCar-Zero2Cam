@@ -55,8 +55,18 @@ public class CarConnectionTests
             var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
             if (_refuseBusy)
             {
-                // As the car answers a second connection: an error line with id 0, then close.
+                // As the car answers a second connection: an error line with id 0, then
+                // no more sending, and the client's data is read until it closes (at
+                // most 500 ms) so that the close does not reset the connection.
                 await writer.WriteLineAsync("{\"id\":0,\"ok\":false,\"error\":\"busy: another client is connected\"}");
+                client.Client.Shutdown(SocketShutdown.Send);
+                var sink = new byte[512];
+                using var drain = new CancellationTokenSource(500);
+                try
+                {
+                    while (await stream.ReadAsync(sink, drain.Token) > 0) { }
+                }
+                catch (Exception) { }
                 client.Close();
                 return;
             }
@@ -197,15 +207,18 @@ public class CarConnectionTests
         {
             var logs = new ConcurrentQueue<string>();
             car.Log += logs.Enqueue;
+            static bool Unanswered(string l) => l.StartsWith("heartbeat:", StringComparison.Ordinal) && l.Contains("応答がありません");
             fake.AnswerHeartbeats = false;
-            await Task.Delay(CarConnection.RequestTimeout + TimeSpan.FromMilliseconds(500));
+            var waitUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency * (long)(CarConnection.RequestTimeout.TotalSeconds + 3);
+            while (!logs.Any(Unanswered) && Stopwatch.GetTimestamp() < waitUntil) await Task.Delay(50);
+            Assert.Contains(logs, Unanswered);   // one heartbeat waited out the request timeout
             fake.AnswerHeartbeats = true;
             var resumedFrom = Stopwatch.GetTimestamp();
-            await Task.Delay(1500);
+            // A heartbeat sent just before the answers resumed may still wait out its own timeout.
+            await Task.Delay(CarConnection.RequestTimeout + TimeSpan.FromMilliseconds(1500));
             var after = fake.HeartbeatTimes.Count(t => t > resumedFrom);
             Assert.True(after >= 3, $"heartbeats after the unanswered one: {after}");
             Assert.False(lost.Task.IsCompleted);
-            Assert.Contains(logs, l => l.StartsWith("heartbeat:", StringComparison.Ordinal) && l.Contains("応答がありません"));
             Assert.Contains(logs, l => l.Contains("応答が戻りました"));
         }
     }

@@ -318,10 +318,12 @@ void test_servers(const fs::path& base_pack) {
     state.set_max_drive(204);
     WifiAp wifi("/usr/bin/nmcli", "");   // no access point profile on the test host
     RequestHandler handler(state, store, wifi, "TestCar", "9.9.9", 2000ms);
-    // This test pauses on the control connection while it exercises the
-    // telemetry server, so the silent-client timeout is long here
+    // This test leaves the control connection silent for long stretches (the
+    // telemetry server, the concurrent activation switches: more than 60 s on a
+    // slow runner), so the silent-client timeout is out of reach here
     // (test_control_client_timeout covers the timeout itself).
-    handler.set_client_timeout_ms(60000);
+    constexpr int kLongTimeoutMs = 24 * 60 * 60 * 1000;
+    handler.set_client_timeout_ms(kLongTimeoutMs);
     std::atomic<int> connects{0}, disconnects{0};
     net::ControlServer control("127.0.0.1", 0,
         [&](const std::string& type, const json& params) { return handler.handle(type, params); },
@@ -329,7 +331,7 @@ void test_servers(const fs::path& base_pack) {
             if (connected) ++connects;
             else { ++disconnects; handler.on_client_disconnected(); }
         },
-        60000);
+        kLongTimeoutMs);
     net::TelemetryServer telemetry("127.0.0.1", 0, 2);
     state.set_event_sink([&](const std::string& event, const json& data) { control.push_event(event, data); });
     control.start();
@@ -353,7 +355,7 @@ void test_servers(const fs::path& base_pack) {
     CHECK(r["result"]["car"] == "TestCar");
     CHECK(r["result"]["core_version"] == "9.9.9");
     CHECK(r["result"]["protocol"] == 3);
-    CHECK(r["result"]["client_timeout_ms"] == 60000);   // the PC uses the same time to tell that the link is lost
+    CHECK(r["result"]["client_timeout_ms"] == kLongTimeoutMs);   // the PC uses the same time to tell that the link is lost
     for (int i = 0; i < 100 && connects.load() == 0; ++i) std::this_thread::sleep_for(10ms);
     CHECK(connects.load() == 1);
     CHECK(control.client_connected());

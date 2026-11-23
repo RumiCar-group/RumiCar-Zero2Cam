@@ -71,6 +71,18 @@ void ControlServer::accept_loop() {
         if (client_active_.load()) {
             const std::string busy = response_line(0, false, nullptr, "busy: another client is connected");
             try { write_all(fd.get(), busy.data(), busy.size()); } catch (const std::exception&) {}
+            // Let the refusal arrive before the connection ends: stop sending (the
+            // line is followed by a FIN) and read what the client sends until it
+            // closes, for at most 500 ms.  Closing with its hello still unread would
+            // reset the connection, and the client (Windows) could lose the line.
+            ::shutdown(fd.get(), SHUT_WR);
+            const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+            char sink[512];
+            while (std::chrono::steady_clock::now() < until) {
+                long n;
+                try { n = read_some(fd.get(), sink, sizeof sink); } catch (const std::exception&) { break; }
+                if (n == 0) break;   // the client has closed
+            }
             log::warn("control client rejected (busy): " + peer);
             continue;
         }
